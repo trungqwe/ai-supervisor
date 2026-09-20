@@ -127,3 +127,4 @@ All canonical specifications and architecture documents are organized in [`docs/
 # 4. REPOSITORY GOVERNANCE
 
 All contributions and agent executions are strictly governed by [`AGENTS.md`](AGENTS.md) and [`docs/24_CHANGE_GOVERNANCE.md`](docs/24_CHANGE_GOVERNANCE.md). No application code may be introduced until Phase 0 achieves formal `ARCHITECTURE_FROZEN` status via external review.
+
