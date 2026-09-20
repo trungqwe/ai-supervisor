@@ -1,7 +1,7 @@
 # 18. CURRENT STATE
 
 > **Authority**: Dynamic Operational State Record  
-> **Updated**: 2026-09-20 (Phase P01-D Transport Re-evaluation)
+> **Updated**: 2026-09-20 (P01-D Transport Proof Gate Evaluation)
 
 ---
 
@@ -10,22 +10,20 @@
 | Field | Current Value |
 |---|---|
 | **Project Stage** | **Phase 1 — Upstream Proof Execution** |
-| **Current State** | **`ARCHITECTURE_FROZEN`** |
-| **Phase 0 Status** | `COMPLETE` |
-| **Frozen Architecture Baseline** | `7c7f18598516c79741eff04cb742872d552d86da` |
-| **Freeze Record** | [`docs/audits/PHASE0_FREEZE_RECORD.md`](audits/PHASE0_FREEZE_RECORD.md) |
-| **Process Deviation** | `P00-DEV-001` — `ACCEPTED_AT_PHASE0_FREEZE` ([`docs/audits/PHASE0_PROCESS_DEVIATIONS.md`](audits/PHASE0_PROCESS_DEVIATIONS.md)) |
+| **Current State** | **`ARCHITECTURE_V2_CANDIDATE`** |
+| **Phase 0 Status** | `COMPLETE` (Frozen Baseline: `phase0-architecture-v1` / `6f72eaca30be3fc3ac00f25829dd4283ed98c3f5`) |
 | **Current Phase** | `P01` (Phase 1: Upstream Proof & Transport Feasibility) |
-| **P01 Execution Status** | `IN_PROGRESS` (Track P01-D: `GAP_REQUIRES_ADR`) |
+| **P01-D Transport Status** | **`WAITING_EXTERNAL_APPROVAL`** |
+| **P01 Execution Status** | `HELD_AT_P01_D_PROOF_GATE` (P01-A, P01-B, P01-C on hold) |
 | **Remediation Status** | Complete. External Supervisor independently audited and approved baseline `7c7f18598516c79741eff04cb742872d552d86da`. |
-| **Architecture Status** | `ARCHITECTURE_FROZEN_APPROVED`. Architecture frozen; any changes require ADR via change governance. |
-| **Completed Work** | (1) Upstream metadata normalization: all 9 repos pinned with full 40-char commit SHAs, author and committer UTC dates, SPDX/usage terms distinctions. (2) Real source evidence paths and symbols verified. (3) Specification headings verified. (4) P01 Agy command syntax verified. (5) Phase 0 officially frozen (`phase0-architecture-v1`). (6) Track P01-D replan completed: Published Plugin backed by Remote MCP Gateway identified as viable supported path for ChatGPT Plus (`GAP_REQUIRES_ADR`). Proposal created: `PROPOSAL-001-PLUS-PUBLISHED-PLUGIN-TRANSPORT.md`. |
-| **Blocked Issues** | None. Track P01-D Kill Gate unblocked via Published Plugin path; awaiting ADR-011 governance review. |
+| **Architecture Status** | `ARCHITECTURE_V2_CANDIDATE` (Awaiting end-to-end transport proof on published OpenAI Plugin before V2 freeze). |
+| **Completed Work** | (1) Upstream metadata normalization completed. (2) Real source evidence paths and symbols verified. (3) Specification headings verified. (4) Phase 0 officially frozen (`phase0-architecture-v1`). (5) Proposal `PROPOSAL-001-PLUS-PUBLISHED-PLUGIN-TRANSPORT.md` created. (6) Disposable transport spike constructed in `_ai_supervisor_p01d_plugin_spike`: all 10 developer-side technical tests PASS (read probe, write probe with local disk state mutation, replay safety, offline handling, automatic reconnect, secret leak scan, and latency benchmarks). (7) Published Plugin transport proof gate dossier created: `docs/audits/P01_D_PLUS_PLUGIN_TRANSPORT_PROOF.md`. |
+| **Blocked Issues** | None. Transport gate is held on external OpenAI review and publication dependency. |
 | **Known Process Deviations** | P00-DEV-001 — `ACCEPTED_AT_PHASE0_FREEZE`. |
-| **Open Decisions** | Formal review/approval of ADR-011 (Published Plugin & Remote MCP Gateway for ChatGPT Plus), AO to Agy structured completion normalization mechanism (Track P01-C). |
+| **Open Decisions** | Formal OpenAI submission & publication of AI Engineering Supervisor Plugin; V2 Architecture freeze pending live target account proof; AO to Agy structured completion normalization mechanism (Track P01-C). |
 | **Documentation Baseline Versions** | AO `v0.13.0` (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`), Agy `1.2.7` (`7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`). |
-| **Pending Runtime Proofs (P01)** | Track P01-D (ChatGPT Plus Transport Feasibility: `GAP_REQUIRES_ADR`), Track P01-A (AO Runtime Proof: `PENDING`), Track P01-B (Direct Antigravity CLI Capability Proof: `PENDING`), Track P01-C (AO ↔ Agy Adapter / WorkerReport Integration Proof: `PENDING`). |
-| **Next Approved Action** | User & External Supervisor evaluation of `PROPOSAL-001-PLUS-PUBLISHED-PLUGIN-TRANSPORT.md` / ADR-011 recommendation; await authorization before proceeding to P01-A runtime tests. |
+| **Pending Runtime Proofs (P01)** | Track P01-D (ChatGPT Plus Transport Feasibility: `WAITING_EXTERNAL_APPROVAL`), Track P01-A (AO Runtime Proof: `HELD`), Track P01-B (Direct Antigravity CLI Capability Proof: `HELD`), Track P01-C (AO ↔ Agy Adapter / WorkerReport Integration Proof: `HELD`). |
+| **Next Approved Action** | Deploy Remote MCP Gateway to public production domain, complete OpenAI developer verification (`api.apps.write`), submit plugin package for review, and await OpenAI publication approval. |
 
 ---
 
@@ -44,3 +42,4 @@
 | [`PHASE0_FREEZE_RECORD.md`](audits/PHASE0_FREEZE_RECORD.md) | `ARCHITECTURE_FROZEN_APPROVED` | 2026-09-20 |
 | [`P01_D_CHATGPT_TRANSPORT_PROOF.md`](audits/P01_D_CHATGPT_TRANSPORT_PROOF.md) | `GAP_REQUIRES_ADR` | 2026-09-20 |
 | [`P01_D_PLUS_PLUGIN_TRANSPORT_RESEARCH.md`](audits/P01_D_PLUS_PLUGIN_TRANSPORT_RESEARCH.md) | `GAP_REQUIRES_ADR` | 2026-09-20 |
+| [`P01_D_PLUS_PLUGIN_TRANSPORT_PROOF.md`](audits/P01_D_PLUS_PLUGIN_TRANSPORT_PROOF.md) | `WAITING_EXTERNAL_APPROVAL` | 2026-09-20 |
