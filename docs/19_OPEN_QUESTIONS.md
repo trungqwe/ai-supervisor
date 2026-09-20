@@ -1,36 +1,28 @@
 ﻿# 19. OPEN QUESTIONS & UNRESOLVED DECISIONS
 
 > **Focus**: Unresolved Architecture & Technical Questions  
-> **Status**: Recorded as UNDECIDED / GIẢ ĐỊNH
+> **Status**: Recorded as UNDECIDED / GIẢ ĐỊNH / P01_PROOF_REQUIRED
 
 ---
 
-# 1. Open Architectural Questions
+# 1. Active Open Questions
 
-The following technical decisions lack conclusive empirical evidence and are intentionally deferred. No coding agent is permitted to make unilateral assumptions regarding these decisions until an approved ADR is established:
+### Q1: AO ↔ Agy Structured Completion & WorkerReport Delivery
+- **Status**: `UNDECIDED — P01_PROOF_REQUIRED`
+- **Context**: Pinned AO `v0.13.0` invokes Agy interactively (`--prompt-interactive`) rather than passing `--json-schema docs/schemas/worker-report.schema.json`.
+- **Question**: Does AO expose enough session output telemetry for the Supervisor to normalize into a `WorkerReport`, or does the AOAdapter / Agy invocation require a custom integration mechanism?
+- **Resolution Plan**: Address empirically in Phase P01 Track P01-C.
 
-### Q1: Supervisor Implementation Language
+### Q2: ChatGPT Transport Protocol for Target User Environment
+- **Status**: `UNDECIDED — P01_PROOF_REQUIRED` (Advanced from P05 to P01)
+- **Context**: Target workflow relies on ChatGPT Web invoking the Supervisor's 12 tools without manual copy-pasting or browser automation.
+- **Question**: What exact mechanism (local MCP stdio/SSE relay, ChatGPT App/Action with loopback bridge) is supported and accessible on the target user's ChatGPT Plus account?
+- **Resolution Plan**: Mandatory early feasibility proof in Phase P01 Track P01-D.
+
+### Q3: Supervisor Core Implementation Language
 - **Status**: `UNDECIDED` (GIẢ ĐỊNH: TypeScript / Node.js vs. Go vs. Python)
-- **Considerations**:
-  - Go aligns natively with Untrivial Agent Orchestrator and produces single static binaries.
-  - TypeScript aligns with Model Context Protocol (MCP) TypeScript SDKs and fast JSON schema manipulation.
-  - Python offers simplicity and fast prototyping.
-- **Resolution Plan**: Address in Phase P02 following Phase P01 upstream proof.
+- **Resolution Plan**: Finalize via ADR in Phase P02 following Phase P01 results.
 
-### Q2: Local State Store Engine
+### Q4: Local State Store Storage Engine
 - **Status**: `UNDECIDED` (GIẢ ĐỊNH: SQLite vs. Embedded Key-Value / JSON file store)
-- **Considerations**:
-  - SQLite provides ACID transactions, relational integrity, and easy querying.
-  - Flat JSON file store / JSONL provides zero-dependency human readability.
-- **Resolution Plan**: Evaluate during Phase P02 domain implementation.
-
-### Q3: ChatGPT Transport Protocol for Target User Environment
-- **Status**: `UNDECIDED` (GIẢ ĐỊNH: Local MCP stdio / SSE vs. Local HTTP REST Relay)
-- **Considerations**:
-  - Depends on user's ChatGPT Web account features (Custom GPT Actions vs. Desktop MCP client).
-- **Resolution Plan**: Address during Phase P05 interface implementation.
-
-### Q4: Post-V1 Control UI Framework
-- **Status**: `UNDECIDED` (GIẢ ĐỊNH: Local Web app vs. Tauri vs. Lightweight terminal TUI)
-- **Considerations**:
-  - Deferred entirely to Phase P07 (Explicit non-goal for V1).
+- **Resolution Plan**: Finalize in Phase P02 domain implementation.

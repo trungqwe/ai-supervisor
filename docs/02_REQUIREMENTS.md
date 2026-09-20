@@ -24,6 +24,7 @@
 | **FR-013** | Audit Trail Generation | The system shall log all pair events, task transitions, evidence hashes, and review decisions to a local append-only log. | Audit log is queryable, chronological, and sanitized of secret tokens. |
 | **FR-014** | Multi-Project Ready Domain | The domain model shall support multiple project records, even though V1 executes a single active Pair. | Database and domain entities isolate project records by unique `project_id`. |
 | **FR-015** | Upstream Health Check | The system shall verify connectivity and API compatibility with the AO daemon before dispatching tasks. | Returns daemon status, version, and worker harness availability. |
+| **FR-016** | Supervisor Tool Transport | The target ChatGPT Web environment shall be able to invoke the Supervisor's supported high-level tools through an OpenAI-supported transport without OS-level GUI automation and without manual prompt/report copy-paste. | Phase P01 feasibility proof demonstrates a verified, supported transport mechanism for the target user account (Plus web / local relay / MCP). |
 
 ---
 
@@ -61,3 +62,4 @@
 | **OPS-001** | Single-Command Startup | The local control plane service shall start via a single documented command. |
 | **OPS-002** | Clean Process Termination | Stopping the control plane service shall cleanly close open sessions without leaving orphaned worker processes. |
 | **OPS-003** | Self-Contained Storage | All task state and evidence shall be stored locally without requiring external cloud accounts or paid third-party databases. |
+

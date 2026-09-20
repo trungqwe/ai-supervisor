@@ -1,7 +1,7 @@
 ﻿# 04. CANONICAL ARCHITECTURE
 
 > **Authority**: System Architecture Blueprint (Single Canonical Reference)  
-> **Status**: Approved Baseline
+> **Status**: Verified Documentation Baseline (Post-Remediation)
 
 ---
 
@@ -16,7 +16,7 @@ The system is strictly decomposed into three decoupled planes:
 │  Role: Architect, Planner, Auditor, Decision Maker           │
 │  Properties: High reasoning, no OS/file execution capability │
 └──────────────────────────────┬───────────────────────────────┘
-                               │ Structured Tool Invocations
+                               │ Structured Tool Invocations (12 Tools)
                                ▼
 ┌──────────────────────────────────────────────────────────────┐
 │                 2. SUPERVISOR CONTROL PLANE                  │
@@ -28,33 +28,33 @@ The system is strictly decomposed into three decoupled planes:
 │  - Review Bundle Builder                                     │
 │  - Policy & Scope Engine                                     │
 │  - Independent Evidence Collector                            │
-│  - AO Public Adapter                                         │
+│  - AO Public Adapter (Anti-Corruption Layer)                 │
 │  - Sanitized Audit Trail                                     │
 └──────────────────────────────┬───────────────────────────────┘
-                               │ Stable Public API Contract
+                               │ Domain Operations via AOAdapter
                                ▼
 ┌──────────────────────────────────────────────────────────────┐
 │                 3. EXECUTION CONTROL PLANE                   │
 │                 Untrivial Agent Orchestrator                 │
 │  Role: Process Daemon, ConPTY Runtime, Worktree Manager      │
 │  Modules:                                                    │
-│  - Daemon Lifecycle                                          │
-│  - Session Persistence                                       │
-│  - Git Worktree Isolation                                    │
+│  - Daemon Lifecycle (/healthz, /readyz)                      │
+│  - Session Persistence & Worktree Creation (/sessions)       │
+│  - Worker Process ConPTY Management (/send, /kill, /restore) │
 │  - Agent Harness Adapters (Antigravity CLI)                  │
 └──────────────────────────────┬───────────────────────────────┘
-                               │ Headless Process Execution
+                               │ Headless Process / Harness Invocation
                                ▼
 ┌──────────────────────────────────────────────────────────────┐
 │                        PRIMARY WORKER                        │
 │                   Official Antigravity CLI                   │
-│  Role: Implementation, Code Modification, Test & Fix         │
+│  Role: Autonomous Code Synthesis, Test Execution, Build      │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-# 2. Core Execution & Review Flows
+# 2. Canonical Execution & Review Flows
 
 ## 2.1 Task Dispatch Flow
 ```mermaid
@@ -63,18 +63,19 @@ sequenceDiagram
     actor ChatGPT as ChatGPT Web (Supervisor)
     participant SCP as Supervisor Control Plane
     participant DB as State Store
-    participant AO as Agent Orchestrator
+    participant AO as Agent Orchestrator (AOAdapter)
     participant Agy as Antigravity CLI
 
-    ChatGPT->>SCP: dispatch_task(task_id, contract_payload)
+    ChatGPT->>SCP: dispatch_task(contract_payload)
     SCP->>SCP: Validate contract against task-contract.schema.json
     SCP->>DB: Store immutable TaskContract (State: READY)
-    SCP->>AO: POST /api/sessions/{session_id}/task (TaskContract)
-    AO->>AO: Create isolated Git worktree & launch agy harness
+    SCP->>AO: AOAdapter.createWorkerSession(projectId, harness="antigravity")
+    AO->>AO: Allocate isolated Git worktree & session
+    SCP->>AO: AOAdapter.sendTask(sessionId, TaskContract)
     SCP->>DB: Transition state to DISPATCHED
-    AO->>Agy: Stream contract & launch headless session
-    Agy-->>AO: Process running (heartbeats)
-    AO-->>SCP: Worker started event
+    AO->>Agy: Launch worker harness in worktree
+    Agy-->>AO: Worker process active
+    AO-->>SCP: Worker started event / status
     SCP->>DB: Transition state to RUNNING
     SCP-->>ChatGPT: Dispatch confirmed (status: RUNNING)
 ```
@@ -84,21 +85,21 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     participant Agy as Antigravity CLI
-    participant AO as Agent Orchestrator
+    participant AO as Agent Orchestrator (AOAdapter)
     participant SCP as Supervisor Control Plane
-    participant Git as Local Git Repo
+    participant Git as Local Git Worktree
     participant DB as State Store
     actor ChatGPT as ChatGPT Web (Supervisor)
 
-    Agy->>AO: Output WorkerReport (Claims, touched files, exit codes)
-    AO-->>SCP: Webhook / Event: worker_completed
+    Agy->>AO: Worker execution completes turn
+    AO-->>SCP: AOAdapter observes session completion [P01_PROOF_REQUIRED]
     SCP->>DB: Transition state to REPORT_READY
     
     rect rgb(240, 248, 255)
         Note over SCP,Git: Independent Evidence Collection (Zero Trust)
         SCP->>Git: git diff --stat base_sha..head_sha
         SCP->>Git: git diff base_sha..head_sha
-        SCP->>SCP: Check touched files against allowed/forbidden scope
+        SCP->>SCP: Check touched files against allowed_scope / forbidden_scope
         SCP->>SCP: Verify test command exit codes & artifacts
     end
 
@@ -109,39 +110,40 @@ sequenceDiagram
     ChatGPT->>SCP: get_review_bundle(task_id)
     SCP-->>ChatGPT: Return compiled ReviewBundle
     
-    alt Approval
+    alt Approval Decision
         ChatGPT->>SCP: approve_task(task_id, rationale)
         SCP->>DB: Transition state to APPROVED
-        SCP->>AO: Commit worktree to main / merge branch
-    else Revision Required
+        Note over SCP: Decision recorded. NO automatic git merge or push in V1.
+    else Revision Required Decision
         ChatGPT->>SCP: request_revision(task_id, feedback, required_fixes)
         SCP->>DB: Transition state to REVISION_REQUIRED
-        SCP->>AO: Re-dispatch revision to worker
+        SCP->>AO: AOAdapter.sendTask(sessionId, revision_instructions)
     end
 ```
 
 ---
 
-# 3. Adapter Boundaries & Upstream Decoupling
+# 3. Adapter Boundaries & Integration Realism
 
-To ensure our system is not tightly coupled to external tools:
-1. **AOAdapter Boundary**:
-   - Exposes clean domain methods: `health()`, `registerProject()`, `createWorkerSession()`, `dispatchTask()`, `getWorkerStatus()`, `stopWorker()`.
-   - Shields Supervisor domain models from AO-internal DTOs.
-2. **ChatGPT Transport Boundary**:
-   - Isolates the protocol (MCP, local HTTP relay, or ChatGPT App) behind a uniform `SupervisorToolSurface` interface.
-3. **Worker Abstraction**:
-   - While Antigravity is the primary V1 worker, the contract format supports future addition of alternative workers (Codex CLI, Claude Code) without modifying the Supervisor Core.
+### 3.1 AOAdapter Boundary
+All execution interactions flow strictly through `AOAdapter`. The adapter encapsulates:
+- Daemon health checks (`GET /healthz`, `GET /readyz`);
+- Project registration (`POST /api/v1/projects`);
+- Session creation (`POST /api/v1/sessions`);
+- Task transmission (`POST /api/v1/sessions/{id}/send`);
+- Process control (`POST /api/v1/sessions/{id}/kill`, `POST /api/v1/sessions/{id}/restore`).
+Detailed HTTP mappings reside exclusively in `docs/sources/UPSTREAM_CONTRACT_BASELINE.md`.
+
+### 3.2 AO ↔ Agy Integration Realism & P01 Proof
+- **Known Upstream Finding**: AO `v0.13.0` invokes Agy interactively using `--prompt-interactive`. Official Agy separately supports headless print mode (`--print`, `--output-format stream-json`, `--json-schema`).
+- **Integration Boundary**: The exact mechanism for extracting normalized `WorkerReport` data from AO session runs is designated `P01_PROOF_REQUIRED`. The Supervisor treats worker report generation as a normalized contract requirement, not an unverified upstream native feature.
 
 ---
 
-# 4. Authority Boundaries & Explicit Non-Architecture
-
-The following architectural constraints are strictly enforced:
+# 4. Authority Boundaries & Readonly Supervisor Policy
 
 > [!CRITICAL]
-> 1. **AO internal database is NOT an integration API**: We never read or write directly to AO's SQLite database. All communication occurs via AO's published REST API or CLI interface.
-> 2. **Worker runtime state belongs exclusively to AO**: Process PIDs, terminal ConPTY buffers, and active worktree paths are managed by AO.
-> 3. **Task & Governance state belongs exclusively to the Supervisor**: Task contracts, review decisions, and phase statuses are mastered in the Supervisor State Store.
-> 4. **Code truth belongs exclusively to Git**: The Git commit history, tree hashes, and diffs are the authoritative source on implementation state.
-> 5. **Technical truth belongs exclusively to canonical documents**: Architecture, requirements, and ADRs in `docs/` are the authoritative guide for engineering logic.
+> 1. **Zero Direct Code Mutation by Supervisor**: ChatGPT and the Supervisor Control Plane are strictly readonly regarding application source files.
+> 2. **No Automatic Merge on Approval**: `approve_task` formally records review approval and updates task state to `APPROVED`. It does **NOT** automatically merge branches, commit to main, or push to remotes. Source promotion remains a human/explicit workflow.
+> 3. **AO internal database is NOT an integration API**: We never read or write directly to AO SQLite stores.
+> 4. **Code truth belongs exclusively to Git**: Commit SHAs, diffs, and worktree states are authoritative.
