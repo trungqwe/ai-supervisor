@@ -1,7 +1,7 @@
-﻿# SOURCE DOSSIER: 04 — MIERUKO WORKBENCH
+# SOURCE DOSSIER: 04 — MIERUKO WORKBENCH
 
 > **Authority**: Passive Design Source Evidence Dossier  
-> **Status**: Verified Documentation Baseline (Post-Re-Audit #2 Hygiene)
+> **Status**: Literal Evidence Corrected (Post-Re-Audit #4 Patch)
 
 ---
 
@@ -29,11 +29,13 @@ Repository: Mieruko/MCP_Plugins_With_ChatGPTWeb
 Pinned tag: None
 Pinned commit: 4c09b02d87e63a765b7a9b3bbb0c28e7a1b750df
 Evidence type: OFFICIAL_REPO_DOC
-Exact evidence: AGENTS.md & README.md
-Section / symbol: AGENTS.md ## Quy tắc chung cho agent / README.md ## Active Agents and session recovery
+Exact evidence: AGENTS.md, README.md
+Section / symbol:
+  AGENTS.md: ## Quyền truy cập
+  README.md: ## Active Agents and session recovery
 Verification: VERIFIED
 Confidence: HIGH
-Notes: Explicitly documents "ChatGPT có _meta['openai/session'] được gắn task theo cuộc trò chuyện, độc lập kết nối MCP; reconnect và đổi Dashboard không đổi task" and specifies session recovery persistence.
+Notes: AGENTS.md under heading "## Quyền truy cập" explicitly states: "ChatGPT có _meta['openai/session'] được gắn task theo cuộc trò chuyện, độc lập kết nối MCP; reconnect và đổi Dashboard không đổi task." Cross-chat continuity is also described under "### Tiếp tục công việc qua nhiều chat". README heading "## Active Agents and session recovery" documents the session recovery model.
 
 Claim ID: MIER-CLAIM-002
 Claim: Mieruko provides administrative router infrastructure for managing upstream server connections and monitoring live activity streams.
@@ -42,10 +44,10 @@ Pinned tag: None
 Pinned commit: 4c09b02d87e63a765b7a9b3bbb0c28e7a1b750df
 Evidence type: SOURCE_CODE
 Exact evidence: src/admin/routes.ts
-Section / symbol: export function createAdminRouter(manager: UpstreamManager, envPath: string): Router
+Section / symbol: createAdminRouter
 Verification: VERIFIED
 Confidence: HIGH
-Notes: Implements admin endpoints for environment config, upstream MCP server registration, tool listing, activity filtering, and Server-Sent Events (SSE) streaming.
+Notes: The exported function begins with "export function createAdminRouter(manager: McpUpstreamManager, options: {". Implements admin endpoints for environment config, upstream MCP server registration, tool listing, activity filtering, and Server-Sent Events (SSE) streaming.
 
 Claim ID: MIER-CLAIM-003
 Claim: Mieruko advocates a slim, structured tool surface tailored for conversational LLM reasoning without unstructured terminal scraping.
@@ -54,10 +56,10 @@ Pinned tag: None
 Pinned commit: 4c09b02d87e63a765b7a9b3bbb0c28e7a1b750df
 Evidence type: OFFICIAL_REPO_DOC
 Exact evidence: README.md
-Section / symbol: ## Tool catalog overview
+Section / symbol: ## MCP tools
 Verification: VERIFIED
 Confidence: HIGH
-Notes: States "Tool responses use structured data so ChatGPT can reason over results without scraping terminal text where a structured representation is available".
+Notes: README section "## MCP tools" covers the tool surface. Upstream text states: "Tool responses use structured data so ChatGPT can reason over results without scraping terminal text where a structured representation is available." The previously cited heading was not found in the pinned README; the correct heading is "## MCP tools".
 ```
 
 ---

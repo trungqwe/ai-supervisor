@@ -1,7 +1,7 @@
 ﻿# UPSTREAM CONTRACT BASELINE
 
 > **Focus**: Evidence-Driven Mapping of Upstream Public Interfaces  
-> **Status**: Verified Documentation Baseline (Post-Re-Audit #2 Hygiene)  
+> **Status**: Literal Evidence Corrected (Post-Re-Audit #4 Patch)  
 > **Date Convention**: All commit timestamps are explicitly recorded in ISO-8601 UTC format (`YYYY-MM-DDTHH:MM:SSZ`).  
 > **License Convention**: Repository SPDX License is explicitly distinguished from Product / Usage Terms.
 

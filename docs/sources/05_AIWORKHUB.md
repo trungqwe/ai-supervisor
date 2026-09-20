@@ -1,7 +1,7 @@
-﻿# SOURCE DOSSIER: 05 — AIWORKHUB
+# SOURCE DOSSIER: 05 — AIWORKHUB
 
 > **Authority**: Passive Design Source Evidence Dossier  
-> **Status**: Verified Documentation Baseline (Post-Re-Audit #2 Hygiene)
+> **Status**: Literal Evidence Corrected (Post-Re-Audit #4 Patch)
 
 ---
 
@@ -30,10 +30,12 @@ Pinned tag: None
 Pinned commit: 19c8ce548c27316a06117c0638b4f853e00292b8
 Evidence type: OFFICIAL_REPO_DOC
 Exact evidence: docs/QUALITY_CONTROL.md
-Section / symbol: ## Five quality control layers (Layer 2: Bounded execution sandbox)
+Section / symbol:
+  ## Acceptance pipeline
+  item 2. Worker isolation and self-validation
 Verification: VERIFIED
 Confidence: HIGH
-Notes: Explicitly states "Worker self-reports are evidence only; they never own PASS/FAIL".
+Notes: Under "## Acceptance pipeline", numbered item "2. **Worker isolation and self-validation**" explicitly states: "Worker self-reports are evidence only; they never own PASS/FAIL."
 
 Claim ID: AIW-CLAIM-002
 Claim: AIWorkHub formalizes manager acceptance based on independent verification of canonical inputs, exit codes, and bounded evidence bundles.
@@ -42,10 +44,12 @@ Pinned tag: None
 Pinned commit: 19c8ce548c27316a06117c0638b4f853e00292b8
 Evidence type: OFFICIAL_REPO_DOC
 Exact evidence: docs/QUALITY_CONTROL.md
-Section / symbol: ## Five quality control layers (Layer 5: Manager acceptance and integration proof)
+Section / symbol:
+  ## Acceptance pipeline
+  item 5. Manager acceptance and integration proof
 Verification: VERIFIED
 Confidence: HIGH
-Notes: Specifies "The verified manager re-reads current canonical inputs, re-runs required checks, verifies changed-path hashes and promotes only the exact approved delta... Acceptance records the deterministic verdict, reviewer disposition, rollback identity and complete bounded evidence bundle".
+Notes: Under "## Acceptance pipeline", numbered item "5. **Manager acceptance and integration proof**" specifies: "The verified manager re-reads current canonical inputs, re-runs required checks, verifies changed-path hashes and promotes only the exact approved delta... Acceptance records the deterministic verdict, reviewer disposition, rollback identity and complete bounded evidence bundle."
 
 Claim ID: AIW-CLAIM-003
 Claim: AIWorkHub defines six falsifiable quality lenses for independent evaluation.

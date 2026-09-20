@@ -1,7 +1,7 @@
-﻿# SOURCE DOSSIER: 01 — UNTRIVIAL AGENT ORCHESTRATOR
+# SOURCE DOSSIER: 01 — UNTRIVIAL AGENT ORCHESTRATOR
 
 > **Authority**: Upstream Source Evidence Dossier  
-> **Status**: Literal Evidence Corrected (Post-Re-Audit #3 Patch — EXT3-001, EXT3-002)
+> **Status**: Literal Evidence Corrected (Post-Re-Audit #4 Patch)
 
 ---
 
@@ -31,7 +31,7 @@ Pinned tag: v0.13.0
 Pinned commit: 15e9ea971f1711ec8b50e157d6eb300db6cbe0d6
 Evidence type: SOURCE_CODE
 Exact evidence: backend/internal/adapters/runtime/conpty/host_conpty_windows.go
-Section / symbol: func newConPTY(cwd, shellCmd string, shellArgs []string) (ptyConn, error)
+Section / symbol: newConPTY
 Verification: VERIFIED
 Confidence: HIGH
 Notes: Uses github.com/aymanbagabas/go-pty to initialize Windows ConPTY, resize buffers, and capture process exit codes.
@@ -43,7 +43,9 @@ Pinned tag: v0.13.0
 Pinned commit: 15e9ea971f1711ec8b50e157d6eb300db6cbe0d6
 Evidence type: SOURCE_CODE
 Exact evidence: backend/internal/adapters/workspace/gitworktree/workspace.go
-Section / symbol: func (w *Workspace) validateManagedPath(path string) (string, error) / func (w *Workspace) managedPath(cfg ports.WorkspaceConfig) (string, error)
+Section / symbol:
+  validateManagedPath
+  managedPath
 Verification: VERIFIED
 Confidence: HIGH
 Notes: Evaluates physical absolute paths, checks that paths remain within w.managedRoot, and creates dedicated git worktree directories per session.
@@ -55,22 +57,26 @@ Pinned tag: v0.13.0
 Pinned commit: 15e9ea971f1711ec8b50e157d6eb300db6cbe0d6
 Evidence type: SOURCE_CODE
 Exact evidence: backend/internal/httpd/router.go
-Section / symbol: func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps, control ControlDeps) chi.Router
+Section / symbol:
+  NewRouterWithControl
+  mountHealth
 Verification: VERIFIED
 Confidence: HIGH
-Notes: Verified routes include GET /healthz, GET /readyz, POST /api/v1/projects, POST /api/v1/sessions, POST /api/v1/sessions/{id}/send, POST /api/v1/sessions/{id}/kill, POST /api/v1/sessions/{id}/restore, and GET /api/v1/sessions/{id}/workspace/events.
+Notes: NewRouterWithControl is the sole exported router constructor. It calls mountHealth, mountTerminalMux, mountControl, mountAgentSwitchPolicyControl, mountTelemetry, mountMobile, mountMobileDevices, and api.Register to wire routes. Exact REST endpoint strings are documented in UPSTREAM_CONTRACT_BASELINE.md.
 
 Claim ID: AO-CLAIM-004
-Claim: AO's built-in Antigravity CLI adapter fulfils the ports.Agent interface and builds launch and restore argv arrays via GetLaunchCommand and GetRestoreCommand; it does not natively enforce structured output schema.
+Claim: AO's built-in Antigravity CLI adapter fulfils the ports.Agent interface and builds launch and restore argv arrays; it does not natively enforce structured output schema.
 Repository: Untrivial-ai/agent-orchestrator
 Pinned tag: v0.13.0
 Pinned commit: 15e9ea971f1711ec8b50e157d6eb300db6cbe0d6
 Evidence type: SOURCE_CODE
-Exact evidence: backend/internal/adapters/agent/agy/agy.go (Plugin struct, func New() *Plugin); backend/internal/ports/agent.go (Agent interface)
-Section / symbol: func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg LaunchConfig) (cmd []string, err error) / func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg RestoreConfig) (cmd []string, ok bool, err error)
+Exact evidence: backend/internal/adapters/agent/agy/agy.go
+Section / symbol:
+  GetLaunchCommand
+  GetRestoreCommand
 Verification: VERIFIED
 Confidence: HIGH
-Notes: agy.go defines the Plugin struct (type Plugin struct, func New() *Plugin). GetLaunchCommand and GetRestoreCommand are the interface-mandated methods for argv construction. GetAgentHooks is also implemented (hooks.go). Integration gap regarding structured WorkerReport collection is explicitly documented as P01_PROOF_REQUIRED under Track P01-C.
+Notes: agy.go defines the Plugin struct and func New() *Plugin. GetLaunchCommand and GetRestoreCommand are the interface-mandated methods for argv construction (defined in backend/internal/ports/agent.go as the Agent interface). GetAgentHooks is also implemented (hooks.go). Integration gap regarding structured WorkerReport collection is documented as P01_PROOF_REQUIRED under Track P01-C.
 ```
 
 ---

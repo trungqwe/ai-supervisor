@@ -1,4 +1,15 @@
-﻿# PHASE 0 EVIDENCE INTEGRITY FINAL AUDIT REPORT
+> [!CAUTION]
+> **SUPERSEDED BY EXTERNAL RE-AUDIT #3 AND #4.**
+> This audit record contains historical findings only. Several evidence citations
+> documented here were later found to be non-literal (e.g., `setupRouter`,
+> `registerRoutes`, `CommandBuilder`, `## Five quality control layers`,
+> `## Quy tac chung cho agent`, `## Tool catalog overview`).
+> See `PHASE0_EXTERNAL_REAUDIT_003.md` and `PHASE0_LITERAL_EVIDENCE_FINAL_AUDIT.md`
+> for the corrected baseline.
+
+---
+
+# PHASE 0 EVIDENCE INTEGRITY FINAL AUDIT REPORT
 
 > **Audit ID**: AUDIT-P00-EVID-003  
 > **Date**: 2026-09-20  

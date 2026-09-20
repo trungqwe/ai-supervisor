@@ -53,7 +53,7 @@ By leveraging **Untrivial Agent Orchestrator** as the execution runtime, this sy
 | **Current Stage** | **Phase 0 — Architecture Freeze** |
 | **Current State** | [`PHASE0_READY_FOR_EXTERNAL_AUDIT`](docs/18_CURRENT_STATE.md) |
 | **Governance Mode** | Strict No-Code Enforcement in Phase 0; External Audit Gate Required |
-| **Audit Status** | Evidence Hygiene Complete; all findings from Re-Audit #2 resolved (see [`docs/audits/PHASE0_EVIDENCE_FINAL_AUDIT.md`](docs/audits/PHASE0_EVIDENCE_FINAL_AUDIT.md)) |
+| **Audit Status** | Literal Evidence Hygiene Complete; all findings from Re-Audit #3 & #4 resolved (see [`docs/audits/PHASE0_LITERAL_EVIDENCE_FINAL_AUDIT.md`](docs/audits/PHASE0_LITERAL_EVIDENCE_FINAL_AUDIT.md)) |
 | **GitHub Repository** | [https://github.com/trungqwe/ai-supervisor](https://github.com/trungqwe/ai-supervisor) |
 
 ---
@@ -78,8 +78,10 @@ By leveraging **Untrivial Agent Orchestrator** as the execution runtime, this sy
 - **Source Dossiers with Evidence**: [`docs/sources/`](docs/sources/)
 
 ### Audits & Governance
-- **Phase 0 Evidence Integrity Final Audit**: [`docs/audits/PHASE0_EVIDENCE_FINAL_AUDIT.md`](docs/audits/PHASE0_EVIDENCE_FINAL_AUDIT.md)
-- **External Re-Audit #2 Findings Register**: [`docs/audits/PHASE0_EXTERNAL_REAUDIT_002.md`](docs/audits/PHASE0_EXTERNAL_REAUDIT_002.md)
+- **Phase 0 Literal Evidence Final Audit**: [`docs/audits/PHASE0_LITERAL_EVIDENCE_FINAL_AUDIT.md`](docs/audits/PHASE0_LITERAL_EVIDENCE_FINAL_AUDIT.md)
+- **External Re-Audit #3 Findings Register**: [`docs/audits/PHASE0_EXTERNAL_REAUDIT_003.md`](docs/audits/PHASE0_EXTERNAL_REAUDIT_003.md)
+- **Phase 0 Evidence Integrity Final Audit (Superseded)**: [`docs/audits/PHASE0_EVIDENCE_FINAL_AUDIT.md`](docs/audits/PHASE0_EVIDENCE_FINAL_AUDIT.md)
+- **External Re-Audit #2 Findings Register (Historical)**: [`docs/audits/PHASE0_EXTERNAL_REAUDIT_002.md`](docs/audits/PHASE0_EXTERNAL_REAUDIT_002.md)
 - **Phase 0 Remediation Audit (Historical)**: [`docs/audits/PHASE0_REMEDIATION_AUDIT.md`](docs/audits/PHASE0_REMEDIATION_AUDIT.md)
 - **External Audit Findings Register (Historical)**: [`docs/audits/PHASE0_EXTERNAL_AUDIT_FINDINGS.md`](docs/audits/PHASE0_EXTERNAL_AUDIT_FINDINGS.md)
 
