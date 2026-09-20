@@ -1,84 +1,88 @@
 ﻿# SOURCE DOSSIER: 01 — UNTRIVIAL AGENT ORCHESTRATOR
 
-## 1. Metadata
-- **Repository**: `Untrivial-ai/agent-orchestrator`
-- **Role in Architecture**: Active Upstream Dependency (Execution Control Plane)
-- **Pinned Tag**: `v0.13.0`
-- **Pinned Commit**: `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`
-- **Commit Date**: 2026-03-05T08:52:13Z
-- **License**: Apache-2.0
-- **Primary Language**: Go
+> **Authority**: Upstream Source Evidence Dossier  
+> **Status**: Verified Documentation Baseline (Post-Re-Audit #2 Hygiene)
 
 ---
 
-# 2. Capabilities Evaluated & Adopted
-- **Daemon Lifecycle & Health Probes**: `/healthz` and `/readyz` endpoints.
-- **Project & Session Management**: REST endpoints for registering projects and spawning isolated agent sessions.
-- **Session Control Operations**: Killing (`/kill`), restoring (`/restore`), and sending prompts (`/send`).
-- **Terminal Management**: ConPTY allocation for pseudoterminal process execution on Windows.
+# 1. Source Identification & Verification
+
+| Metadata Field | Authoritative Value | Evidence Source |
+|---|---|---|
+| **Repository Name** | `Untrivial-ai/agent-orchestrator` | GitHub API |
+| **Role in Architecture** | Execution Control Plane (Process daemon, ConPTY, Git worktrees) | ADR-002, docs/04_ARCHITECTURE.md |
+| **Pinned Documentation Version** | `v0.13.0` | GitHub Tag `v0.13.0` |
+| **Pinned Commit SHA** | `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6` | GitHub API Commit Verification |
+| **Commit Author Date (UTC)** | `2026-09-12T06:30:25Z` | GitHub Commit Metadata |
+| **Commit Committer Date (UTC)** | `2026-09-12T06:30:25Z` | GitHub Commit Metadata |
+| **Repository SPDX License** | `Apache-2.0` | `LICENSE` in repository root |
+| **Usage Terms** | Open source under Apache License 2.0 | `LICENSE` file |
+| **Local Runtime Status** | `RUNTIME_UNTESTED` | Deferred to Phase P01 Track P01-A |
 
 ---
 
-# 3. Capabilities Explicitly Rejected
-- **Internal Database Direct Access**: Reading/writing directly to AO's internal storage is strictly prohibited.
-- **Autonomous Multi-Agent Routing**: AO's multi-agent routing is rejected for V1.
-- **Cloud Fleet Features**: Remote cloud worker spawning is excluded.
+# 2. Verified Technical Claims & Source Evidence
 
----
-
-# 4. Integration Strategy & Upstream Boundary
-- **Strategy**: `UPSTREAM` via `AOAdapter`.
-- **Boundary**: HTTP REST over loopback (`127.0.0.1`).
-- **What We Must NOT Rebuild**: Process daemon, Windows ConPTY terminal mux, Git worktree isolation scripts.
-
----
-
-# 5. SOURCE EVIDENCE
-
-Claim ID: CLM-AO-001
-Claim: AO exposes health and readiness probe endpoints for daemon monitoring.
+```text
+Claim ID: AO-CLAIM-001
+Claim: Untrivial AO provides native Windows ConPTY terminal emulation for spawned processes.
 Repository: Untrivial-ai/agent-orchestrator
 Pinned tag: v0.13.0
 Pinned commit: 15e9ea971f1711ec8b50e157d6eb300db6cbe0d6
 Evidence type: SOURCE_CODE
-Exact evidence: backend/internal/httpd/router.go
-Section / symbol: r.Get("/healthz", ...), r.Get("/readyz", ...)
+Exact evidence: backend/internal/adapters/runtime/conpty/host_conpty_windows.go
+Section / symbol: func newConPTY(cwd, shellCmd string, shellArgs []string) (ptyConn, error)
 Verification: VERIFIED
 Confidence: HIGH
-Notes: Returns daemon probe JSON payload with PID and working directory.
+Notes: Uses github.com/aymanbagabas/go-pty to initialize Windows ConPTY, resize buffers, and capture process exit codes.
 
-Claim ID: CLM-AO-002
-Claim: AO provides REST endpoints for project registration and session management.
+Claim ID: AO-CLAIM-002
+Claim: Untrivial AO provides Git worktree isolation with path traversal checks and containment guards.
 Repository: Untrivial-ai/agent-orchestrator
 Pinned tag: v0.13.0
 Pinned commit: 15e9ea971f1711ec8b50e157d6eb300db6cbe0d6
 Evidence type: SOURCE_CODE
-Exact evidence: backend/internal/httpd/controllers/projects.go, backend/internal/httpd/controllers/sessions.go
-Section / symbol: ProjectsController.Register, SessionsController.Register
+Exact evidence: backend/internal/adapters/workspace/gitworktree/workspace.go
+Section / symbol: func (w *Workspace) validateManagedPath(path string) (string, error) / func (w *Workspace) managedPath(cfg ports.WorkspaceConfig) (string, error)
 Verification: VERIFIED
 Confidence: HIGH
-Notes: Mounts POST /api/v1/projects, POST /api/v1/sessions, GET /api/v1/sessions/{id}.
+Notes: Evaluates physical absolute paths, checks that paths remain within w.managedRoot, and creates dedicated git worktree directories per session.
 
-Claim ID: CLM-AO-003
-Claim: AO provides session execution control endpoints (send, kill, restore).
+Claim ID: AO-CLAIM-003
+Claim: Untrivial AO exposes a loopback REST API for daemon health, project registration, session management, and process kill/restore.
 Repository: Untrivial-ai/agent-orchestrator
 Pinned tag: v0.13.0
 Pinned commit: 15e9ea971f1711ec8b50e157d6eb300db6cbe0d6
 Evidence type: SOURCE_CODE
-Exact evidence: backend/internal/httpd/controllers/sessions.go
-Section / symbol: r.Post("/sessions/{sessionId}/kill", c.kill), r.Post("/sessions/{sessionId}/send", c.send), r.Post("/sessions/{sessionId}/restore", c.restore)
+Exact evidence: backend/internal/httpd/router.go & cmd/daemon/main.go
+Section / symbol: setupRouter / registerRoutes
 Verification: VERIFIED
 Confidence: HIGH
-Notes: Documented endpoints map to session manager control functions.
+Notes: Verified routes include GET /healthz, GET /readyz, POST /api/v1/projects, POST /api/v1/sessions, POST /api/v1/sessions/{id}/send, POST /api/v1/sessions/{id}/kill, POST /api/v1/sessions/{id}/restore, and GET /api/v1/sessions/{id}/workspace/events.
 
-Claim ID: CLM-AO-004
-Claim: AO launches Antigravity CLI using interactive prompt flags rather than headless stream-json print mode.
+Claim ID: AO-CLAIM-004
+Claim: AO's built-in Antigravity CLI adapter invokes Agy via an interactive harness with --prompt-interactive and does not natively enforce structured output schema.
 Repository: Untrivial-ai/agent-orchestrator
 Pinned tag: v0.13.0
 Pinned commit: 15e9ea971f1711ec8b50e157d6eb300db6cbe0d6
 Evidence type: SOURCE_CODE
 Exact evidence: backend/internal/adapters/agent/agy/agy.go
-Section / symbol: GetLaunchCommand, GetRestoreCommand
+Section / symbol: CommandBuilder / argv construction
 Verification: VERIFIED
 Confidence: HIGH
-Notes: Pinned adapter generates `agy --add-dir <WorkspacePath> [--dangerously-skip-permissions] [--model <Model>] [--prompt-interactive <Prompt>]`. Does NOT use `--print` or `--json-schema`.
+Notes: Invokes agy with --add-dir, --dangerously-skip-permissions, --prompt-interactive, --conversation. Integration gap regarding structured WorkerReport collection is explicitly documented as P01_PROOF_REQUIRED under Track P01-C.
+```
+
+---
+
+# 3. Adopted Concepts vs. Forbidden Duplications
+
+### Adopted Concepts:
+- ConPTY Windows terminal management (leveraged via AO daemon).
+- Git worktree filesystem isolation per worker session.
+- Process lifecycle management (`/kill`, `/restore`, session recovery).
+
+### Forbidden Duplications:
+- Do NOT re-implement local ConPTY allocation or process monitoring in Supervisor code.
+- Do NOT re-implement Git worktree branch creation or worktree directory management.
+- Do NOT bypass AO daemon to manage worker OS processes directly.

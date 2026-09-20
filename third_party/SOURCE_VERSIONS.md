@@ -1,7 +1,9 @@
 ﻿# THIRD-PARTY SOURCE VERSIONS
 
 > **Authority**: Dependency Pinning & Upstream Version Register  
-> **Status**: Verified Documentation Baseline (Post-Remediation)
+> **Status**: Verified Documentation Baseline (Post-Re-Audit #2 Hygiene)  
+> **Date Convention**: All commit timestamps are explicitly recorded in ISO-8601 UTC format (`YYYY-MM-DDTHH:MM:SSZ`) separating Author Date from Committer Date.  
+> **License Convention**: Repository SPDX License is explicitly distinguished from Product / Usage Terms.
 
 ---
 
@@ -14,8 +16,10 @@ These external systems provide active runtime execution capabilities. In Phase 0
 - **Role in Architecture**: Execution Control Plane (Process daemon, Windows ConPTY terminal, Git worktree isolation)
 - **Pinned Documentation Version**: `v0.13.0`
 - **Pinned Commit**: `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`
-- **Commit Date**: 2026-03-05T08:52:13Z
-- **License**: Apache-2.0
+- **Commit Author Date (UTC)**: `2026-09-12T06:30:25Z`
+- **Commit Committer Date (UTC)**: `2026-09-12T06:30:25Z`
+- **Repository SPDX License**: `Apache-2.0`
+- **Usage Terms**: Open source under Apache License 2.0
 - **Documentation Contract Status**: `DOCUMENTED`
 - **Local Installed Version**: `RUNTIME_UNTESTED` (Pending P01 proof)
 - **Runtime Proof Status**: `RUNTIME_UNTESTED`
@@ -36,22 +40,24 @@ These external systems provide active runtime execution capabilities. In Phase 0
 - **Role in Architecture**: Primary Worker Interface (Autonomous coding agent inside worktrees)
 - **Pinned Documentation Version**: `1.2.7`
 - **Pinned Commit**: `7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`
-- **Commit Date**: 2026-03-12T18:34:01Z
-- **License**: Google Proprietary / Developer Terms of Service
+- **Commit Author Date (UTC)**: `2026-09-19T01:01:48Z`
+- **Commit Committer Date (UTC)**: `2026-09-19T01:01:48Z`
+- **Repository SPDX License**: `NOT DECLARED`
+- **Usage Terms**: Subject to applicable Google / Antigravity Terms of Service
 - **Documentation Contract Status**: `DOCUMENTED`
 - **Local Installed Version**: `1.2.7` (Verified via `agy --version` on local host)
 - **Runtime Proof Status**: `RUNTIME_UNTESTED` (Comprehensive headless contract testing pending P01)
 - **Compatibility Status**: `COMPATIBILITY_PENDING_P01`
-- **Verified CLI Flags (from official distribution)**:
-  - `--print` / `-p`: Run single prompt non-interactively and print response
-  - `--output-format`: Output format for print mode (`text`, `json`, `stream-json`)
-  - `--input-format`: Input format for print mode (`text`, `stream-json`)
-  - `--json-schema`: Enforce JSON schema on structured final output
-  - `--add-dir`: Add directory to workspace root
+- **Verified CLI Flags (from official v1.2.7 distribution)**:
+  - `-p, --print, --prompt <prompt>`: Run single prompt non-interactively and print response (aliases)
+  - `--output-format text|json|stream-json`: Output format negotiation for print mode
+  - `--input-format text|stream-json`: Input format negotiation (stream-json receives prompt via stdin)
+  - `--json-schema <schema>`: Enforce JSON schema on structured final output
+  - `--add-dir <path>`: Add directory to workspace root
   - `--dangerously-skip-permissions`: Auto-approve tool executions
-  - `--conversation`: Resume previous conversation by ID
-  - `--continue` / `-c`: Continue most recent conversation
-  - `--mode`: Agent execution mode (`accept-edits`, `plan`)
+  - `--conversation <id>`: Resume previous conversation by ID
+  - `--continue, -c`: Continue most recent conversation
+  - `--mode accept-edits|plan`: Agent execution mode
 
 ---
 
@@ -59,12 +65,12 @@ These external systems provide active runtime execution capabilities. In Phase 0
 
 These repositories serve strictly as conceptual, pattern, and design references. **THEY ARE NOT ACTIVE RUNTIME DEPENDENCIES AND DO NOT AUTO-UPDATE.**
 
-| Technology | Repository | Pinned Commit (Full 40-Char SHA) | Commit Date | License | Reason Selected & Role |
-|---|---|---|---|---|---|
-| **Proxide** | `tt-a1i/proxide` | `c1621e313c6cdfe3a10c8f6e929d46ba8a8c27ee` | 2026-06-20 | MIT | Readonly default security, path containment |
-| **Mieruko Workbench** | `Mieruko/MCP_Plugins_With_ChatGPTWeb` | `4c09b02d87e63a765b7a9b3bbb0c28e7a1b750df` | 2026-09-19 | MIT | Workspace binding, slim tool surface philosophy |
-| **AIWorkHub** | `shrec/AIWorkHub` | `19c8ce548c27316a06117c0638b4f853e00292b8` | 2026-09-20 | MIT | Evidence-first review, candidate claims vs. ground truth |
-| **OpenAI Symphony** | `openai/symphony` | `be10a1b79df723d6d7612b5651c8522704dafb2e` | 2026-09-15 | Apache-2.0 | Workflow-as-policy, isolated run boundaries (`SPEC.md`) |
-| **Codencer** | `lookmanrays/codencer` | `8d4908b1acf049cd97a9c4dcb752d1e44cbb8655` | 2026-08-06 | Apache-2.0 | Bridge-not-brain, state outside chat, execution vocabulary |
-| **AWS CAO** | `awslabs/cli-agent-orchestrator` | `156cf1edcdb9de1ee01a2f17c2a4026e5f305e56` | 2026-09-20 | Apache-2.0 | Provider / runtime abstraction pattern |
-| **Antigravity Link** | `cafeTechne/antigravity-link-extension` | `dae4483275acba8fff093b14bb25abe8e9495f94` | 2026-06-04 | MIT | CDP browser/GUI bridge (retained strictly as fallback) |
+| Technology | Repository | Pinned Commit (Full 40-Char SHA) | Commit Author Date (UTC) | Commit Committer Date (UTC) | Repository SPDX License | Usage Terms | Reason Selected & Role |
+|---|---|---|---|---|---|---|---|
+| **Proxide** | `tt-a1i/proxide` | `c1621e313c6cdfe3a10c8f6e929d46ba8a8c27ee` | `2026-06-20T15:17:16Z` | `2026-06-20T15:17:16Z` | `MIT` | MIT License | Readonly default security, path containment (`SECURITY.md`) |
+| **Mieruko Workbench** | `Mieruko/MCP_Plugins_With_ChatGPTWeb` | `4c09b02d87e63a765b7a9b3bbb0c28e7a1b750df` | `2026-09-19T20:17:06Z` | `2026-09-19T20:17:06Z` | `MIT` | MIT License | Workspace binding, session-to-task persistence, slim tool surface philosophy |
+| **AIWorkHub** | `shrec/AIWorkHub` | `19c8ce548c27316a06117c0638b4f853e00292b8` | `2026-09-20T06:48:06Z` | `2026-09-20T06:48:06Z` | `MIT` | MIT License | Evidence-first review, candidate claims vs. ground truth (`docs/QUALITY_CONTROL.md`) |
+| **OpenAI Symphony** | `openai/symphony` | `be10a1b79df723d6d7612b5651c8522704dafb2e` | `2026-09-15T22:12:07Z` | `2026-09-15T22:12:07Z` | `Apache-2.0` | Apache License 2.0 | Workflow-as-policy, authoritative orchestrator state, workspace preservation (`SPEC.md`) |
+| **Codencer** | `lookmanrays/codencer` | `8d4908b1acf049cd97a9c4dcb752d1e44cbb8655` | `2026-08-06T14:35:56Z` | `2026-08-06T14:35:56Z` | `Apache-2.0` | Apache License 2.0 | Bridge-not-brain, state outside chat, execution vocabulary |
+| **AWS CAO** | `awslabs/cli-agent-orchestrator` | `156cf1edcdb9de1ee01a2f17c2a4026e5f305e56` | `2026-09-20T05:52:34Z` | `2026-09-20T05:52:34Z` | `Apache-2.0` | Apache License 2.0 | Provider / runtime abstraction pattern |
+| **Antigravity Link** | `cafeTechne/antigravity-link-extension` | `dae4483275acba8fff093b14bb25abe8e9495f94` | `2026-06-04T05:55:30Z` | `2026-06-04T05:55:30Z` | `MIT` | MIT License | CDP browser/GUI bridge (retained strictly as fallback) |

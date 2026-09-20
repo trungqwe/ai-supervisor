@@ -24,17 +24,17 @@ Verify actual pinned AO `v0.13.0` on Windows:
 ### Track P01-B — Direct Antigravity CLI Capability Proof
 Verify pinned Antigravity CLI `1.2.7` on Windows:
 - Verification of binary version (`agy --version`) and help flags (`agy --help`).
-- Headless non-interactive execution (`agy --print -p "<prompt>"`).
+- Non-interactive prompt execution (`agy -p "<prompt>"`). Note: `-p`, `--print`, and `--prompt` are documented aliases; `agy -p "<prompt>"` is canonical.
 - Output format negotiation (`--output-format text|json|stream-json`).
-- Input format negotiation (`--input-format text|stream-json`).
-- JSON schema enforcement on output (`--json-schema <schema>`).
+- Input format negotiation (`--input-format text|stream-json`). Note: `--input-format stream-json` receives prompts via stdin stream and is not combined with `-p`.
+- JSON schema enforcement on output (`agy -p "<prompt>" --json-schema <schema>`).
 - Auto-approve permissions (`--dangerously-skip-permissions`).
 - Multi-directory workspace binding (`--add-dir <path>`).
 - Conversation continuation (`--conversation <id>` and `--continue`).
 
 ### Track P01-C — AO ↔ Agy Adapter Integration Proof
 Determine exactly how pinned AO invokes Agy and evaluate the integration gap:
-- Empirical tracing of AO's invocation argv (verifying use of `--prompt-interactive`, `--add-dir`, `--dangerously-skip-permissions`).
+- Empirical tracing of AO's invocation argv (verifying use of `--prompt-interactive`, `--add-dir`, `--dangerously-skip-permissions`, `--conversation`).
 - Assess worker completion detection in AO session lifecycle.
 - **Critical Evaluation Question**: "Can the existing AO Agy adapter satisfy our WorkerReport requirements without custom integration code?"
 - Deliverable: Documented finding with explicit verdict (`YES`, `NO`, or `PARTIAL`) and concrete evidence.

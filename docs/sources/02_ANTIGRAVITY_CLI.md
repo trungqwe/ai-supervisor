@@ -1,74 +1,87 @@
 ﻿# SOURCE DOSSIER: 02 — OFFICIAL ANTIGRAVITY CLI
 
-## 1. Metadata
-- **Repository / Distribution**: `google-antigravity/antigravity-cli`
-- **Role in Architecture**: Active External Worker Interface (Primary Worker)
-- **Pinned Documentation Version**: `1.2.7`
-- **Pinned Commit**: `7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`
-- **Commit Date**: 2026-03-12T18:34:01Z
-- **License**: Google Proprietary / Developer Terms of Service
-- **Local Host Installed Version**: `1.2.7` (Verified via `agy --version`)
+> **Authority**: Upstream Source Evidence Dossier  
+> **Status**: Verified Documentation Baseline (Post-Re-Audit #2 Hygiene)
 
 ---
 
-# 2. Capabilities Evaluated & Adopted
-- **Headless Non-Interactive Print Mode**: `--print` / `-p` flag executes a single turn and prints output without launching TUI.
-- **Input / Output Format Negotiation**: Supports `--output-format (text, json, stream-json)` and `--input-format (text, stream-json)`.
-- **Structured Schema Enforcement**: `--json-schema` enforces JSON schema validation on the final turn.
-- **Unattended Permission Handling**: `--dangerously-skip-permissions` auto-approves tool permission requests.
-- **Workspace Confinement**: `--add-dir` sets explicit directories added to workspace.
-- **Conversation Continuity**: `--conversation <id>` or `--continue` / `-c` resumes existing conversation.
+# 1. Source Identification & Verification
+
+| Metadata Field | Authoritative Value | Evidence Source |
+|---|---|---|
+| **Repository Name** | `google-antigravity/antigravity-cli` | Official Google Distribution |
+| **Role in Architecture** | Primary Worker Runtime (Autonomous coding agent in isolated worktree) | ADR-003, docs/04_ARCHITECTURE.md |
+| **Pinned Documentation Version** | `1.2.7` | GitHub Release & Local CLI `agy --version` |
+| **Pinned Commit SHA** | `7bb195acaec9e7788df5210d0dc3e15f3cefc6b3` | GitHub Commit Verification |
+| **Commit Author Date (UTC)** | `2026-09-19T01:01:48Z` | GitHub Commit Metadata |
+| **Commit Committer Date (UTC)** | `2026-09-19T01:01:48Z` | GitHub Commit Metadata |
+| **Repository SPDX License** | `NOT DECLARED` | GitHub Repository Metadata |
+| **Usage Terms** | Subject to applicable Google / Antigravity Terms of Service | Official Distribution Terms |
+| **Local Runtime Status** | `1.2.7` Installed; Empirical Headless Proof Pending P01 | Local binary smoke test |
 
 ---
 
-# 3. Capabilities Explicitly Rejected & Corrected Claims
-- **Rejected Synthetic Flags**: Fictional flags previously claimed (`--mode autonomous`, `--input-contract`, `--output-report`) DO NOT EXIST in official Agy.
-- **Supported Modes**: The actual `--mode` flag only accepts `(accept-edits, plan)`.
-- **No Native WorkerReport Generation**: Agy does not natively emit our proprietary `WorkerReport` schema; it enforces schemas only on its response payload when `--json-schema` is passed.
+# 2. Verified Technical Claims & Source Evidence
 
----
-
-# 4. Integration Strategy & Upstream Boundary
-- **Strategy**: `UPSTREAM` via AO Harness Adapter.
-- **Boundary**: Dispatched within isolated Git worktrees.
-- **What We Must NOT Rebuild**: Autonomous code synthesis, compiler diagnostics, tool-calling loop.
-
----
-
-# 5. SOURCE EVIDENCE
-
-Claim ID: CLM-AGY-001
-Claim: Official Antigravity CLI supports non-interactive single-prompt execution mode.
+```text
+Claim ID: AGY-CLAIM-001
+Claim: Antigravity CLI v1.2.7 supports non-interactive single-prompt execution and result printing via prompt flags.
 Repository: google-antigravity/antigravity-cli
 Pinned tag: 1.2.7
 Pinned commit: 7bb195acaec9e7788df5210d0dc3e15f3cefc6b3
-Evidence type: OFFICIAL_PRODUCT_DOC
-Exact evidence: agy --help
-Section / symbol: --print, -p ("Run a single prompt non-interactively and print the response")
+Evidence type: OFFICIAL_REPO_DOC
+Exact evidence: README.md & agy --help
+Section / symbol: -p, --print, --prompt <prompt>
 Verification: VERIFIED
 Confidence: HIGH
-Notes: Verified empirically on local host binary version 1.2.7.
+Notes: In official documentation and binary help, -p, --print, and --prompt are aliases. Canonical non-interactive invocation syntax is agy -p "<prompt>".
 
-Claim ID: CLM-AGY-002
-Claim: Official Antigravity CLI supports structured JSON output and schema validation.
+Claim ID: AGY-CLAIM-002
+Claim: Antigravity CLI v1.2.7 supports structured JSON schema enforcement on output.
 Repository: google-antigravity/antigravity-cli
 Pinned tag: 1.2.7
 Pinned commit: 7bb195acaec9e7788df5210d0dc3e15f3cefc6b3
-Evidence type: OFFICIAL_PRODUCT_DOC
-Exact evidence: agy --help
-Section / symbol: --output-format (text, json, stream-json), --json-schema
+Evidence type: OFFICIAL_REPO_DOC
+Exact evidence: README.md & agy --help
+Section / symbol: --json-schema <schema>
 Verification: VERIFIED
 Confidence: HIGH
-Notes: Schema enforcement applies to the final response turn.
+Notes: Flag exists and specifies output JSON schema validation. Verification of exact behavior when writing files vs emitting JSON is subject to P01 Track P01-B.
 
-Claim ID: CLM-AGY-003
-Claim: Official Antigravity CLI supports unattended tool permission auto-approval.
+Claim ID: AGY-CLAIM-003
+Claim: Antigravity CLI v1.2.7 supports streaming JSON input and output format negotiation.
 Repository: google-antigravity/antigravity-cli
 Pinned tag: 1.2.7
 Pinned commit: 7bb195acaec9e7788df5210d0dc3e15f3cefc6b3
-Evidence type: OFFICIAL_PRODUCT_DOC
-Exact evidence: agy --help
-Section / symbol: --dangerously-skip-permissions ("Auto-approve all tool permission requests without prompting")
+Evidence type: OFFICIAL_REPO_DOC
+Exact evidence: README.md & agy --help
+Section / symbol: --output-format text|json|stream-json / --input-format text|stream-json
 Verification: VERIFIED
 Confidence: HIGH
-Notes: Required for headless non-interactive execution inside isolated worktrees.
+Notes: When --input-format stream-json is specified, input prompts are piped via stdin stream rather than supplied via -p.
+
+Claim ID: AGY-CLAIM-004
+Claim: Antigravity CLI supports unattended autonomous execution via permission bypass and multi-directory workspace binding.
+Repository: google-antigravity/antigravity-cli
+Pinned tag: 1.2.7
+Pinned commit: 7bb195acaec9e7788df5210d0dc3e15f3cefc6b3
+Evidence type: OFFICIAL_REPO_DOC
+Exact evidence: README.md & agy --help
+Section / symbol: --dangerously-skip-permissions / --add-dir <path>
+Verification: VERIFIED
+Confidence: HIGH
+Notes: Flags allow headless runs to access secondary roots and execute file edits and commands without interactive confirmation.
+```
+
+---
+
+# 3. Adopted Concepts vs. Upstream Gaps
+
+### Adopted Concepts:
+- Official headless execution flags (`-p`, `--output-format`, `--input-format`, `--json-schema`).
+- Unattended execution (`--dangerously-skip-permissions`).
+- Worktree root mounting via `--add-dir`.
+
+### Empirical Gaps to Prove in Phase P01 (Track P01-B & P01-C):
+- Does Agy write files to disk while simultaneously emitting `--json-schema` completion payloads?
+- How does AO's interactive harness (`--prompt-interactive`) interact with Agy's structured output flags?

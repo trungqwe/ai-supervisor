@@ -43,7 +43,7 @@ The system is strictly decomposed into three decoupled planes:
 │  - Worker Process ConPTY Management (/send, /kill, /restore) │
 │  - Agent Harness Adapters (Antigravity CLI)                  │
 └──────────────────────────────┬───────────────────────────────┘
-                               │ Headless Process / Harness Invocation
+                               │ Managed Agy Harness Invocation
                                ▼
 ┌──────────────────────────────────────────────────────────────┐
 │                        PRIMARY WORKER                        │
@@ -147,3 +147,4 @@ Detailed HTTP mappings reside exclusively in `docs/sources/UPSTREAM_CONTRACT_BAS
 > 2. **No Automatic Merge on Approval**: `approve_task` formally records review approval and updates task state to `APPROVED`. It does **NOT** automatically merge branches, commit to main, or push to remotes. Source promotion remains a human/explicit workflow.
 > 3. **AO internal database is NOT an integration API**: We never read or write directly to AO SQLite stores.
 > 4. **Code truth belongs exclusively to Git**: Commit SHAs, diffs, and worktree states are authoritative.
+

@@ -1,55 +1,74 @@
 ﻿# SOURCE DOSSIER: 05 — AIWORKHUB
 
-## 1. Metadata
-- **Repository**: `shrec/AIWorkHub`
-- **Role in Architecture**: Passive Design Source (Evidence-First Review & Durable Memory)
-- **Pinned Commit**: `19c8ce548c27316a06117c0638b4f853e00292b8`
-- **Commit Date**: 2026-09-20T06:48:06Z
-- **License**: MIT
-- **Primary Language**: Python
+> **Authority**: Passive Design Source Evidence Dossier  
+> **Status**: Verified Documentation Baseline (Post-Re-Audit #2 Hygiene)
 
 ---
 
-# 2. Capabilities Evaluated & Adopted
-- **Evidence-First Verification**: Treating worker output as candidate claims requiring Git verification.
-- **Durable Task Memory**: Maintaining task state and evidence graphs locally across agent turns.
-- **Independent Git Verification**: Querying commit diffs, tree SHAs, and exit codes directly.
+# 1. Source Identification & Verification
+
+| Metadata Field | Authoritative Value | Evidence Source |
+|---|---|---|
+| **Repository Name** | `shrec/AIWorkHub` | GitHub API |
+| **Role in Architecture** | Passive Design Reference (Evidence-first review, candidate skepticism, bounded review bundles) | ADR-006, docs/10_REVIEW_BUNDLE.md |
+| **Pinned Commit SHA** | `19c8ce548c27316a06117c0638b4f853e00292b8` | GitHub API Verification |
+| **Commit Author Date (UTC)** | `2026-09-20T06:48:06Z` | GitHub Commit Metadata |
+| **Commit Committer Date (UTC)** | `2026-09-20T06:48:06Z` | GitHub Commit Metadata |
+| **Repository SPDX License** | `MIT` | `LICENSE` in repository root |
+| **Usage Terms** | MIT License | `LICENSE` file |
+| **Operational Nature** | Passive Design Source (Never imported as runtime package) | Project Governance |
 
 ---
 
-# 3. Capabilities Explicitly Rejected & Corrected Claims
-- **VS Code Extension Tight Coupling**: We do not bind our core logic to the VS Code UI extension ecosystem.
-- **Correction of Synthetic Path**: In previous drafts, `core/review/evidence.py` was cited. Real codebase organizes documentation under `docs/ARCHITECTURE.md` and `docs/QUALITY_CONTROL.md`.
+# 2. Verified Technical Claims & Source Evidence
 
----
-
-# 4. Integration Strategy
-- **Strategy**: `REIMPLEMENT_PATTERN` in `EvidenceCollector` and `ReviewBundleBuilder`.
-
----
-
-# 5. SOURCE EVIDENCE
-
-Claim ID: CLM-AWH-001
-Claim: AIWorkHub establishes an evidence-first review process where candidate results must be verified against repository facts before acceptance.
+```text
+Claim ID: AIW-CLAIM-001
+Claim: AIWorkHub establishes the principle that worker self-reports are candidate claims only and never own the acceptance verdict.
 Repository: shrec/AIWorkHub
-Pinned tag: N/A
+Pinned tag: None
 Pinned commit: 19c8ce548c27316a06117c0638b4f853e00292b8
 Evidence type: OFFICIAL_REPO_DOC
-Exact evidence: docs/ARCHITECTURE.md
-Section / symbol: "Verification & Review Architecture"
+Exact evidence: docs/QUALITY_CONTROL.md
+Section / symbol: ## Five quality control layers (Layer 2: Bounded execution sandbox)
 Verification: VERIFIED
 Confidence: HIGH
-Notes: Specifies candidate results vs. authoritative verification gates.
+Notes: Explicitly states "Worker self-reports are evidence only; they never own PASS/FAIL".
 
-Claim ID: CLM-AWH-002
-Claim: AIWorkHub utilizes local-first durable task graphs to maintain project context without cloud service lock-in.
+Claim ID: AIW-CLAIM-002
+Claim: AIWorkHub formalizes manager acceptance based on independent verification of canonical inputs, exit codes, and bounded evidence bundles.
 Repository: shrec/AIWorkHub
-Pinned tag: N/A
+Pinned tag: None
 Pinned commit: 19c8ce548c27316a06117c0638b4f853e00292b8
 Evidence type: OFFICIAL_REPO_DOC
-Exact evidence: docs/CONTEXT_GRAPH.md
-Section / symbol: "Local-First Context Graph Architecture"
+Exact evidence: docs/QUALITY_CONTROL.md
+Section / symbol: ## Five quality control layers (Layer 5: Manager acceptance and integration proof)
 Verification: VERIFIED
 Confidence: HIGH
-Notes: Details maintaining durable context locally within the repository.
+Notes: Specifies "The verified manager re-reads current canonical inputs, re-runs required checks, verifies changed-path hashes and promotes only the exact approved delta... Acceptance records the deterministic verdict, reviewer disposition, rollback identity and complete bounded evidence bundle".
+
+Claim ID: AIW-CLAIM-003
+Claim: AIWorkHub defines six falsifiable quality lenses for independent evaluation.
+Repository: shrec/AIWorkHub
+Pinned tag: None
+Pinned commit: 19c8ce548c27316a06117c0638b4f853e00292b8
+Evidence type: OFFICIAL_REPO_DOC
+Exact evidence: docs/QUALITY_CONTROL.md
+Section / symbol: ## Six canonical lenses
+Verification: VERIFIED
+Confidence: HIGH
+Notes: Enumerates Correctness, Does it run, Test adequacy, Security, Code quality, and Requirements and scope as falsifiable yes/no criteria.
+```
+
+---
+
+# 3. Adopted Concepts vs. Architectural Boundaries
+
+### Adopted Concepts:
+- Evidence-first verification (worker claims are untrusted hypotheses until verified against Git diffs and exit codes).
+- Bounded Review Bundle concept (aggregating contract, claims, diff, and test evidence for single-turn review).
+- Quality lenses informing our policy validation rules.
+
+### Clarification on Ownership:
+- AIWorkHub demonstrates quality control in multi-agent environments.
+- The `ReviewBundleBuilder` in our architecture packages this into our specific `docs/schemas/review-bundle.schema.json` contract for ChatGPT.

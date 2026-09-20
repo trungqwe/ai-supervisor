@@ -1,43 +1,43 @@
 ﻿# SOURCE DOSSIER: 09 — ANTIGRAVITY LINK EXTENSION
 
-## 1. Metadata
-- **Repository**: `cafeTechne/antigravity-link-extension`
-- **Role in Architecture**: Fallback Mechanism Only (CDP GUI Bridge)
-- **Pinned Commit**: `dae4483275acba8fff093b14bb25abe8e9495f94`
-- **Commit Date**: 2026-06-04T05:55:30Z
-- **License**: MIT
-- **Primary Language**: TypeScript / Node.js
+> **Authority**: Passive Fallback Source Evidence Dossier  
+> **Status**: Verified Documentation Baseline (Post-Re-Audit #2 Hygiene)
 
 ---
 
-# 2. Capabilities Evaluated & Adopted
-- **CDP Bridge Mechanism**: Communicating with an active Antigravity GUI instance via Chrome DevTools Protocol.
-- **Session Interception**: Ability to snapshot active session state if headless CLI is completely unavailable.
+# 1. Source Identification & Verification
+
+| Metadata Field | Authoritative Value | Evidence Source |
+|---|---|---|
+| **Repository Name** | `cafeTechne/antigravity-link-extension` | GitHub API |
+| **Role in Architecture** | Passive Fallback Reference (CDP browser / GUI bridge) | Docs Governance |
+| **Pinned Commit SHA** | `dae4483275acba8fff093b14bb25abe8e9495f94` | GitHub API Verification |
+| **Commit Author Date (UTC)** | `2026-06-04T05:55:30Z` | GitHub Commit Metadata |
+| **Commit Committer Date (UTC)** | `2026-06-04T05:55:30Z` | GitHub Commit Metadata |
+| **Repository SPDX License** | `MIT` | `LICENSE` in repository root |
+| **Usage Terms** | MIT License | `LICENSE` file |
+| **Operational Nature** | Passive Fallback Source (Strictly Non-V1) | Project Governance |
 
 ---
 
-# 3. Capabilities Explicitly Rejected & Corrected Claims
-- **Default Workflow Role**: Strictly rejected as a primary workflow. GUI automation is fragile and user-disruptive.
-- **Repository Identity Correction**: Previous generic reference `antigravity-link` replaced with exact verified GitHub repository `cafeTechne/antigravity-link-extension`.
+# 2. Verified Technical Claims & Source Evidence
 
----
-
-# 4. Integration Strategy & Revisit Conditions
-- **Strategy**: `FALLBACK` only.
-- **Activation Gate**: Activated **ONLY IF** an explicit, verified functional requirement cannot be executed via the official Antigravity CLI or Agent Orchestrator.
-
----
-
-# 5. SOURCE EVIDENCE
-
-Claim ID: CLM-LNK-001
-Claim: Connects to Antigravity IDE instances via Chrome DevTools Protocol to inspect and bridge session state.
+```text
+Claim ID: LINK-CLAIM-001
+Claim: Antigravity Link Extension provides Chrome DevTools Protocol (CDP) and WebSocket bridge mechanisms for browser and MCP integration.
 Repository: cafeTechne/antigravity-link-extension
-Pinned tag: N/A
+Pinned tag: None
 Pinned commit: dae4483275acba8fff093b14bb25abe8e9495f94
 Evidence type: SOURCE_CODE
-Exact evidence: src/services/cdp.ts
-Section / symbol: CdpService
+Exact evidence: src/services/cdp.ts, src/server/index.ts, mcp-server.mjs
+Section / symbol: cdpService / createServer
 Verification: VERIFIED
 Confidence: HIGH
-Notes: Bridges programmatic commands into active Electron webContents via CDP session.
+Notes: Real codebase provides WebSocket / CDP connectivity for browser extension automation. Retained strictly as fallback; not part of V1 architecture (NFR-002).
+```
+
+---
+
+# 3. Architectural Boundary Notice
+
+In accordance with `NFR-002` (Zero Desktop GUI Automation) and `ADR-004` (Pure API Integration), this repository is **NOT** an active runtime dependency. It is preserved strictly as an audited fallback design reference.
