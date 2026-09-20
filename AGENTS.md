@@ -1,4 +1,4 @@
-﻿# AGENTS.md — Operational Directives & Behavioral Guardrails
+# AGENTS.md — Operational Directives & Behavioral Guardrails
 
 This document establishes immutable operational directives for all AI coding agents working on the **AI Engineering Supervisor Control Plane** repository.
 
@@ -52,28 +52,43 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES (PHASE 0 — ARCHITECTURE FREEZE)
+# SECTION 2: CURRENT PHASE RULES (PHASE 1 — UPSTREAM PROOF)
 
 > [!CRITICAL]
-> The following restrictions are **STRICTLY ACTIVE** during Phase 0. They remain in force until the User and External Supervisor explicitly authorize transition to Phase 1 following external audit review.
+> Phase 0 is **FROZEN** (`docs/audits/PHASE0_FREEZE_RECORD.md`). The following rules govern **Phase 1 (Upstream Proof)**.  
+> This Phase-1 governance change does **NOT** authorize application coding. Application/source implementation remains prohibited until a later User-authorized implementation phase.
 
-1. **NO APPLICATION CODE**:
-   - Absolutely no backend, frontend, API server, or CLI runtime implementation code may be written.
-   - No `.go`, `.ts`, `.js`, `.py`, `.rs`, `.sql`, or framework scaffolding files may be created.
-   - Permitted artifacts: Markdown (`.md`), JSON Schemas (`.json`), Mermaid diagrams, and configuration files.
+1. **NO SUPERVISOR APPLICATION IMPLEMENTATION YET**:
+   - Absolutely no Supervisor backend, frontend, API server, or CLI runtime implementation code may be written.
+   - No application/source code (`.go`, `.ts`, `.js`, `.py`, `.rs`, `.sql`) or scaffolding files may be created.
 
-2. **NO VALIDATION SCRIPTS OR CODE CREATION**:
-   - Do not write custom PowerShell (`.ps1`), Python, Node, or shell scripts for validation.
-   - Consistency validation must use native environment inspection and direct verification.
+2. **NO AOADAPTER IMPLEMENTATION YET**:
+   - Do not implement custom adapter packages or translation layers during Phase 1.
 
-3. **NO PACKAGE / DEPENDENCY INSTALLATION**:
-   - Do not install libraries or packages (`npm`, `pip`, `go get`, `cargo`) under any circumstance.
-   - Do not install third-party JSON Schema validators in Phase 0.
+3. **NO CHATGPT TRANSPORT IMPLEMENTATION YET**:
+   - Do not implement ChatGPT transport abstractions, connectors, or MCP server code yet.
 
-4. **PRESERVATION OF EXISTING ASSETS**:
-   - Never overwrite or delete existing local files without explicit instruction.
-   - Never force-push (`--force`) to the Git remote repository.
+4. **RUNTIME PROOF AND EVIDENCE COLLECTION ONLY**:
+   - Permitted activities in Phase 1 are strictly limited to running isolated runtime proofs and collecting empirical evidence against upstream tools.
 
-5. **AUDIT VERDICT RESTRAINT**:
-   - The agent performing Phase 0 work cannot self-declare `ARCHITECTURE_FROZEN`.
-   - The agent's internal audit may only conclude `PHASE0_READY_FOR_EXTERNAL_AUDIT` or `PHASE0_BLOCKED`.
+5. **USE PINNED AO/AGY BASELINES**:
+   - All proofs must evaluate the pinned upstream baselines (AO `v0.13.0` commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`, Agy `1.2.7` commit `7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`) unless a proof explicitly concerns upstream version compatibility.
+
+6. **NO SILENT UPSTREAM UPGRADES**:
+   - Do not upgrade upstream versions without explicit governance review and documented ADR.
+
+7. **NO WORKAROUND CODE**:
+   - Do not write custom integration code or workarounds to force a failed proof to pass.
+
+8. **FAILURE PROTOCOL — GAP_REQUIRES_ADR OR BLOCKER**:
+   - If an upstream capability fails or behaves differently than required, record either `GAP_REQUIRES_ADR` or `BLOCKER`. Do not attempt workarounds.
+
+9. **FOUR INDEPENDENT TRACKS**:
+   - Execution is strictly organized into four independent tracks:
+     * **P01-A**: AO Runtime Proof
+     * **P01-B**: Direct Antigravity CLI Capability Proof
+     * **P01-C**: AO ↔ Agy Structured Completion / WorkerReport Proof
+     * **P01-D**: ChatGPT Plus Transport Feasibility Proof
+
+10. **STOP AFTER PROOF RESULTS**:
+    - Record literal evidence in the corresponding Phase 1 audit dossier and **STOP**. Do not automatically proceed to Phase P02.

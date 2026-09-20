@@ -1,4 +1,4 @@
-﻿# AI Engineering Supervisor Control Plane
+# AI Engineering Supervisor Control Plane
 
 > **Autonomous Coordination, Independent Verification, and Architectural Governance for AI Coding Agents**
 
@@ -50,10 +50,12 @@ By leveraging **Untrivial Agent Orchestrator** as the execution runtime, this sy
 
 | Attribute | Value |
 |---|---|
-| **Current Stage** | **Phase 0 — Architecture Freeze** |
-| **Current State** | [`PHASE0_READY_FOR_EXTERNAL_AUDIT`](docs/18_CURRENT_STATE.md) |
-| **Governance Mode** | Strict No-Code Enforcement in Phase 0; External Audit Gate Required |
-| **Audit Status** | Literal Evidence Hygiene Complete; all findings from Re-Audit #3 & #4 resolved (see [`docs/audits/PHASE0_LITERAL_EVIDENCE_FINAL_AUDIT.md`](docs/audits/PHASE0_LITERAL_EVIDENCE_FINAL_AUDIT.md)) |
+| **Phase 0** | [`ARCHITECTURE_FROZEN`](docs/audits/PHASE0_FREEZE_RECORD.md) |
+| **Phase 1** | `READY_FOR_UPSTREAM_PROOF` |
+| **Current Stage** | **Phase 1 — Upstream Proof Preparation** |
+| **Current State** | [`ARCHITECTURE_FROZEN`](docs/18_CURRENT_STATE.md) |
+| **Official Freeze Record** | [`docs/audits/PHASE0_FREEZE_RECORD.md`](docs/audits/PHASE0_FREEZE_RECORD.md) |
+| **Process Deviations** | [`docs/audits/PHASE0_PROCESS_DEVIATIONS.md`](docs/audits/PHASE0_PROCESS_DEVIATIONS.md) (`ACCEPTED_AT_PHASE0_FREEZE`) |
 | **GitHub Repository** | [https://github.com/trungqwe/ai-supervisor](https://github.com/trungqwe/ai-supervisor) |
 
 ---
@@ -78,8 +80,9 @@ By leveraging **Untrivial Agent Orchestrator** as the execution runtime, this sy
 - **Source Dossiers with Evidence**: [`docs/sources/`](docs/sources/)
 
 ### Audits & Governance
-- **Phase 0 Literal Evidence Final Audit**: [`docs/audits/PHASE0_LITERAL_EVIDENCE_FINAL_AUDIT.md`](docs/audits/PHASE0_LITERAL_EVIDENCE_FINAL_AUDIT.md)
+- **Phase 0 Architecture Freeze Record**: [`docs/audits/PHASE0_FREEZE_RECORD.md`](docs/audits/PHASE0_FREEZE_RECORD.md)
 - **Phase 0 Process Deviations Register**: [`docs/audits/PHASE0_PROCESS_DEVIATIONS.md`](docs/audits/PHASE0_PROCESS_DEVIATIONS.md)
+- **Phase 0 Literal Evidence Final Audit**: [`docs/audits/PHASE0_LITERAL_EVIDENCE_FINAL_AUDIT.md`](docs/audits/PHASE0_LITERAL_EVIDENCE_FINAL_AUDIT.md)
 - **External Re-Audit #3 Findings Register**: [`docs/audits/PHASE0_EXTERNAL_REAUDIT_003.md`](docs/audits/PHASE0_EXTERNAL_REAUDIT_003.md)
 - **Phase 0 Evidence Integrity Final Audit (Superseded)**: [`docs/audits/PHASE0_EVIDENCE_FINAL_AUDIT.md`](docs/audits/PHASE0_EVIDENCE_FINAL_AUDIT.md)
 - **External Re-Audit #2 Findings Register (Historical)**: [`docs/audits/PHASE0_EXTERNAL_REAUDIT_002.md`](docs/audits/PHASE0_EXTERNAL_REAUDIT_002.md)

@@ -13,10 +13,22 @@
 | **Deviation ID** | `P00-DEV-001` |
 | **Date** | 2026-09-20 |
 | **Rule Violated** | `AGENTS.md` Section 2 Rule 2 — NO VALIDATION SCRIPTS OR CODE CREATION |
-| **Disposition** | `ACCEPTED_PROCESS_DEVIATION_PENDING_EXTERNAL_FREEZE` |
+| **Disposition** | `ACCEPTED_AT_PHASE0_FREEZE` |
 
 ### What Happened
 Custom Python validation/file-rewrite code was used during External Re-Audit #4 remediation.
+
+### External Supervisor Disposition
+Accepted on 2026-09-20.
+
+**Reason**:
+The violation concerned temporary validation/file-manipulation methods outside project runtime source. Independent external review found no resulting architecture corruption, dependency introduction, or application-code contamination.
+
+**Impact on Phase-0 baseline**:
+NONE.
+
+**Follow-up**:
+Historical deviation remains permanently visible in audit history.
 
 ### Repository Impact
 No application source code was added to the project repository. No runtime architecture or dependency was introduced.
