@@ -35,7 +35,7 @@ By leveraging **Untrivial Agent Orchestrator** as the execution runtime, this sy
 │               Untrivial Agent Orchestrator                   │
 │   Daemon • Session Lifecycle • Worktrees • Process ConPTY    │
 └──────────────────────────────┬───────────────────────────────┘
-                               │ Headless CLI Harness
+                               │ Managed Agy Harness Invocation
                                ▼
 ┌──────────────────────────────────────────────────────────────┐
 │                        PRIMARY WORKER                        │
@@ -51,9 +51,9 @@ By leveraging **Untrivial Agent Orchestrator** as the execution runtime, this sy
 | Attribute | Value |
 |---|---|
 | **Current Stage** | **Phase 0 — Architecture Freeze** |
-| **Current State** | [`PHASE0_READY_FOR_EXTERNAL_AUDIT`](docs/18_CURRENT_STATE.md) |
+| **Current State** | [`PHASE0_BLOCKED` (External Re-Audit #2 in Progress)](docs/18_CURRENT_STATE.md) |
 | **Governance Mode** | Strict No-Code Enforcement in Phase 0; External Audit Gate Required |
-| **Audit Status** | Remediated (Blockers EXT-001 through EXT-004 resolved; see [`docs/audits/PHASE0_REMEDIATION_AUDIT.md`](docs/audits/PHASE0_REMEDIATION_AUDIT.md)) |
+| **Audit Status** | Re-Audit #2 Triage in Progress; resolving residual source metadata and section inaccuracies |
 | **GitHub Repository** | [https://github.com/trungqwe/ai-supervisor](https://github.com/trungqwe/ai-supervisor) |
 
 ---
@@ -78,8 +78,9 @@ By leveraging **Untrivial Agent Orchestrator** as the execution runtime, this sy
 - **Source Dossiers with Evidence**: [`docs/sources/`](docs/sources/)
 
 ### Audits & Governance
-- **Phase 0 Remediation Audit**: [`docs/audits/PHASE0_REMEDIATION_AUDIT.md`](docs/audits/PHASE0_REMEDIATION_AUDIT.md)
-- **External Audit Findings Register**: [`docs/audits/PHASE0_EXTERNAL_AUDIT_FINDINGS.md`](docs/audits/PHASE0_EXTERNAL_AUDIT_FINDINGS.md)
+- **External Re-Audit #2 Findings**: [`docs/audits/PHASE0_EXTERNAL_REAUDIT_002.md`](docs/audits/PHASE0_EXTERNAL_REAUDIT_002.md)
+- **Phase 0 Remediation Audit (Historical)**: [`docs/audits/PHASE0_REMEDIATION_AUDIT.md`](docs/audits/PHASE0_REMEDIATION_AUDIT.md)
+- **External Audit Findings Register (Historical)**: [`docs/audits/PHASE0_EXTERNAL_AUDIT_FINDINGS.md`](docs/audits/PHASE0_EXTERNAL_AUDIT_FINDINGS.md)
 
 ### Agent Operational Directives
 - **Coding Agent Rules & Constraints**: [`AGENTS.md`](AGENTS.md)

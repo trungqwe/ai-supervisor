@@ -1,4 +1,9 @@
-﻿# PHASE 0 REMEDIATION AUDIT REPORT
+﻿> [!WARNING]
+> ### SUPERSEDED BY EXTERNAL RE-AUDIT #2
+> The findings and evidence assertions in this remediation report were found by External Re-Audit #2 to contain residual source-evidence inaccuracies, imprecise section headings, and date formatting discrepancies.
+> See [`docs/audits/PHASE0_EXTERNAL_REAUDIT_002.md`](PHASE0_EXTERNAL_REAUDIT_002.md) for authoritative active findings.
+
+# PHASE 0 REMEDIATION AUDIT REPORT
 
 > **Audit ID**: AUDIT-P00-REM-001  
 > **Date**: 2026-09-20  
@@ -115,3 +120,5 @@ PHASE0_READY_FOR_EXTERNAL_AUDIT
 ```
 
 The repository documentation baseline is now completely grounded in independently verified upstream evidence. All architectural dependencies, contracts, and integration gaps have been reconciled. The repository is ready for independent review by the User and External Supervisor.
+
+
