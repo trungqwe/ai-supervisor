@@ -13,7 +13,7 @@ Pre-Freeze Approved Baseline:
 7c7f18598516c79741eff04cb742872d552d86da
 
 Freeze Commit:
-<fill after commit>
+6365d38a2a774be829dd06d371952e61eb6b9343
 
 Freeze Tag:
 phase0-architecture-v1
