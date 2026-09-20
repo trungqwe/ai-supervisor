@@ -51,7 +51,7 @@ By leveraging **Untrivial Agent Orchestrator** as the execution runtime, this sy
 | Attribute | Value |
 |---|---|
 | **Current Stage** | **Phase 0 — Architecture Freeze** |
-| **Current State** | [`PHASE0_READY_FOR_EXTERNAL_AUDIT`](docs/18_CURRENT_STATE.md) |
+| **Current State** | [`PHASE0_BLOCKED` (Remediation in Progress)](docs/18_CURRENT_STATE.md) |
 | **Governance Mode** | Strict No-Code Enforcement in Phase 0; External Audit Gate Required |
 | **GitHub Repository** | [https://github.com/trungqwe/ai-supervisor](https://github.com/trungqwe/ai-supervisor) |
 
@@ -78,3 +78,5 @@ By leveraging **Untrivial Agent Orchestrator** as the execution runtime, this sy
 
 ### Agent Operational Directives
 - **Coding Agent Rules & Constraints**: [`AGENTS.md`](AGENTS.md)
+
+

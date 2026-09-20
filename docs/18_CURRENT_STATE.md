@@ -1,7 +1,7 @@
 ﻿# 18. CURRENT STATE
 
 > **Authority**: Dynamic Operational State Record  
-> **Updated**: 2026-09-20 (Post-Internal Audit)
+> **Updated**: 2026-09-20 (Post-External Audit Triage)
 
 ---
 
@@ -10,12 +10,13 @@
 | Field | Current Value |
 |---|---|
 | **Project Stage** | **Phase 0 — Architecture Freeze** |
-| **Current State** | **`PHASE0_READY_FOR_EXTERNAL_AUDIT`** |
-| **Architecture Status** | Pre-Freeze Specifications Complete; Awaiting External Audit Gate |
-| **Current Phase** | `P00` (Phase 0: Architecture Freeze & Research Baseline) |
-| **Completed Work** | 25 canonical docs (00–24), 9 source dossiers with empirical evidence, 3 JSON schemas & 6 test fixtures, 10 ADRs, 8 phase specs, internal consistency audit |
-| **In Progress** | External Supervisor / User Independent Audit |
-| **Blocked Issues** | None |
-| **Open Decisions** | Implementation language (UNDECIDED / GIẢ ĐỊNH), State store engine (UNDECIDED / GIẢ ĐỊNH) |
-| **Tested Upstream Versions**| Pinned baseline: Agent Orchestrator `v0.13.0`, Antigravity CLI `official-latest` |
-| **Next Approved Action** | Conduct external audit; establish `ARCHITECTURE_FROZEN` before starting Phase P01 |
+| **Current State** | **`PHASE0_BLOCKED`** |
+| **Blocking Reason** | External independent audit found upstream evidence-integrity, commit pinning, and contract-baseline defects (Findings EXT-001 through EXT-004). Remediation pass in progress. |
+| **Architecture Status** | Pre-Freeze Remediation (Remediating evidence integrity and upstream contracts) |
+| **Current Phase** | `P00` (Phase 0: Architecture Freeze & Research Remediation) |
+| **Completed Work** | Initial Phase 0 baseline formulation and external audit triage |
+| **In Progress** | Independent re-verification of all 9 source repositories, exact commit hash pinning, real source evidence paths, and contract baseline repair |
+| **Blocked Issues** | Unverified upstream AO/Agy integration assumptions and passive source commit hashes |
+| **Open Decisions** | AO ↔ Agy structured report mechanism (P01), ChatGPT Web transport feasibility for target account (P01) |
+| **Tested Upstream Versions**| Documentation Baselines under verification; Runtime proof pending P01 |
+| **Next Approved Action** | Complete external audit remediation, source evidence verification, and re-audit |
