@@ -1,3 +1,18 @@
+﻿# TEMPORARY PLANNING ARTIFACT: PHASE 0 MASTER PROMPT
+
+> [!WARNING]
+> **Phase-0 Execution Input Only — NOT Canonical Project Documentation**
+>
+> This file contains the historical master prompt used to construct the Phase 0 technical foundation.
+>
+> **Lifecycle**:
+> - ACTIVE: During Phase 0
+> - NON-AUTHORITATIVE: After Phase 0 completion (all architectural rules are now codified in canonical docs)
+> - DELETED: After external freeze approval
+>
+> Canonical authority lives under `docs/00–24`, `docs/adr/`, `docs/sources/`, and `AGENTS.md`.
+
+---
 # MASTER EXECUTION PROMPT
 
 ## ROLE
@@ -2157,3 +2172,4 @@ ARCHITECTURE_FROZEN
 ```
 
 rồi mới được chuyển phase.
+

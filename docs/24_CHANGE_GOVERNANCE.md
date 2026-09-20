@@ -53,3 +53,10 @@ DECISION PRIORITY (HIGHEST TO LOWEST)
 - If a worker proposes an optimization that contradicts an ADR: **The ADR wins**.
 - If an upstream repository adds a new feature that violates our architecture: **The Architecture wins** until a new ADR is formally approved.
 - If a prior chat turn suggests something different from canonical documentation: **The Canonical Documentation wins**.
+
+### Exclusion of Temporary Planning Artifacts:
+> [!IMPORTANT]
+> **Temporary planning artifacts** (such as `docs/_phase0_working/PHASE0_EXECUTION_PLAN.md` or `docs/_phase0_working/PHASE0_MASTER_PROMPT.md`) **ARE NOT part of the permanent Decision Hierarchy**.
+> - During Phase 0 execution, they serve strictly as operational input instructions.
+> - They have ZERO authority over canonical documentation (`docs/00`–`24`, `docs/adr/`, `AGENTS.md`).
+> - Upon Phase 0 external freeze approval, they are completely deleted from the working tree.

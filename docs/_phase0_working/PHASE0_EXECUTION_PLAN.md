@@ -1,3 +1,23 @@
+﻿# TEMPORARY PLANNING ARTIFACT POLICY
+
+> [!WARNING]
+> **Phase-0 Execution Input Only — NOT Canonical Project Documentation**
+>
+> The files in `docs/_phase0_working/`:
+> - `docs/_phase0_working/PHASE0_EXECUTION_PLAN.md`
+> - `docs/_phase0_working/PHASE0_MASTER_PROMPT.md`
+>
+> are temporary planning artifacts for driving Phase 0 execution. **They MUST NOT be treated as permanent architectural authority.**
+>
+> Canonical authority lives strictly under:
+> - `docs/00_PROJECT_OVERVIEW.md` through `docs/24_CHANGE_GOVERNANCE.md`
+> - `docs/adr/` (ADR-001 through ADR-010)
+> - `docs/sources/` (Registry, Reuse Matrix, Contract Baseline, Dossiers)
+> - `AGENTS.md`
+>
+> **Lifecycle**: After Phase 0 receives external `ARCHITECTURE_FROZEN` approval, the entire `docs/_phase0_working/` directory must be deleted. Git history serves as the permanent archival record.
+
+---
 # Implementation Plan (Patched) — Phase 0 Technical Foundation & Specifications
 
 Initialize and establish the complete technical foundation, specifications, and architecture documentation for **Phase 0** of the **AI Engineering Supervisor Control Plane**, incorporating all 19 required audit corrections. This plan produces a drift-resistant, evidence-based repository baseline, places the canonical `PROJECT OVERVIEW` as document `00`, verifies internal consistency, and securely publishes to GitHub (`https://github.com/trungqwe/ai-supervisor`).
@@ -223,3 +243,4 @@ An automated audit script will run locally to verify:
 - `git status` confirms a clean working tree.
 - `git log --oneline` confirms the 3 structured commits.
 - `git ls-remote origin` confirms remote HEAD points to the newly pushed commits on `main`.
+
