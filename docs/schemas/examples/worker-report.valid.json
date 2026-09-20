@@ -1,0 +1,30 @@
+﻿{
+  "task_id": "TASK-P01-001",
+  "attempt_id": "ATTEMPT-01",
+  "status": "COMPLETED",
+  "branch": "ao-smoke-test",
+  "base_sha": "a1b2c3d4e5f6789012345678901234567890abcd",
+  "head_sha": "b2c3d4e5f6789012345678901234567890abcdef",
+  "files_changed": ["tests/upstream/ao_smoke_test.txt"],
+  "commands_run": [
+    {
+      "command": "curl -s http://127.0.0.1:8080/health",
+      "exit_code": 0,
+      "output_summary": "{\"status\":\"healthy\",\"version\":\"0.13.0\"}"
+    }
+  ],
+  "tests": [
+    {
+      "test_suite": "ao_upstream_smoke",
+      "passed": 1,
+      "failed": 0
+    }
+  ],
+  "build_status": "PASSED",
+  "worker_claims": ["AO daemon verified healthy on Windows local port 8080"],
+  "deviations": [],
+  "assumptions": ["AO daemon already running as local service"],
+  "blockers": [],
+  "artifacts": ["tests/upstream/ao_smoke_test.txt"],
+  "ready_for_review": true
+}

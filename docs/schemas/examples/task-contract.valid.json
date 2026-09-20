@@ -1,0 +1,17 @@
+﻿{
+  "task_id": "TASK-P01-001",
+  "phase_id": "P01",
+  "objective": "Verify Agent Orchestrator Windows daemon connectivity and worker harness response.",
+  "requirements": ["FR-001", "FR-015"],
+  "architecture_refs": ["docs/04_ARCHITECTURE.md#section-2"],
+  "base_sha": "a1b2c3d4e5f6789012345678901234567890abcd",
+  "allowed_scope": ["tests/upstream/*", "third_party/*"],
+  "forbidden_scope": ["docs/04_ARCHITECTURE.md", "docs/adr/*"],
+  "constraints": ["No external dependency installations"],
+  "acceptance_criteria": ["AO daemon responds with HTTP 200", "Worker session launches cleanly"],
+  "required_tests": ["powershell -Command './tests/smoke.ps1'"],
+  "required_evidence": ["git_diff", "test_exit_code_zero"],
+  "worker_profile": "antigravity-standard",
+  "report_contract": "docs/schemas/worker-report.schema.json",
+  "stop_conditions": ["Daemon unresponsive", "ConPTY allocation failure"]
+}

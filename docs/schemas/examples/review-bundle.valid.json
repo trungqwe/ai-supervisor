@@ -1,0 +1,32 @@
+﻿{
+  "bundle_id": "BUNDLE-TASK-P01-001-01",
+  "task_id": "TASK-P01-001",
+  "task_contract": {
+    "task_id": "TASK-P01-001",
+    "objective": "Verify AO connectivity"
+  },
+  "worker_claims": {
+    "claimed_status": "COMPLETED",
+    "claims": ["AO daemon healthy"]
+  },
+  "actual_git_evidence": {
+    "actual_base_sha": "a1b2c3d4e5f6789012345678901234567890abcd",
+    "actual_head_sha": "b2c3d4e5f6789012345678901234567890abcdef",
+    "actual_changed_files": ["tests/upstream/ao_smoke_test.txt"],
+    "diff_stat": "1 file changed, 5 insertions(+)"
+  },
+  "actual_test_evidence": {
+    "all_passed": true,
+    "executed_commands": ["curl -s http://127.0.0.1:8080/health"]
+  },
+  "policy_findings": [
+    {
+      "rule_id": "SCOPE_CONTAINMENT",
+      "passed": true,
+      "details": "All changed files fall strictly within allowed_scope"
+    }
+  ],
+  "unverified_claims": [],
+  "recommended_review_focus": "Verify returned health JSON payload structure",
+  "generated_at": "2026-09-20T12:00:00Z"
+}
