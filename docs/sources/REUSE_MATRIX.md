@@ -1,7 +1,7 @@
 ﻿# REUSE MATRIX — ANTI-REINVENTION MAP
 
 > **Authority**: Binding Capability Mapping & Anti-Reinvention Constraints  
-> **Status**: Verified Documentation Baseline (Post-Re-Audit #2 Hygiene)
+> **Status**: Literal Evidence Corrected (Post-Re-Audit #3 Patch — EXT3-003)
 
 ---
 
@@ -9,10 +9,10 @@
 
 | Capability | Requirement | Source Repo | Exact Source Area (Verified in Upstream) | Strategy | Our Module | Why We Own This | Forbidden Duplicate |
 |---|---|---|---|---|---|---|---|
-| **Process Daemon & Lifecycle** | NFR-001, OPS-002 | `Untrivial-ai/agent-orchestrator` | `cmd/daemon/main.go`, `backend/internal/httpd/router.go` (`setupRouter`) | `UPSTREAM` | `AOAdapter` | AO provides industrial daemon; we connect via loopback REST API (`/healthz`, `/readyz`, `/sessions`). | Custom process manager or background daemon |
+| **Process Daemon & Lifecycle** | NFR-001, OPS-002 | `Untrivial-ai/agent-orchestrator` | `cmd/daemon/main.go`, `backend/internal/httpd/router.go` (`NewRouterWithControl`) | `UPSTREAM` | `AOAdapter` | AO provides industrial daemon; we connect via loopback REST API (`/healthz`, `/readyz`, `/sessions`). | Custom process manager or background daemon |
 | **Windows ConPTY Terminal** | NFR-001 | `Untrivial-ai/agent-orchestrator` | `backend/internal/adapters/runtime/conpty/host_conpty_windows.go` (`newConPTY`) | `UPSTREAM` | `AOAdapter` | Windows pseudoterminal allocation is handled upstream by AO via go-pty. | Proprietary PTY or raw cmd.exe wrapper |
 | **Git Worktree Isolation** | FR-005, SEC-005 | `Untrivial-ai/agent-orchestrator` | `backend/internal/adapters/workspace/gitworktree/workspace.go` (`validateManagedPath`, `managedPath`) | `UPSTREAM` | `AOAdapter` | AO manages workspace paths, traversal validation, and branch isolation. | Custom Git clone or worktree manager |
-| **Agent Harness Adaption** | FR-006 | `Untrivial-ai/agent-orchestrator` | `backend/internal/adapters/agent/agy/agy.go` (`BuildCommand`) | `UPSTREAM` | `AOAdapter` | AO integrates agent harnesses including Antigravity CLI via interactive harness. | Custom harness runner or CLI spawner |
+| **Agent Harness Adaption** | FR-006 | `Untrivial-ai/agent-orchestrator` | `backend/internal/adapters/agent/agy/agy.go` (`GetLaunchCommand` / `GetRestoreCommand`) | `UPSTREAM` | `AOAdapter` | AO integrates agent harnesses including Antigravity CLI via interactive harness. | Custom harness runner or CLI spawner |
 | **Autonomous Headless Coding** | FR-005 | `google-antigravity/antigravity-cli` | `README.md` & `agy --help` (`-p`, `--output-format`, `--input-format`, `--json-schema`, `--add-dir`) | `UPSTREAM` | `AOAdapter` / Worker | Antigravity CLI v1.2.7 is the autonomous code editing engine. | Custom code generation or editing bot |
 | **Security Containment** | SEC-001, SEC-002 | `tt-a1i/proxide` | `SECURITY.md` (`## Safer Defaults`, `## Hard Rules`, `## Mode Boundaries`) | `REIMPLEMENT_PATTERN` | `PolicyEngine` | Proxide proves readonly default, explicit roots, and mode boundaries. | Unchecked filesystem access or arbitrary path traversal |
 | **Workspace / Pair Binding** | FR-002 | `Mieruko/MCP_Plugins_With_ChatGPTWeb` | `AGENTS.md` (`_meta["openai/session"]`), `README.md` (`## Active Agents`), `src/admin/routes.ts` (`createAdminRouter`) | `REIMPLEMENT_PATTERN` | `PairRegistry` | Mieruko proves conversation-to-task binding; Pair abstraction is our design. | Unbound multi-project shared state |

@@ -11,8 +11,8 @@
 
 | Domain Operation | Pinned Upstream | Documented Interface | Exact Evidence Source in Upstream Repo | Documentation Status | Runtime Proof Status | Notes / Gap |
 |---|---|---|---|---|---|---|
-| **Daemon Health Probe** | AO `v0.13.0` | `GET /healthz` | `backend/internal/httpd/router.go` (`setupRouter`) | `DOCUMENTED` | `RUNTIME_UNTESTED` | Returns daemon probe JSON payload with PID and cwd. |
-| **Daemon Readiness Probe** | AO `v0.13.0` | `GET /readyz` | `backend/internal/httpd/router.go` (`setupRouter`) | `DOCUMENTED` | `RUNTIME_UNTESTED` | Shares daemon probe payload; asserts dependency readiness. |
+| **Daemon Health Probe** | AO `v0.13.0` | `GET /healthz` | `backend/internal/httpd/router.go` (`NewRouterWithControl`) | `DOCUMENTED` | `RUNTIME_UNTESTED` | Returns daemon probe JSON payload with PID and cwd. |
+| **Daemon Readiness Probe** | AO `v0.13.0` | `GET /readyz` | `backend/internal/httpd/router.go` (`NewRouterWithControl`) | `DOCUMENTED` | `RUNTIME_UNTESTED` | Shares daemon probe payload; asserts dependency readiness. |
 | **Project Registration** | AO `v0.13.0` | `POST /api/v1/projects` | `backend/internal/httpd/controllers/projects.go` (`add`) | `DOCUMENTED` | `RUNTIME_UNTESTED` | Mounts project on router; calls `projectsvc.Manager.Add`. |
 | **Project Inspection** | AO `v0.13.0` | `GET /api/v1/projects/{id}` | `backend/internal/httpd/controllers/projects.go` (`get`) | `DOCUMENTED` | `RUNTIME_UNTESTED` | Retrieves registered project details. |
 | **Session / Worktree Spawn**| AO `v0.13.0` | `POST /api/v1/sessions` | `backend/internal/httpd/controllers/sessions.go` (`spawn`) | `DOCUMENTED` | `RUNTIME_UNTESTED` | Creates isolated workspace and spawns worker session. |
