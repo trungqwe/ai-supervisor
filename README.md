@@ -79,6 +79,7 @@ By leveraging **Untrivial Agent Orchestrator** as the execution runtime, this sy
 
 ### Audits & Governance
 - **Phase 0 Literal Evidence Final Audit**: [`docs/audits/PHASE0_LITERAL_EVIDENCE_FINAL_AUDIT.md`](docs/audits/PHASE0_LITERAL_EVIDENCE_FINAL_AUDIT.md)
+- **Phase 0 Process Deviations Register**: [`docs/audits/PHASE0_PROCESS_DEVIATIONS.md`](docs/audits/PHASE0_PROCESS_DEVIATIONS.md)
 - **External Re-Audit #3 Findings Register**: [`docs/audits/PHASE0_EXTERNAL_REAUDIT_003.md`](docs/audits/PHASE0_EXTERNAL_REAUDIT_003.md)
 - **Phase 0 Evidence Integrity Final Audit (Superseded)**: [`docs/audits/PHASE0_EVIDENCE_FINAL_AUDIT.md`](docs/audits/PHASE0_EVIDENCE_FINAL_AUDIT.md)
 - **External Re-Audit #2 Findings Register (Historical)**: [`docs/audits/PHASE0_EXTERNAL_REAUDIT_002.md`](docs/audits/PHASE0_EXTERNAL_REAUDIT_002.md)
