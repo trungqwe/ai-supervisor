@@ -3,10 +3,10 @@
 ## 1. Metadata
 - **Repository**: `lookmanrays/codencer`
 - **Role in Architecture**: Passive Design Source (Bridge-Not-Brain & Execution Vocabulary)
-- **Reference Commit**: `main` (`2026-09-05`)
-- **Inspection Date**: 2026-09-20
-- **License**: MIT
-- **Primary Language**: Go / Python
+- **Pinned Commit**: `8d4908b1acf049cd97a9c4dcb752d1e44cbb8655`
+- **Commit Date**: 2026-08-06T14:35:56Z
+- **License**: Apache-2.0
+- **Primary Language**: Go
 
 ---
 
@@ -17,9 +17,9 @@
 
 ---
 
-# 3. Capabilities Explicitly Rejected
+# 3. Capabilities Explicitly Rejected & Corrected Claims
 - **Direct Shell Invocation Tools**: Codencer's generic shell execution tools are replaced by our structured Task Contract execution.
-- **Hosted Cloud Relay Services**: We rely strictly on self-hosted, local loopback communication.
+- **Correction of Synthetic Path**: In previous drafts, `daemon/bridge.go` was cited. Real repository structures code in `cmd/broker/main.go`, `internal/domain/`, and documents architecture in `README.md`.
 
 ---
 
@@ -30,17 +30,26 @@
 
 # 5. SOURCE EVIDENCE
 
-### Evidence Item 7.1: Bridge-not-Brain Architecture
-- **Claim**: The control plane functions as a task manager, validator, and executor bridge without an embedded LLM.
-- **Repository**: `lookmanrays/codencer`
-- **Reference**: `main`
-- **Source File / Module**: `README.md`, `daemon/bridge.go`
-- **Verification Status**: VERIFIED
-- **Confidence**: HIGH
+Claim ID: CLM-CDC-001
+Claim: Codencer establishes the "Bridge, Not Brain" principle: the control plane is an execution and audit broker, not the AI planner.
+Repository: lookmanrays/codencer
+Pinned tag: N/A
+Pinned commit: 8d4908b1acf049cd97a9c4dcb752d1e44cbb8655
+Evidence type: README
+Exact evidence: README.md
+Section / symbol: "Core Philosophy: Bridge, Not Brain"
+Verification: VERIFIED
+Confidence: HIGH
+Notes: Explicitly defines the separation between external planner and stateful local broker.
 
-### Evidence Item 7.2: Execution Vocabulary
-- **Claim**: Decomposing execution into formal attempts, validations, and blockers provides clear auditability.
-- **Repository**: `lookmanrays/codencer`
-- **Reference**: `core/types.go`
-- **Verification Status**: VERIFIED
-- **Confidence**: HIGH
+Claim ID: CLM-CDC-002
+Claim: Codencer maintains stateful execution runs, attempts, validations, and blockers outside chat memory.
+Repository: lookmanrays/codencer
+Pinned tag: N/A
+Pinned commit: 8d4908b1acf049cd97a9c4dcb752d1e44cbb8655
+Evidence type: README
+Exact evidence: README.md
+Section / symbol: "Stateful Execution & Audit"
+Verification: VERIFIED
+Confidence: HIGH
+Notes: Details database-backed run tracking rather than conversation memory.

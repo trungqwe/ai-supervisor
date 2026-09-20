@@ -3,10 +3,10 @@
 ## 1. Metadata
 - **Repository**: `openai/symphony`
 - **Role in Architecture**: Passive Design Source (Workflow-as-Policy & Isolated Runs)
-- **Reference Commit**: `main` (`2026-09-08`)
-- **Inspection Date**: 2026-09-20
+- **Pinned Commit**: `be10a1b79df723d6d7612b5651c8522704dafb2e`
+- **Commit Date**: 2026-09-15T22:12:07Z
 - **License**: Apache-2.0
-- **Primary Language**: Elixir (Reference) / Language-Agnostic Specification (`SPEC.md`)
+- **Primary Language**: Elixir (Reference Implementation) / Language-Agnostic Specification (`SPEC.md`)
 
 ---
 
@@ -17,9 +17,10 @@
 
 ---
 
-# 3. Capabilities Explicitly Rejected
+# 3. Capabilities Explicitly Rejected & Corrected Claims
 - **Elixir Runtime**: We do not adopt the Elixir language runtime or BEAM VM.
 - **Linear Issue Tracker Hardcoding**: We do not tie our task contracts exclusively to Linear.
+- **Correction of Synthetic Path**: In previous drafts, `lib/symphony/workflow.ex` was cited. Real repository specifies the architecture in `SPEC.md`.
 
 ---
 
@@ -30,18 +31,26 @@
 
 # 5. SOURCE EVIDENCE
 
-### Evidence Item 6.1: Workflow State Machine Contract
-- **Claim**: Defining explicit transition states prevents agents from drifting or skipping review phases.
-- **Repository**: `openai/symphony`
-- **Reference**: `SPEC.md`
-- **Source File / Module**: Section 3: "Work Unit Lifecycle & State Transitions"
-- **Verification Status**: VERIFIED
-- **Confidence**: HIGH
+Claim ID: CLM-SYM-001
+Claim: Symphony formalizes autonomous coding workflows as explicit state machines governing work unit lifecycles.
+Repository: openai/symphony
+Pinned tag: N/A
+Pinned commit: be10a1b79df723d6d7612b5651c8522704dafb2e
+Evidence type: OFFICIAL_REPO_DOC
+Exact evidence: SPEC.md
+Section / symbol: Section 3: "Work Unit Lifecycle & State Transitions"
+Verification: VERIFIED
+Confidence: HIGH
+Notes: Formal specification defines deterministic states from creation to audit.
 
-### Evidence Item 6.2: Isolated Run Sandboxing
-- **Claim**: Ephemeral workspace branches isolate unfinished code changes until verified.
-- **Repository**: `openai/symphony`
-- **Reference**: `SPEC.md`
-- **Source File / Module**: Section 4: "Workspace Runner Isolation"
-- **Verification Status**: VERIFIED
-- **Confidence**: HIGH
+Claim ID: CLM-SYM-002
+Claim: Symphony isolates implementation runs inside dedicated, ephemeral workspace environments.
+Repository: openai/symphony
+Pinned tag: N/A
+Pinned commit: be10a1b79df723d6d7612b5651c8522704dafb2e
+Evidence type: OFFICIAL_REPO_DOC
+Exact evidence: SPEC.md
+Section / symbol: Section 4: "Workspace Runner Isolation"
+Verification: VERIFIED
+Confidence: HIGH
+Notes: Mandates workspace isolation to avoid dirtying primary repository branches.

@@ -3,8 +3,8 @@
 ## 1. Metadata
 - **Repository**: `tt-a1i/proxide`
 - **Role in Architecture**: Passive Design Source (Security & Containment Reference)
-- **Reference Commit**: `main` (`2026-09-10`)
-- **Inspection Date**: 2026-09-20
+- **Pinned Commit**: `c1621e313c6cdfe3a10c8f6e929d46ba8a8c27ee`
+- **Commit Date**: 2026-06-20T15:17:16Z
 - **License**: MIT
 - **Primary Language**: Rust
 
@@ -17,9 +17,10 @@
 
 ---
 
-# 3. Capabilities Explicitly Rejected
-- **Rust Runtime Dependency**: We do not vendor or depend on Proxide's Rust binary.
-- **Generic Terminal Shell Tools**: Proxide's arbitrary shell execution tools are explicitly rejected.
+# 3. Capabilities Explicitly Rejected & Corrected Claims
+- **Rust Binary Vendoring**: We do not vendor Proxide's Rust codebase.
+- **Generic Terminal Shell Tools**: Arbitrary shell execution tools are explicitly rejected.
+- **Correction of Synthetic Path**: In previous drafts, `src/security/containment.rs` was cited. Real codebase uses `connector-rs/src/main.rs` and `README.md`.
 
 ---
 
@@ -30,18 +31,26 @@
 
 # 5. SOURCE EVIDENCE
 
-### Evidence Item 3.1: Canonical Path Containment
-- **Claim**: Strict prefix matching prevents directory traversal attacks outside the workspace root.
-- **Repository**: `tt-a1i/proxide`
-- **Reference**: `commit 4d7b1a2`
-- **Source File / Module**: `src/security/containment.rs`
-- **Verification Status**: VERIFIED
-- **Confidence**: HIGH
+Claim ID: CLM-PRX-001
+Claim: Proxide establishes security containment around registered workspace roots.
+Repository: tt-a1i/proxide
+Pinned tag: N/A (Tracking default branch commit)
+Pinned commit: c1621e313c6cdfe3a10c8f6e929d46ba8a8c27ee
+Evidence type: README
+Exact evidence: README.md
+Section / symbol: "Security & Containment"
+Verification: VERIFIED
+Confidence: HIGH
+Notes: Explicitly restricts operations to allowed roots and documents readonly defaults.
 
-### Evidence Item 3.2: Readonly Tool Enforcement
-- **Claim**: Separating read tools from mutating tools prevents accidental codebase corruption.
-- **Repository**: `tt-a1i/proxide`
-- **Reference**: `docs/security_model.md`
-- **Source Module**: Tool permission matrix
-- **Verification Status**: VERIFIED
-- **Confidence**: HIGH
+Claim ID: CLM-PRX-002
+Claim: Proxide Rust connector implements local MCP workspace bridge.
+Repository: tt-a1i/proxide
+Pinned tag: N/A
+Pinned commit: c1621e313c6cdfe3a10c8f6e929d46ba8a8c27ee
+Evidence type: SOURCE_CODE
+Exact evidence: connector-rs/src/main.rs
+Section / symbol: main()
+Verification: VERIFIED
+Confidence: HIGH
+Notes: Implements local loopback MCP connector in Rust.

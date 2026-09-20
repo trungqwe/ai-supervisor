@@ -3,8 +3,8 @@
 ## 1. Metadata
 - **Repository**: `awslabs/cli-agent-orchestrator`
 - **Role in Architecture**: Passive Design Source (Provider Abstraction)
-- **Reference Commit**: `main` (`2026-08-30`)
-- **Inspection Date**: 2026-09-20
+- **Pinned Commit**: `156cf1edcdb9de1ee01a2f17c2a4026e5f305e56`
+- **Commit Date**: 2026-09-20T05:52:34Z
 - **License**: Apache-2.0
 - **Primary Language**: Python
 
@@ -17,9 +17,9 @@
 
 ---
 
-# 3. Capabilities Explicitly Rejected
+# 3. Capabilities Explicitly Rejected & Corrected Claims
 - **AWS Cloud Tight Coupling**: We do not require AWS credentials, IAM roles, or Bedrock dependencies.
-- **Concurrent Cloud Worker Fleets**: Excluded from local V1 scope.
+- **Correction of Synthetic Path**: In previous drafts, `cao/providers/base.py` was cited. Real repository structures provider code under `src/cli_agent_orchestrator/providers/`.
 
 ---
 
@@ -30,10 +30,14 @@
 
 # 5. SOURCE EVIDENCE
 
-### Evidence Item 8.1: Provider Abstraction Interface
-- **Claim**: Separating agent control from underlying harness binaries allows clean worker swapping.
-- **Repository**: `awslabs/cli-agent-orchestrator`
-- **Reference**: `main`
-- **Source File / Module**: `cao/providers/base.py`
-- **Verification Status**: VERIFIED
-- **Confidence**: HIGH
+Claim ID: CLM-CAO-001
+Claim: AWS CAO defines modular agent provider interfaces allowing multiple agent backends to be orchestrated under a unified schema.
+Repository: awslabs/cli-agent-orchestrator
+Pinned tag: N/A
+Pinned commit: 156cf1edcdb9de1ee01a2f17c2a4026e5f305e56
+Evidence type: SOURCE_CODE
+Exact evidence: src/cli_agent_orchestrator/providers/
+Section / symbol: provider implementations
+Verification: VERIFIED
+Confidence: HIGH
+Notes: Contains decoupled provider adapters (e.g. Bedrock, Claude Code, Antigravity CLI).

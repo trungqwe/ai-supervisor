@@ -1,10 +1,10 @@
-﻿# SOURCE DOSSIER: 09 — ANTIGRAVITY LINK
+﻿# SOURCE DOSSIER: 09 — ANTIGRAVITY LINK EXTENSION
 
 ## 1. Metadata
-- **Repository**: `antigravity-link` (Community Tool)
+- **Repository**: `cafeTechne/antigravity-link-extension`
 - **Role in Architecture**: Fallback Mechanism Only (CDP GUI Bridge)
-- **Reference Snapshot**: `2026-09-01`
-- **Inspection Date**: 2026-09-20
+- **Pinned Commit**: `dae4483275acba8fff093b14bb25abe8e9495f94`
+- **Commit Date**: 2026-06-04T05:55:30Z
 - **License**: MIT
 - **Primary Language**: TypeScript / Node.js
 
@@ -16,23 +16,28 @@
 
 ---
 
-# 3. Capabilities Explicitly Rejected
-- **Default Workflow Role**: Strictly rejected as a primary workflow. GUI automation is fragile and intrusive.
-- **Pixel-Based Automation**: Any coordinate-based mouse clicking is strictly forbidden.
+# 3. Capabilities Explicitly Rejected & Corrected Claims
+- **Default Workflow Role**: Strictly rejected as a primary workflow. GUI automation is fragile and user-disruptive.
+- **Repository Identity Correction**: Previous generic reference `antigravity-link` replaced with exact verified GitHub repository `cafeTechne/antigravity-link-extension`.
 
 ---
 
 # 4. Integration Strategy & Revisit Conditions
 - **Strategy**: `FALLBACK` only.
-- **Activation Rule**: This mechanism is activated **ONLY IF** an explicit, verified functional requirement cannot be executed via the official Antigravity CLI or Agent Orchestrator.
+- **Activation Gate**: Activated **ONLY IF** an explicit, verified functional requirement cannot be executed via the official Antigravity CLI or Agent Orchestrator.
 
 ---
 
 # 5. SOURCE EVIDENCE
 
-### Evidence Item 9.1: CDP Session Connectivity
-- **Claim**: Chrome DevTools Protocol can bridge programmatic instructions to an existing Antigravity Electron process.
-- **Repository / Snapshot**: `antigravity-link`
-- **Source Module**: `src/cdp/bridge.ts`
-- **Verification Status**: VERIFIED
-- **Confidence**: MEDIUM (Brittle across IDE updates; hence retained strictly as fallback)
+Claim ID: CLM-LNK-001
+Claim: Connects to Antigravity IDE instances via Chrome DevTools Protocol to inspect and bridge session state.
+Repository: cafeTechne/antigravity-link-extension
+Pinned tag: N/A
+Pinned commit: dae4483275acba8fff093b14bb25abe8e9495f94
+Evidence type: SOURCE_CODE
+Exact evidence: src/services/cdp.ts
+Section / symbol: CdpService
+Verification: VERIFIED
+Confidence: HIGH
+Notes: Bridges programmatic commands into active Electron webContents via CDP session.
