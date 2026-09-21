@@ -68,17 +68,27 @@ sequenceDiagram
 
     ChatGPT->>SCP: dispatch_task(contract_payload)
     SCP->>SCP: Validate contract against task-contract.schema.json (contract_id, task_id, revision_number)
-    SCP->>DB: Store immutable TaskContract (State: READY)
-    SCP->>DB: Allocate TaskAttempt (attempt_id, attempt_number, expected_report_path) before dispatch
+    SCP->>DB: Store immutable TaskContract revision (State: READY)
+    rect rgb(245, 245, 255)
+        Note over SCP,DB: Atomic Pre-Dispatch Persistence (P02 Core)
+        SCP->>DB: Allocate TaskAttempt (attempt_id, attempt_number, contract_id, expected_report_path)
+        SCP->>DB: Atomically persist READY -> DISPATCHED with dispatch intent
+    end
+    Note over SCP: Dispatch committed durably before invoking external side effects.
     SCP->>AO: AOAdapter.createWorkerSession(projectId, harness="antigravity")
-    AO->>AO: Allocate isolated Git worktree & session
-    SCP->>AO: AOAdapter.sendTask(sessionId, TaskContract + Attempt metadata)
-    SCP->>DB: Transition state to DISPATCHED
-    AO->>Agy: Launch worker harness in worktree
-    Agy-->>AO: Worker process active
-    AO-->>SCP: Worker started event / status
-    SCP->>DB: Transition state to RUNNING
-    SCP-->>ChatGPT: Dispatch confirmed (status: RUNNING)
+    alt AO Session Spawn & Delivery Success
+        AO->>AO: Allocate isolated Git worktree & session
+        SCP->>AO: AOAdapter.sendTask(sessionId, TaskContract + Attempt metadata)
+        AO->>Agy: Launch worker harness in worktree
+        Agy-->>AO: Worker process active
+        AO-->>SCP: Worker started event / status
+        SCP->>DB: Transition state to RUNNING
+        SCP-->>ChatGPT: Dispatch confirmed (status: RUNNING)
+    else AO Spawn / Send / ConPTY Failure
+        AO-->>SCP: Error response (HTTP 5xx / ConPTY failure)
+        SCP->>DB: Transition state to FAILED (failure_reason: AO_SPAWN_ERROR / CONPTY_FAILURE)
+        SCP-->>ChatGPT: Dispatch failed (status: FAILED, reason recorded)
+    end
 ```
 
 ## 2.2 Worker Completion & Independent Review Flow

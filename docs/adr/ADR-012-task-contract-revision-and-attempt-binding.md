@@ -1,9 +1,9 @@
 # ADR-012: TaskContract Revision Model and Attempt Binding
 
-> **Status**: ACCEPTED
+> **Status**: ACCEPTED (Amended 2026-09-22 / P02 Pre-Code Decision Gate)
 > **Date**: 2026-09-22
 > **Authority**: Architecture Decision Record
-> **Supercedes/Amends**: Amends ADR-010 (Contract Immutability) and ADR-011 (Attempt Identity Binding)
+> **Supersedes/Amends**: Amends ADR-010 (Contract Immutability) and ADR-011 (Attempt Identity Binding)
 
 ---
 
@@ -39,17 +39,23 @@ Without a formal contract revision and attempt-binding model, multi-turn revisio
 ### 4. Post-Dispatch Immutability
 - Once a `TaskContract` has been dispatched (`READY -> DISPATCHED`), that specific `contract_id` is permanently and strictly immutable. No field may be modified in place.
 
-### 5. Revision Mechanics (`REVISION_REQUIRED -> READY`)
+### 5. Revision Mechanics & Planning Authority (`REVISION_REQUIRED -> READY`)
 - When ChatGPT or the Supervisor issues a revision request from `REVIEWING`:
-  1. The task transitions `REVIEWING -> REVISION_REQUIRED`, recording the `ReviewDecision` (feedback and required fixes) bound to the current `attempt_id`.
-  2. To re-enter execution, the task transitions `REVISION_REQUIRED -> READY`.
-  3. This transition **must generate a NEW TaskContract**:
-     - Same `task_id`;
-     - New, unique `contract_id`;
-     - `revision_number = previous_revision_number + 1`;
-     - `supersedes_contract_id = previous_contract_id`;
-     - Updated `objective`, `requirements`, `allowed_scope`, `required_tests`, or `acceptance_criteria` incorporating the required fixes.
-  4. The previous `TaskContract` remains unchanged in historical storage as immutable evidence.
+  1. `request_revision(task_id, attempt_id, feedback, required_fixes)` ONLY:
+     - Validates that `attempt_id == active_attempt_id`;
+     - Formally records the `ReviewDecision` (feedback and required fixes) bound to that `attempt_id`;
+     - Transitions state `REVIEWING -> REVISION_REQUIRED`.
+  2. `request_revision` **MUST NOT** silently invent, synthesize, or mutate a `TaskContract`.
+  3. To continue the workflow, the planning authority (ChatGPT or human) must explicitly formulate and supply a complete NEW `TaskContract` revision.
+  4. Conceptually, invoking `dispatch_task(new_contract)` while the task is in `REVISION_REQUIRED` performs strict validation:
+     - `new_contract.task_id == current.task_id`;
+     - `new_contract.contract_id` is a new, unique identifier;
+     - `new_contract.revision_number == previous_revision_number + 1`;
+     - `new_contract.supersedes_contract_id == previous_contract_id`;
+     - Lineage, allowed scope, and full schema are valid.
+  5. Upon successful validation, the task transitions `REVISION_REQUIRED -> READY`.
+  6. The task then proceeds through normal pre-dispatch allocation and dispatch.
+  7. No hidden automatic scope broadening is permitted. The previous `TaskContract` remains unchanged in historical storage as immutable evidence.
 
 ### 6. Retry Mechanics (`FAILED -> READY`)
 - If a task execution fails due to process crash, timeout, or report defect (`TaskState = FAILED`), and the Supervisor decides to retry without modifying the work specification or scope:
@@ -86,13 +92,25 @@ Without a formal contract revision and attempt-binding model, multi-turn revisio
   ```
   is fully deterministic, auditable, and immutable. Stale reviews across revision cycles are prevented.
 
+### 10. Atomic Pre-Dispatch Persistence Invariant (P02 Pre-Code Amendment)
+- From the Supervisor domain perspective, `TaskAttempt` allocation and the `READY -> DISPATCHED` state transition must be persisted **atomically** in the State Store before invoking any external execution side effects on Agent Orchestrator.
+- External AO API calls (`createWorkerSession`, `sendTask`) occur strictly *after* the durable `DISPATCHED` record exists.
+- In the event of a host daemon crash, power failure, or network disruption before AO responds, the Supervisor upon restart detects the durable `DISPATCHED` state, audits the worktree/session state, and cleanly reconciles the attempt without creating orphaned or unrecorded external processes.
+
+### 11. Immutable Task Baseline Base SHA (P02 Pre-Code Amendment)
+- For any logical `task_id`, initial revision (`revision_number = 1`) establishes the immutable baseline `base_sha`.
+- All subsequent `TaskContract` revisions under the same `task_id` **MUST preserve that exact baseline `base_sha`**.
+- Rationale: Independent Git and evidence collection evaluates the cumulative diff from the start of the task to the current head commit across all attempts. Resetting `base_sha` in a revision would conceal changes made in prior attempts from the cumulative review audit.
+- If the target main branch advances and a Git rebase is required, the control plane must not silently modify `base_sha`; it must escalate under an explicit human-governed rebase workflow (`BLOCKED -> HUMAN_REQUIRED`).
+
 ---
 
 ## Consequences
 - **Positive**: Resolves the contradiction between immutable contracts and iterative revision loops.
 - **Positive**: Complete audit trail: historical contracts, execution attempts, and review decisions are never overwritten.
 - **Positive**: Clear separation between work specification (`TaskContract`), execution iteration (`TaskAttempt`), and conversational memory (`conversation_id`).
-- **Negative / Trade-off**: The State Store must persist multiple contract revisions per task rather than treating `TaskContract` as a singleton child of `Task`.
+- **Positive**: Prevents external worker activity while the task is still `READY`, and prevents silent baseline resets during revisions.
+- **Negative / Trade-off**: The State Store must persist multiple contract revisions per task and support atomic multi-entity dispatch transactions.
 
 ---
 
@@ -101,5 +119,5 @@ Without a formal contract revision and attempt-binding model, multi-turn revisio
 - `docs/06_WORKFLOW_STATE_MACHINE.md`
 - `docs/08_TASK_CONTRACT.md`
 - `docs/schemas/task-contract.schema.json`
-- `docs/adr/ADR-010-task-contract-boundaries-and-immutability.md`
+- `docs/adr/ADR-010-task-contract-immutability.md`
 - `docs/adr/ADR-011-worker-report-handoff-and-agy-invocation-boundary.md`
