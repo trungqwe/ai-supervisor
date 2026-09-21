@@ -53,8 +53,12 @@ func ValidateCwdContainment(cwd, worktreeRoot, cwdPolicy string) error {
 		return newPathError("cwd_policy", fmt.Sprintf("unsupported cwd_policy %q: allowed 'worktree_root' or 'worktree_contained'", cwdPolicy))
 	}
 
-	// 3. Lexical checks on cwd
-	trimmed := strings.TrimSpace(cwd)
+	// 12. Path String Canonicality: leading/trailing whitespace rejected
+	if cwd != strings.TrimSpace(cwd) {
+		return newPathError("cwd", fmt.Sprintf("cwd %q contains forbidden leading or trailing whitespace", cwd))
+	}
+
+	trimmed := cwd
 
 	// Lexical escape checks
 	if strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, "\\") {
@@ -79,33 +83,40 @@ func ValidateCwdContainment(cwd, worktreeRoot, cwdPolicy string) error {
 		return newPathError("cwd", fmt.Sprintf("device path %q is forbidden", cwd))
 	}
 
-	// Normalized clean relative path
-	cleanCwd := filepath.Clean(filepath.ToSlash(trimmed))
-	if cleanCwd == ".." || strings.HasPrefix(cleanCwd, "../") || strings.Contains(cleanCwd, "/../") {
+	// 8. Canonical Relative Path Representation
+	nativeClean := filepath.Clean(
+		filepath.FromSlash(
+			strings.ReplaceAll(trimmed, "\\", "/"),
+		),
+	)
+	canonicalSlash := filepath.ToSlash(nativeClean)
+
+	// Lexical traversal check
+	if canonicalSlash == ".." || strings.HasPrefix(canonicalSlash, "../") || strings.Contains(canonicalSlash, "/../") {
 		return newPathError("cwd", fmt.Sprintf("parent traversal %q escaping root is forbidden", cwd))
 	}
 
 	// 4. Policy enforcement for "worktree_root"
 	if cwdPolicy == "worktree_root" {
-		if cleanCwd != "." && cleanCwd != "" {
+		if canonicalSlash != "." && canonicalSlash != "" {
 			return newPathError("cwd", fmt.Sprintf("policy 'worktree_root' requires cwd to be '.' or empty, got %q", cwd))
 		}
 		return nil
 	}
 
 	// 5. Policy enforcement for "worktree_contained"
-	if cleanCwd == "." || cleanCwd == "" {
+	if canonicalSlash == "." || canonicalSlash == "" {
 		return nil
 	}
 
 	// Lexical containment against canonical real root
-	targetLexical := filepath.Join(canonicalRealRoot, filepath.FromSlash(cleanCwd))
+	targetLexical := filepath.Join(canonicalRealRoot, filepath.FromSlash(canonicalSlash))
 	if !isWithinRoot(targetLexical, canonicalRealRoot) {
 		return newPathError("cwd", fmt.Sprintf("target %q lexically escapes worktree root %q", cwd, canonicalRealRoot))
 	}
 
-	// Component-aware existing prefix walk from canonical real root toward target
-	components := strings.Split(cleanCwd, "/")
+	// 9. Component-aware existing prefix walk from canonical real root toward target
+	components := strings.Split(canonicalSlash, "/")
 	currentPath := canonicalRealRoot
 	foundNonExistent := false
 
@@ -115,13 +126,10 @@ func ValidateCwdContainment(cwd, worktreeRoot, cwdPolicy string) error {
 		}
 
 		if foundNonExistent {
-			// All existing ancestors were already inspected successfully and confirmed inside canonical root.
-			// First truly nonexistent component was confirmed via os.IsNotExist.
-			// Lexical containment of the complete target was verified against canonical root.
 			continue
 		}
 
-		nextPath := filepath.Join(currentPath, comp)
+		nextPath := filepath.Join(currentPath, filepath.FromSlash(comp))
 
 		// Inspect component using os.Lstat to distinguish existing links/reparse entries from nonexistence
 		_, err := os.Lstat(nextPath)
@@ -131,15 +139,13 @@ func ValidateCwdContainment(cwd, worktreeRoot, cwdPolicy string) error {
 				foundNonExistent = true
 				continue
 			}
-			// Fail closed on any other filesystem error (permission, I/O, invalid path, reparse resolution, etc.)
+			// Fail closed on any other filesystem error
 			return newPathError("cwd", fmt.Sprintf("filesystem error inspecting path component %q: %v", nextPath, err))
 		}
 
 		// Component physically exists on disk. Resolve symlinks/junctions.
 		realNext, err := filepath.EvalSymlinks(nextPath)
 		if err != nil {
-			// Existing symlink/junction/reparse component could not be resolved (e.g. dangling symlink or I/O error).
-			// MUST REJECT; do NOT treat as a nonexistent future suffix.
 			return newPathError("cwd", fmt.Sprintf("failed to resolve symlink or path component %q: %v", nextPath, err))
 		}
 
@@ -191,32 +197,34 @@ func isWithinRoot(target, root string) bool {
 // ValidateScopePatterns performs pre-dispatch lexical containment on scope glob patterns.
 func ValidateScopePatterns(patterns []string) error {
 	for _, pattern := range patterns {
-		trimmed := strings.TrimSpace(pattern)
-		if len(trimmed) == 0 {
+		if pattern != strings.TrimSpace(pattern) {
+			return newScopeError("pattern", fmt.Sprintf("scope pattern %q contains forbidden leading or trailing whitespace", pattern))
+		}
+		if len(pattern) == 0 {
 			return newScopeError("pattern", "scope pattern cannot be empty")
 		}
 
-		if strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, "\\") {
+		if strings.HasPrefix(pattern, "/") || strings.HasPrefix(pattern, "\\") {
 			return newScopeError("pattern", fmt.Sprintf("absolute scope pattern %q is forbidden", pattern))
 		}
 
-		if len(trimmed) >= 2 && trimmed[1] == ':' {
+		if len(pattern) >= 2 && pattern[1] == ':' {
 			return newScopeError("pattern", fmt.Sprintf("drive-qualified scope pattern %q is forbidden", pattern))
 		}
-		if vol := filepath.VolumeName(trimmed); vol != "" {
+		if vol := filepath.VolumeName(pattern); vol != "" {
 			return newScopeError("pattern", fmt.Sprintf("volume-qualified scope pattern %q is forbidden", pattern))
 		}
 
-		if strings.HasPrefix(trimmed, "\\\\") || strings.HasPrefix(trimmed, "//") {
+		if strings.HasPrefix(pattern, "\\\\") || strings.HasPrefix(pattern, "//") {
 			return newScopeError("pattern", fmt.Sprintf("UNC scope pattern %q is forbidden", pattern))
 		}
 
-		if strings.HasPrefix(trimmed, `\\?\`) || strings.HasPrefix(trimmed, `\??\`) {
+		if strings.HasPrefix(pattern, `\\?\`) || strings.HasPrefix(pattern, `\??\`) {
 			return newScopeError("pattern", fmt.Sprintf("device scope pattern %q is forbidden", pattern))
 		}
 
 		// Split by slash and backslash to verify no segment is '..'
-		norm := strings.ReplaceAll(trimmed, "\\", "/")
+		norm := strings.ReplaceAll(pattern, "\\", "/")
 		parts := strings.Split(norm, "/")
 		for _, part := range parts {
 			if part == ".." {

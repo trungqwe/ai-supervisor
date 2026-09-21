@@ -3,6 +3,7 @@ package contract
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 
@@ -18,15 +19,17 @@ type TaskContractValidator struct {
 }
 
 // NewValidator creates a TaskContractValidator with pre-compiled Draft-07 schema and policy catalog.
+// Finding R4-002: canonicalSchemaBytes is mandatory and must not be empty.
 func NewValidator(canonicalSchemaBytes []byte, catalog domain.VerificationPolicyCatalog) (*TaskContractValidator, error) {
-	var resolved *jsonschema.Resolved
-	if len(canonicalSchemaBytes) > 0 {
-		var err error
-		resolved, err = CompileSchema(canonicalSchemaBytes)
-		if err != nil {
-			return nil, fmt.Errorf("failed to compile canonical task contract schema: %w", err)
-		}
+	if len(canonicalSchemaBytes) == 0 {
+		return nil, errors.New("canonical schema bytes cannot be empty; schema validation cannot be disabled")
 	}
+
+	resolved, err := CompileSchema(canonicalSchemaBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compile canonical task contract schema: %w", err)
+	}
+
 	return &TaskContractValidator{
 		canonicalSchema: resolved,
 		catalog:         catalog,
@@ -163,7 +166,7 @@ func (v *TaskContractValidator) ValidateVerificationRequests(requests []domain.V
 			return newProfileError(req.ProfileID, fmt.Sprintf("failed to compile parameter schema for profile %q", req.ProfileID))
 		}
 
-		// Project parameters for schema validation (json.Number → int64/uint64/float64).
+		// Project parameters for schema validation (json.Number → exact int64/uint64/float64).
 		// The authoritative req.Parameters (with json.Number) is NOT mutated.
 		projectedParams, err := projectForValidator(req.Parameters)
 		if err != nil {

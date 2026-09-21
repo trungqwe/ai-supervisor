@@ -95,6 +95,47 @@ func TestTaskContractValidator_CanonicalFixtures(t *testing.T) {
 	}
 }
 
+func TestTaskContractValidator_CanonicalSchemaEnforcement(t *testing.T) {
+	schemaBytes := loadCanonicalSchema(t)
+	catalog := createValidCatalog()
+
+	// 1. NewValidator with nil schema FAIL
+	t.Run("NewValidator nil schema fails", func(t *testing.T) {
+		_, err := contract.NewValidator(nil, catalog)
+		if err == nil {
+			t.Errorf("expected error for nil schema bytes, got nil")
+		}
+	})
+
+	// 2. NewValidator with empty schema FAIL
+	t.Run("NewValidator empty schema fails", func(t *testing.T) {
+		_, err := contract.NewValidator([]byte{}, catalog)
+		if err == nil {
+			t.Errorf("expected error for empty schema bytes, got nil")
+		}
+	})
+
+	// 3. ParseAndValidateRaw with nil resolved schema FAIL
+	t.Run("ParseAndValidateRaw nil schema fails", func(t *testing.T) {
+		raw := []byte(`{"contract_id": "TEST"}`)
+		_, err := contract.ParseAndValidateRaw(raw, nil)
+		if err == nil {
+			t.Errorf("expected error for nil resolved schema in ParseAndValidateRaw, got nil")
+		}
+	})
+
+	// 4. NewValidator with valid canonical schema PASS
+	t.Run("NewValidator valid canonical schema passes", func(t *testing.T) {
+		v, err := contract.NewValidator(schemaBytes, catalog)
+		if err != nil {
+			t.Fatalf("expected NewValidator to pass with canonical schema, got: %v", err)
+		}
+		if v == nil {
+			t.Fatal("expected non-nil validator")
+		}
+	})
+}
+
 func TestTaskContractValidator_StructuralSchemaCases(t *testing.T) {
 	schemaBytes := loadCanonicalSchema(t)
 	catalog := createValidCatalog()
@@ -158,13 +199,6 @@ func TestTaskContractValidator_StructuralSchemaCases(t *testing.T) {
 }
 
 func TestTaskContractValidator_RevisionLineage(t *testing.T) {
-	schemaBytes := loadCanonicalSchema(t)
-	catalog := createValidCatalog()
-	validator, err := contract.NewValidator(schemaBytes, catalog)
-	if err != nil {
-		t.Fatalf("NewValidator failed: %v", err)
-	}
-
 	prevID := "CONTRACT-TASK-P02-001-01"
 	rev1 := &domain.TaskContract{
 		ContractID:           prevID,
@@ -189,14 +223,14 @@ func TestTaskContractValidator_RevisionLineage(t *testing.T) {
 	}
 
 	// Rev 1 valid
-	if err := validator.ValidateContract(rev1, nil, "."); err != nil {
+	if err := contract.ValidateRevisionLineage(rev1, nil); err != nil {
 		t.Fatalf("rev 1 expected valid, got: %v", err)
 	}
 
 	// Rev 1 with supersedes fails
 	rev1WithSupersedes := *rev1
 	rev1WithSupersedes.SupersedesContractID = &prevID
-	if err := validator.ValidateContract(&rev1WithSupersedes, nil, "."); err == nil {
+	if err := contract.ValidateRevisionLineage(&rev1WithSupersedes, nil); err == nil {
 		t.Errorf("rev 1 with supersedes expected fail, got nil")
 	}
 
@@ -207,26 +241,26 @@ func TestTaskContractValidator_RevisionLineage(t *testing.T) {
 	rev2.RevisionNumber = 2
 	rev2.SupersedesContractID = &prevID
 
-	if err := validator.ValidateContract(&rev2, rev1, "."); err != nil {
+	if err := contract.ValidateRevisionLineage(&rev2, rev1); err != nil {
 		t.Fatalf("rev 2 expected valid, got: %v", err)
 	}
 
 	// Rev 2 missing previous fails
-	if err := validator.ValidateContract(&rev2, nil, "."); err == nil {
+	if err := contract.ValidateRevisionLineage(&rev2, nil); err == nil {
 		t.Errorf("rev 2 missing previous expected fail, got nil")
 	}
 
 	// Revision jump fails (rev 3 directly after rev 1)
 	revJump := rev2
 	revJump.RevisionNumber = 3
-	if err := validator.ValidateContract(&revJump, rev1, "."); err == nil {
+	if err := contract.ValidateRevisionLineage(&revJump, rev1); err == nil {
 		t.Errorf("revision jump expected fail, got nil")
 	}
 
 	// Task ID mismatch fails
 	taskMismatch := rev2
 	taskMismatch.TaskID = "TASK-OTHER"
-	if err := validator.ValidateContract(&taskMismatch, rev1, "."); err == nil {
+	if err := contract.ValidateRevisionLineage(&taskMismatch, rev1); err == nil {
 		t.Errorf("task_id mismatch expected fail, got nil")
 	}
 
@@ -234,14 +268,14 @@ func TestTaskContractValidator_RevisionLineage(t *testing.T) {
 	otherID := "CONTRACT-OTHER"
 	supersedesMismatch := rev2
 	supersedesMismatch.SupersedesContractID = &otherID
-	if err := validator.ValidateContract(&supersedesMismatch, rev1, "."); err == nil {
+	if err := contract.ValidateRevisionLineage(&supersedesMismatch, rev1); err == nil {
 		t.Errorf("supersedes mismatch expected fail, got nil")
 	}
 
 	// BaseSHA mutation fails
 	baseMismatch := rev2
 	baseMismatch.BaseSHA = "mutated_base_sha_fails"
-	if err := validator.ValidateContract(&baseMismatch, rev1, "."); err == nil {
+	if err := contract.ValidateRevisionLineage(&baseMismatch, rev1); err == nil {
 		t.Errorf("base_sha mutation across revisions expected fail, got nil")
 	}
 }
@@ -341,6 +375,7 @@ func TestTaskContractValidator_VerificationProfiles(t *testing.T) {
 
 func TestTaskContractValidator_ProfileConfigurationEdgeCases(t *testing.T) {
 	tempDir := t.TempDir()
+	schemaBytes := loadCanonicalSchema(t)
 
 	baseContract := domain.TaskContract{
 		ContractID:         "CONTRACT-EDGE-01",
@@ -364,13 +399,15 @@ func TestTaskContractValidator_ProfileConfigurationEdgeCases(t *testing.T) {
 	// 1. Catalog missing profile FAIL
 	t.Run("catalog missing profile fails", func(t *testing.T) {
 		cat := &testCatalog{profiles: map[string]domain.VerificationProfilePolicy{}}
-		v, _ := contract.NewValidator(nil, cat)
+		v, err := contract.NewValidator(schemaBytes, cat)
+		if err != nil {
+			t.Fatalf("NewValidator failed: %v", err)
+		}
 		c := baseContract
 		c.VerificationRequests = []domain.VerificationRequest{
 			{ID: "req-1", ProfileID: "missing-profile", Parameters: map[string]any{}},
 		}
-		err := v.ValidateContract(&c, nil, tempDir)
-		if err == nil {
+		if err := v.ValidateContract(&c, nil, tempDir); err == nil {
 			t.Errorf("expected error for missing profile, got nil")
 		}
 	})
@@ -386,13 +423,12 @@ func TestTaskContractValidator_ProfileConfigurationEdgeCases(t *testing.T) {
 				},
 			},
 		}
-		v, _ := contract.NewValidator(nil, cat)
+		v, _ := contract.NewValidator(schemaBytes, cat)
 		c := baseContract
 		c.VerificationRequests = []domain.VerificationRequest{
 			{ID: "req-1", ProfileID: "empty-id-profile", Parameters: map[string]any{}},
 		}
-		err := v.ValidateContract(&c, nil, tempDir)
-		if err == nil {
+		if err := v.ValidateContract(&c, nil, tempDir); err == nil {
 			t.Errorf("expected error for empty profile ID, got nil")
 		}
 	})
@@ -408,13 +444,12 @@ func TestTaskContractValidator_ProfileConfigurationEdgeCases(t *testing.T) {
 				},
 			},
 		}
-		v, _ := contract.NewValidator(nil, cat)
+		v, _ := contract.NewValidator(schemaBytes, cat)
 		c := baseContract
 		c.VerificationRequests = []domain.VerificationRequest{
 			{ID: "req-1", ProfileID: "requested-id", Parameters: map[string]any{}},
 		}
-		err := v.ValidateContract(&c, nil, tempDir)
-		if err == nil {
+		if err := v.ValidateContract(&c, nil, tempDir); err == nil {
 			t.Errorf("expected error for profile ID mismatch, got nil")
 		}
 	})
@@ -430,13 +465,12 @@ func TestTaskContractValidator_ProfileConfigurationEdgeCases(t *testing.T) {
 				},
 			},
 		}
-		v, _ := contract.NewValidator(nil, cat)
+		v, _ := contract.NewValidator(schemaBytes, cat)
 		c := baseContract
 		c.VerificationRequests = []domain.VerificationRequest{
 			{ID: "req-1", ProfileID: "zero-timeout", Parameters: map[string]any{}},
 		}
-		err := v.ValidateContract(&c, nil, tempDir)
-		if err == nil {
+		if err := v.ValidateContract(&c, nil, tempDir); err == nil {
 			t.Errorf("expected error for MaxTimeoutSeconds = 0, got nil")
 		}
 	})
@@ -452,13 +486,12 @@ func TestTaskContractValidator_ProfileConfigurationEdgeCases(t *testing.T) {
 				},
 			},
 		}
-		v, _ := contract.NewValidator(nil, cat)
+		v, _ := contract.NewValidator(schemaBytes, cat)
 		c := baseContract
 		c.VerificationRequests = []domain.VerificationRequest{
 			{ID: "req-1", ProfileID: "negative-timeout", Parameters: map[string]any{}},
 		}
-		err := v.ValidateContract(&c, nil, tempDir)
-		if err == nil {
+		if err := v.ValidateContract(&c, nil, tempDir); err == nil {
 			t.Errorf("expected error for MaxTimeoutSeconds < 0, got nil")
 		}
 	})
@@ -474,13 +507,12 @@ func TestTaskContractValidator_ProfileConfigurationEdgeCases(t *testing.T) {
 				},
 			},
 		}
-		v, _ := contract.NewValidator(nil, cat)
+		v, _ := contract.NewValidator(schemaBytes, cat)
 		c := baseContract
 		c.VerificationRequests = []domain.VerificationRequest{
 			{ID: "req-1", ProfileID: "nil-schema", Parameters: map[string]any{}},
 		}
-		err := v.ValidateContract(&c, nil, tempDir)
-		if err == nil {
+		if err := v.ValidateContract(&c, nil, tempDir); err == nil {
 			t.Errorf("expected error for nil ParameterSchema, got nil")
 		}
 	})
@@ -496,13 +528,12 @@ func TestTaskContractValidator_ProfileConfigurationEdgeCases(t *testing.T) {
 				},
 			},
 		}
-		v, _ := contract.NewValidator(nil, cat)
+		v, _ := contract.NewValidator(schemaBytes, cat)
 		c := baseContract
 		c.VerificationRequests = []domain.VerificationRequest{
 			{ID: "req-1", ProfileID: "empty-schema", Parameters: map[string]any{}},
 		}
-		err := v.ValidateContract(&c, nil, tempDir)
-		if err == nil {
+		if err := v.ValidateContract(&c, nil, tempDir); err == nil {
 			t.Errorf("expected error for empty ParameterSchema, got nil")
 		}
 	})
@@ -522,13 +553,12 @@ func TestTaskContractValidator_ProfileConfigurationEdgeCases(t *testing.T) {
 				},
 			},
 		}
-		v, _ := contract.NewValidator(nil, cat)
+		v, _ := contract.NewValidator(schemaBytes, cat)
 		c := baseContract
 		c.VerificationRequests = []domain.VerificationRequest{
 			{ID: "req-1", ProfileID: "no-param-profile", Parameters: nil}, // nil parameters
 		}
-		err := v.ValidateContract(&c, nil, tempDir)
-		if err == nil {
+		if err := v.ValidateContract(&c, nil, tempDir); err == nil {
 			t.Errorf("expected error for nil req.Parameters, got nil")
 		}
 	})
@@ -548,7 +578,7 @@ func TestTaskContractValidator_ProfileConfigurationEdgeCases(t *testing.T) {
 				},
 			},
 		}
-		v, _ := contract.NewValidator(nil, cat)
+		v, _ := contract.NewValidator(schemaBytes, cat)
 		c := baseContract
 		c.VerificationRequests = []domain.VerificationRequest{
 			{
@@ -559,8 +589,7 @@ func TestTaskContractValidator_ProfileConfigurationEdgeCases(t *testing.T) {
 				TimeoutSeconds: 30,
 			},
 		}
-		err := v.ValidateContract(&c, nil, tempDir)
-		if err != nil {
+		if err := v.ValidateContract(&c, nil, tempDir); err != nil {
 			t.Fatalf("expected valid no-parameter profile to pass, got: %v", err)
 		}
 	})
@@ -584,7 +613,7 @@ func TestTaskContractValidator_ProfileConfigurationEdgeCases(t *testing.T) {
 				},
 			},
 		}
-		v, _ := contract.NewValidator(nil, cat)
+		v, _ := contract.NewValidator(schemaBytes, cat)
 		c := baseContract
 		c.VerificationRequests = []domain.VerificationRequest{
 			{
@@ -597,8 +626,7 @@ func TestTaskContractValidator_ProfileConfigurationEdgeCases(t *testing.T) {
 				TimeoutSeconds: 60,
 			},
 		}
-		err := v.ValidateContract(&c, nil, tempDir)
-		if err != nil {
+		if err := v.ValidateContract(&c, nil, tempDir); err != nil {
 			t.Fatalf("expected valid policy to pass, got: %v", err)
 		}
 	})
@@ -652,6 +680,55 @@ func TestTaskContractValidator_PathContainment(t *testing.T) {
 	// 6. Nonexistent escaping suffix FAIL
 	if err := contract.ValidateCwdContainment("sub/../../../outside_nonexistent", tempDir, "worktree_contained"); err == nil {
 		t.Errorf("expected nonexistent escaping suffix to fail, got nil")
+	}
+}
+
+func TestTaskContractValidator_RegularFileIntermediateEscape(t *testing.T) {
+	// Finding R4-001 / Section 10: Privilege-free regression test
+	// Create root/safe/blocker.txt where blocker.txt is a regular file.
+	// Validate safe/blocker.txt/future under worktree_contained.
+	// Expected: FAIL because intermediate component is not a directory.
+	tempDir := t.TempDir()
+	safeDir := filepath.Join(tempDir, "safe")
+	if err := os.MkdirAll(safeDir, 0755); err != nil {
+		t.Fatalf("failed to create safe dir: %v", err)
+	}
+	blockerFile := filepath.Join(safeDir, "blocker.txt")
+	if err := os.WriteFile(blockerFile, []byte("I am a file, not a directory"), 0644); err != nil {
+		t.Fatalf("failed to create blocker file: %v", err)
+	}
+
+	err := contract.ValidateCwdContainment("safe/blocker.txt/future", tempDir, "worktree_contained")
+	if err == nil {
+		t.Fatalf("expected error for path with regular file intermediate component, got nil")
+	}
+	t.Logf("REGULAR_FILE_INTERMEDIATE_ESCAPE = REJECTED: %v", err)
+}
+
+func TestTaskContractValidator_WhitespaceCanonicality(t *testing.T) {
+	// Section 12: Leading/trailing whitespace must be rejected rather than silently trimmed
+	tempDir := t.TempDir()
+
+	// 1. cwd with leading/trailing whitespace FAIL
+	if err := contract.ValidateCwdContainment(" .", tempDir, "worktree_root"); err == nil {
+		t.Errorf("expected error for cwd with leading whitespace, got nil")
+	}
+	if err := contract.ValidateCwdContainment(". ", tempDir, "worktree_root"); err == nil {
+		t.Errorf("expected error for cwd with trailing whitespace, got nil")
+	}
+	if err := contract.ValidateCwdContainment(" sub/contained ", tempDir, "worktree_contained"); err == nil {
+		t.Errorf("expected error for contained cwd with whitespace, got nil")
+	}
+
+	// 2. scope patterns with leading/trailing whitespace FAIL
+	if err := contract.ValidateScopePatterns([]string{" internal/** "}); err == nil {
+		t.Errorf("expected error for scope pattern with whitespace, got nil")
+	}
+	if err := contract.ValidateScopePatterns([]string{"internal/** "}); err == nil {
+		t.Errorf("expected error for scope pattern with trailing whitespace, got nil")
+	}
+	if err := contract.ValidateScopePatterns([]string{" internal/**"}); err == nil {
+		t.Errorf("expected error for scope pattern with leading whitespace, got nil")
 	}
 }
 
@@ -767,9 +844,17 @@ func TestTaskContractValidator_SymlinkJunctionEscape(t *testing.T) {
 		} else {
 			t.Logf("Symlink prefix escape successfully rejected: %v", err)
 		}
+
+		// 3. Section 11: Symlink prefix with future suffix
+		err = contract.ValidateCwdContainment("link_to_outside/future_not_created", tempDir, "worktree_contained")
+		if err == nil {
+			t.Errorf("expected symlink prefix with future suffix to fail, got nil")
+		} else {
+			t.Logf("SYMLINK_PREFIX_FUTURE_SUFFIX = REJECTED: %v", err)
+		}
 	}
 
-	// 3. Dangling symlink FAIL
+	// 4. Dangling symlink FAIL
 	danglingTarget := filepath.Join(tempDir, "nonexistent_target_dir")
 	danglingLink := filepath.Join(tempDir, "dangling_link")
 	err = os.Symlink(danglingTarget, danglingLink)
@@ -820,7 +905,6 @@ func TestTaskContractValidator_DirectImmutability(t *testing.T) {
 	// 1. Identical immutable contract = PASS
 	t.Run("identical immutable contract passes", func(t *testing.T) {
 		candidate := *original
-		// clone slices/maps to ensure distinct pointers but identical values
 		candidate.Requirements = append([]string{}, original.Requirements...)
 		candidate.AllowedScope = append([]string{}, original.AllowedScope...)
 		candidate.ForbiddenScope = append([]string{}, original.ForbiddenScope...)
@@ -851,14 +935,12 @@ func TestTaskContractValidator_DirectImmutability(t *testing.T) {
 
 	// 3. SupersedesContractID mutation = IMMUTABILITY FAIL
 	t.Run("SupersedesContractID mutation fails", func(t *testing.T) {
-		// Mutate to nil
 		candidateNil := *original
 		candidateNil.SupersedesContractID = nil
 		if err := contract.ValidateImmutability(original, &candidateNil); err == nil {
 			t.Errorf("expected error for SupersedesContractID mutated to nil, got nil")
 		}
 
-		// Mutate to different string
 		diffID := "CONTRACT-MUTATED-ID"
 		candidateDiff := *original
 		candidateDiff.SupersedesContractID = &diffID
@@ -884,7 +966,7 @@ func TestTaskContractValidator_DirectImmutability(t *testing.T) {
 	// 5. Verification requests mutation = IMMUTABILITY FAIL
 	t.Run("VerificationRequests mutation fails", func(t *testing.T) {
 		candidate := *original
-		candidate.VerificationRequests = []domain.VerificationRequest{} // emptied
+		candidate.VerificationRequests = []domain.VerificationRequest{}
 		err := contract.ValidateImmutability(original, &candidate)
 		if err == nil {
 			t.Fatalf("expected error for verification_requests mutation, got nil")
@@ -898,7 +980,7 @@ func TestTaskContractValidator_DirectImmutability(t *testing.T) {
 	// 6. Scope mutation = IMMUTABILITY FAIL
 	t.Run("Scope mutation fails", func(t *testing.T) {
 		candidate := *original
-		candidate.AllowedScope = []string{"**"} // broadened
+		candidate.AllowedScope = []string{"**"}
 		err := contract.ValidateImmutability(original, &candidate)
 		if err == nil {
 			t.Fatalf("expected error for allowed_scope mutation, got nil")
@@ -914,21 +996,15 @@ func TestTaskContractValidator_DirectImmutability(t *testing.T) {
 		candidate := *original
 		candidate.ContractID = "CONTRACT-NEW-REVISION-02"
 		candidate.Objective = "New objective for new revision"
-		// Should return nil because it represents a distinct revision identity
 		if err := contract.ValidateImmutability(original, &candidate); err != nil {
 			t.Errorf("expected new contract_id to not be treated as mutation of original, got error: %v", err)
 		}
 	})
 }
 
-func TestTaskContractValidator_NumericFidelity(t *testing.T) {
-	// 9007199254740993 = 2^53 + 1, the smallest integer not exactly representable
-	// as float64. float64 would silently become 9007199254740992.
-	const exactToken = "9007199254740993"
-
+func TestTaskContractValidator_NumericFidelityAndPrecision(t *testing.T) {
 	schemaBytes := loadCanonicalSchema(t)
 
-	// Create a catalog that permits an arbitrary integer "large_id" parameter
 	catalog := &testCatalog{
 		profiles: map[string]domain.VerificationProfilePolicy{
 			"numeric-profile": {
@@ -936,9 +1012,10 @@ func TestTaskContractValidator_NumericFidelity(t *testing.T) {
 				ParameterSchema: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"large_id": map[string]any{"type": "integer"},
+						"large_id":    map[string]any{"type": "integer"},
+						"exact_ratio": map[string]any{"type": "number"},
+						"exp_int":     map[string]any{"type": "integer"},
 					},
-					"required":             []any{"large_id"},
 					"additionalProperties": false,
 				},
 				CwdPolicy:         "worktree_root",
@@ -952,8 +1029,9 @@ func TestTaskContractValidator_NumericFidelity(t *testing.T) {
 		t.Fatalf("NewValidator failed: %v", err)
 	}
 
-	// Build a minimal valid contract JSON with the large integer in parameters
-	rawJSON := []byte(`{
+	// 1. Integer fidelity test: 9007199254740993 preserved as json.Number exact
+	t.Run("integer fidelity 9007199254740993 preserved", func(t *testing.T) {
+		rawJSON := []byte(`{
   "contract_id": "CONTRACT-NUMERIC-01",
   "task_id": "TASK-NUMERIC",
   "revision_number": 1,
@@ -983,30 +1061,151 @@ func TestTaskContractValidator_NumericFidelity(t *testing.T) {
     }
   ]
 }`)
+		parsed, err := validator.ValidateRaw(rawJSON, nil, ".")
+		if err != nil {
+			t.Fatalf("expected integer fidelity test to pass, got: %v", err)
+		}
+		largeID := parsed.VerificationRequests[0].Parameters["large_id"]
+		numVal, ok := largeID.(json.Number)
+		if !ok {
+			t.Fatalf("expected large_id to be json.Number, got %T", largeID)
+		}
+		if numVal.String() != "9007199254740993" {
+			t.Errorf("expected exact 9007199254740993, got %q", numVal.String())
+		}
+		t.Logf("INTEGER_NUMERIC_FIDELITY = PASS: %s", numVal.String())
+	})
 
-	parsed, err := validator.ValidateRaw(rawJSON, nil, ".")
-	if err != nil {
-		t.Fatalf("expected numeric fidelity fixture to pass validation, got: %v", err)
-	}
+	// 2. Exact decimal projection: 0.5 passes
+	t.Run("exact decimal 0.5 passes", func(t *testing.T) {
+		rawJSON := []byte(`{
+  "contract_id": "CONTRACT-NUMERIC-02",
+  "task_id": "TASK-NUMERIC",
+  "revision_number": 1,
+  "supersedes_contract_id": null,
+  "phase_id": "P02",
+  "objective": "Exact decimal test",
+  "requirements": ["FR-001"],
+  "architecture_refs": [],
+  "base_sha": "a1b2c3d4e5f6789012345678901234567890abcd",
+  "allowed_scope": ["internal/**"],
+  "forbidden_scope": [],
+  "constraints": [],
+  "acceptance_criteria": ["0.5 passes"],
+  "required_evidence": ["git_diff"],
+  "worker_profile": "antigravity-standard",
+  "report_contract": "docs/schemas/worker-report.schema.json",
+  "stop_conditions": [],
+  "verification_requests": [
+    {
+      "id": "num-req-2",
+      "profile_id": "numeric-profile",
+      "parameters": {
+        "exact_ratio": 0.5
+      },
+      "cwd": ".",
+      "timeout_seconds": 10
+    }
+  ]
+}`)
+		parsed, err := validator.ValidateRaw(rawJSON, nil, ".")
+		if err != nil {
+			t.Fatalf("expected exact decimal 0.5 to pass, got: %v", err)
+		}
+		ratio := parsed.VerificationRequests[0].Parameters["exact_ratio"]
+		numVal, ok := ratio.(json.Number)
+		if !ok {
+			t.Fatalf("expected exact_ratio to be json.Number, got %T", ratio)
+		}
+		if numVal.String() != "0.5" {
+			t.Errorf("expected exact 0.5, got %q", numVal.String())
+		}
+		t.Logf("EXACT_DECIMAL_PROJECTION = PASS: %s", numVal.String())
+	})
 
-	if len(parsed.VerificationRequests) == 0 {
-		t.Fatal("expected at least one verification request in parsed contract")
-	}
+	// 3. Exponent integer: 1e3 under integer schema passes and authoritative is json.Number
+	t.Run("mathematical exponent integer 1e3 passes integer schema", func(t *testing.T) {
+		rawJSON := []byte(`{
+  "contract_id": "CONTRACT-NUMERIC-03",
+  "task_id": "TASK-NUMERIC",
+  "revision_number": 1,
+  "supersedes_contract_id": null,
+  "phase_id": "P02",
+  "objective": "Exponent integer test",
+  "requirements": ["FR-001"],
+  "architecture_refs": [],
+  "base_sha": "a1b2c3d4e5f6789012345678901234567890abcd",
+  "allowed_scope": ["internal/**"],
+  "forbidden_scope": [],
+  "constraints": [],
+  "acceptance_criteria": ["1e3 passes"],
+  "required_evidence": ["git_diff"],
+  "worker_profile": "antigravity-standard",
+  "report_contract": "docs/schemas/worker-report.schema.json",
+  "stop_conditions": [],
+  "verification_requests": [
+    {
+      "id": "num-req-3",
+      "profile_id": "numeric-profile",
+      "parameters": {
+        "exp_int": 1e3
+      },
+      "cwd": ".",
+      "timeout_seconds": 10
+    }
+  ]
+}`)
+		parsed, err := validator.ValidateRaw(rawJSON, nil, ".")
+		if err != nil {
+			t.Fatalf("expected exponent integer 1e3 to pass, got: %v", err)
+		}
+		expInt := parsed.VerificationRequests[0].Parameters["exp_int"]
+		numVal, ok := expInt.(json.Number)
+		if !ok {
+			t.Fatalf("expected exp_int to be json.Number, got %T", expInt)
+		}
+		if numVal.String() != "1e3" {
+			t.Errorf("expected exact 1e3, got %q", numVal.String())
+		}
+		t.Logf("EXPONENT_INTEGER_PROJECTION = PASS: %s", numVal.String())
+	})
 
-	largeID, ok := parsed.VerificationRequests[0].Parameters["large_id"]
-	if !ok {
-		t.Fatal("expected 'large_id' key in parsed parameters")
-	}
-
-	// The value must be preserved as json.Number, not silently coerced to float64
-	numVal, isNumber := largeID.(json.Number)
-	if !isNumber {
-		t.Fatalf("expected large_id to be json.Number, got %T (value: %v)", largeID, largeID)
-	}
-
-	if numVal.String() != exactToken {
-		t.Errorf("numeric fidelity violated: expected %q, got %q (float64 coercion detected)", exactToken, numVal.String())
-	}
-
-	t.Logf("JSON_NUMBER_SEMANTICS_PRESERVED = PASS: large_id = %q (exact)", numVal.String())
+	// 4. Inexact decimal: 0.1000000000000000000000001 fails closed with precision error
+	t.Run("inexact decimal fails closed", func(t *testing.T) {
+		rawJSON := []byte(`{
+  "contract_id": "CONTRACT-NUMERIC-04",
+  "task_id": "TASK-NUMERIC",
+  "revision_number": 1,
+  "supersedes_contract_id": null,
+  "phase_id": "P02",
+  "objective": "Inexact decimal test",
+  "requirements": ["FR-001"],
+  "architecture_refs": [],
+  "base_sha": "a1b2c3d4e5f6789012345678901234567890abcd",
+  "allowed_scope": ["internal/**"],
+  "forbidden_scope": [],
+  "constraints": [],
+  "acceptance_criteria": ["Inexact decimal fails"],
+  "required_evidence": ["git_diff"],
+  "worker_profile": "antigravity-standard",
+  "report_contract": "docs/schemas/worker-report.schema.json",
+  "stop_conditions": [],
+  "verification_requests": [
+    {
+      "id": "num-req-4",
+      "profile_id": "numeric-profile",
+      "parameters": {
+        "exact_ratio": 0.1000000000000000000000001
+      },
+      "cwd": ".",
+      "timeout_seconds": 10
+    }
+  ]
+}`)
+		_, err := validator.ValidateRaw(rawJSON, nil, ".")
+		if err == nil {
+			t.Fatalf("expected inexact decimal to fail with numeric projection precision error, got nil")
+		}
+		t.Logf("INEXACT_DECIMAL_PROJECTION = REJECTED: %v", err)
+	})
 }
