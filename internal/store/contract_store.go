@@ -13,7 +13,7 @@ import (
 	"modernc.org/sqlite"
 )
 
-// InsertTaskContract persists a new TaskContract and its canonical serialized JSON payload.
+// InsertTaskContract persists a new TaskContract and enforces durable revision lineage invariants (ADR-012).
 func (s *Store) InsertTaskContract(ctx context.Context, c domain.TaskContract) error {
 	if strings.TrimSpace(c.ContractID) == "" {
 		return errors.New("store: contract_id must not be empty")
@@ -28,21 +28,64 @@ func (s *Store) InsertTaskContract(ctx context.Context, c domain.TaskContract) e
 		return errors.New("store: base_sha must not be empty")
 	}
 
+	// Finding R2-005: New contracts must start mutable; contract freezing belongs to PrepareDispatch
+	if c.IsImmutable {
+		return fmt.Errorf("%w: new task contract must not be immutable on insert", ErrInvalidContractLineage)
+	}
+
+	// Lineage checks per ADR-012
+	if c.RevisionNumber == 1 {
+		if c.SupersedesContractID != nil && strings.TrimSpace(*c.SupersedesContractID) != "" {
+			return fmt.Errorf("%w: revision 1 must not specify supersedes_contract_id", ErrInvalidContractLineage)
+		}
+	} else {
+		if c.SupersedesContractID == nil || strings.TrimSpace(*c.SupersedesContractID) == "" {
+			return fmt.Errorf("%w: revision %d must specify supersedes_contract_id", ErrInvalidContractLineage, c.RevisionNumber)
+		}
+
+		prevID := strings.TrimSpace(*c.SupersedesContractID)
+		var prevTaskID string
+		var prevRev int
+		var prevBaseSHA string
+		var prevIsImmutable int
+
+		queryPrev := `
+SELECT task_id, revision_number, base_sha, is_immutable
+FROM task_contracts
+WHERE contract_id = ?
+`
+		err := s.db.QueryRowContext(ctx, queryPrev, prevID).Scan(&prevTaskID, &prevRev, &prevBaseSHA, &prevIsImmutable)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%w: superseded contract %q not found", ErrInvalidContractLineage, prevID)
+			}
+			return fmt.Errorf("store: failed to query superseded contract: %w", err)
+		}
+
+		if prevTaskID != c.TaskID {
+			return fmt.Errorf("%w: superseded contract belongs to task %q, not %q", ErrInvalidContractLineage, prevTaskID, c.TaskID)
+		}
+		if prevRev != c.RevisionNumber-1 {
+			return fmt.Errorf("%w: revision jump: previous revision is %d, expected %d", ErrInvalidContractLineage, prevRev, c.RevisionNumber-1)
+		}
+		if prevBaseSHA != c.BaseSHA {
+			return fmt.Errorf("%w: base_sha changed from %q to %q across revisions", ErrInvalidContractLineage, prevBaseSHA, c.BaseSHA)
+		}
+		if prevIsImmutable != 1 {
+			return fmt.Errorf("%w: previous contract revision %d is not frozen/immutable", ErrInvalidContractLineage, prevRev)
+		}
+	}
+
 	payloadBytes, err := json.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("store: failed to serialize task contract: %w", err)
-	}
-
-	isImmutableInt := 0
-	if c.IsImmutable {
-		isImmutableInt = 1
 	}
 
 	query := `
 INSERT INTO task_contracts (
     contract_id, task_id, revision_number, supersedes_contract_id,
     base_sha, payload_json, is_immutable
-) VALUES (?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, 0)
 `
 
 	_, err = s.db.ExecContext(ctx, query,
@@ -52,7 +95,6 @@ INSERT INTO task_contracts (
 		c.SupersedesContractID,
 		c.BaseSHA,
 		string(payloadBytes),
-		isImmutableInt,
 	)
 	if err != nil {
 		var sqliteErr *sqlite.Error

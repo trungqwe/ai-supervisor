@@ -67,13 +67,14 @@ WHERE attempt_id = ?
 	return a, nil
 }
 
-// PrepareDispatch executes an atomic pre-dispatch transaction:
-// 1. Conditionally updates Task state from READY to DISPATCHED and increments current_attempt by 1.
-// 2. Reads the allocated attempt_number.
-// 3. Verifies that contractID exists and belongs to taskID.
-// 4. Freezes the contract revision (is_immutable = 1).
-// 5. Inserts the TaskAttempt record.
-// 6. Commits the transaction.
+// PrepareDispatch executes the atomic pre-dispatch transaction:
+// 1. Validates that expectedReportPath strictly matches CanonicalExpectedReportPath(taskID, attemptID).
+// 2. Conditionally updates Task state from READY to DISPATCHED and increments current_attempt by 1.
+// 3. Reads the pair_id and enforces the pair active-lane invariant (at most one DISPATCHED/RUNNING/REVIEWING task per Pair).
+// 4. Verifies contract existence, task ownership, and that the contract is the latest revision for the task.
+// 5. Freezes the contract revision (is_immutable = 1) if not already frozen.
+// 6. Inserts the TaskAttempt record.
+// 7. Commits the transaction.
 func (s *Store) PrepareDispatch(
 	ctx context.Context,
 	taskID string,
@@ -82,17 +83,13 @@ func (s *Store) PrepareDispatch(
 	expectedReportPath string,
 	startedAt time.Time,
 ) (domain.TaskAttempt, error) {
-	if strings.TrimSpace(taskID) == "" {
-		return domain.TaskAttempt{}, errors.New("store: taskID must not be empty")
+	// Finding R2-003: Canonical report path enforcement
+	canonicalPath, err := CanonicalExpectedReportPath(taskID, attemptID)
+	if err != nil {
+		return domain.TaskAttempt{}, err
 	}
-	if strings.TrimSpace(contractID) == "" {
-		return domain.TaskAttempt{}, errors.New("store: contractID must not be empty")
-	}
-	if strings.TrimSpace(attemptID) == "" {
-		return domain.TaskAttempt{}, errors.New("store: attemptID must not be empty")
-	}
-	if strings.TrimSpace(expectedReportPath) == "" {
-		return domain.TaskAttempt{}, errors.New("store: expectedReportPath must not be empty")
+	if expectedReportPath != canonicalPath {
+		return domain.TaskAttempt{}, fmt.Errorf("%w: expected %q, got %q", ErrReportPathMismatch, canonicalPath, expectedReportPath)
 	}
 
 	now := startedAt.UTC()
@@ -125,23 +122,48 @@ WHERE task_id = ? AND state = 'READY'
 	if rows == 0 {
 		var currentState string
 		err := tx.QueryRowContext(ctx, "SELECT state FROM tasks WHERE task_id = ?", taskID).Scan(&currentState)
-		if errors.Is(err, sql.ErrNoRows) {
-			return domain.TaskAttempt{}, ErrTaskNotFound
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return domain.TaskAttempt{}, ErrTaskNotFound
+			}
+			return domain.TaskAttempt{}, fmt.Errorf("store: failed to query task state: %w", err)
 		}
 		return domain.TaskAttempt{}, fmt.Errorf("%w: task %q is in state %q, expected READY", ErrTaskNotReady, taskID, currentState)
 	}
 
-	// 2. Read new attempt number
+	// 2. Read pair_id and new attempt number
+	var pairID string
 	var allocatedAttemptNumber int
-	err = tx.QueryRowContext(ctx, "SELECT current_attempt FROM tasks WHERE task_id = ?", taskID).Scan(&allocatedAttemptNumber)
+	err = tx.QueryRowContext(ctx, "SELECT pair_id, current_attempt FROM tasks WHERE task_id = ?", taskID).Scan(&pairID, &allocatedAttemptNumber)
 	if err != nil {
-		return domain.TaskAttempt{}, fmt.Errorf("store: failed to read updated attempt number: %w", err)
+		return domain.TaskAttempt{}, fmt.Errorf("store: failed to read updated task info: %w", err)
 	}
 
-	// 3. Verify contract existence and ownership
+	// 3. Pair active-lane invariant: at most one task in DISPATCHED, RUNNING, or REVIEWING per Pair (Finding R2-006)
+	var activeTaskID, activeState string
+	checkPairQuery := `
+SELECT task_id, state
+FROM tasks
+WHERE pair_id = ?
+  AND task_id != ?
+  AND state IN ('DISPATCHED', 'RUNNING', 'REVIEWING')
+LIMIT 1`
+	err = tx.QueryRowContext(ctx, checkPairQuery, pairID, taskID).Scan(&activeTaskID, &activeState)
+	if err == nil {
+		return domain.TaskAttempt{}, fmt.Errorf("%w: pair %q already has active task %q in state %q", ErrPairBusy, pairID, activeTaskID, activeState)
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return domain.TaskAttempt{}, fmt.Errorf("store: failed to check pair active lane: %w", err)
+	}
+
+	// 4. Verify contract existence, ownership, and latest revision (Finding R2-004)
 	var contractTaskID string
+	var selectedRevision int
 	var isImmutableInt int
-	err = tx.QueryRowContext(ctx, "SELECT task_id, is_immutable FROM task_contracts WHERE contract_id = ?", contractID).Scan(&contractTaskID, &isImmutableInt)
+	queryContract := `
+SELECT task_id, revision_number, is_immutable
+FROM task_contracts
+WHERE contract_id = ?`
+	err = tx.QueryRowContext(ctx, queryContract, contractID).Scan(&contractTaskID, &selectedRevision, &isImmutableInt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.TaskAttempt{}, ErrContractNotFound
@@ -153,7 +175,16 @@ WHERE task_id = ? AND state = 'READY'
 		return domain.TaskAttempt{}, fmt.Errorf("%w: contract %q belongs to task %q, not %q", ErrContractNotOwned, contractID, contractTaskID, taskID)
 	}
 
-	// 4. Freeze contract if not already frozen
+	var latestRevision int
+	err = tx.QueryRowContext(ctx, "SELECT MAX(revision_number) FROM task_contracts WHERE task_id = ?", taskID).Scan(&latestRevision)
+	if err != nil {
+		return domain.TaskAttempt{}, fmt.Errorf("store: failed to query latest contract revision: %w", err)
+	}
+	if selectedRevision != latestRevision {
+		return domain.TaskAttempt{}, fmt.Errorf("%w: contract revision %d is superseded by latest revision %d", ErrStaleContractRevision, selectedRevision, latestRevision)
+	}
+
+	// 5. Freeze contract if not already frozen (retries reuse already-frozen latest revision)
 	if isImmutableInt == 0 {
 		freezeQuery := `
 UPDATE task_contracts
@@ -166,7 +197,7 @@ WHERE contract_id = ? AND is_immutable = 0
 		}
 	}
 
-	// 5. Insert TaskAttempt
+	// 6. Insert TaskAttempt
 	insertAttemptQuery := `
 INSERT INTO task_attempts (
     attempt_id, attempt_number, task_id, contract_id, expected_report_path, started_at
@@ -194,7 +225,7 @@ INSERT INTO task_attempts (
 		return domain.TaskAttempt{}, fmt.Errorf("store: failed to insert task attempt: %w", err)
 	}
 
-	// 6. Commit
+	// 7. Commit
 	if err := tx.Commit(); err != nil {
 		return domain.TaskAttempt{}, fmt.Errorf("store: failed to commit dispatch transaction: %w", err)
 	}

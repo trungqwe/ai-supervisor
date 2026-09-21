@@ -13,6 +13,8 @@ import (
 )
 
 // CreateTask inserts a new Task record into the store.
+// In accordance with the canonical lifecycle initial edge ([*] -> DRAFT),
+// a new task must be created in the DRAFT state with current_attempt = 0.
 func (s *Store) CreateTask(ctx context.Context, t domain.Task) error {
 	if strings.TrimSpace(t.TaskID) == "" {
 		return errors.New("store: task_id must not be empty")
@@ -23,11 +25,13 @@ func (s *Store) CreateTask(ctx context.Context, t domain.Task) error {
 	if strings.TrimSpace(t.PairID) == "" {
 		return errors.New("store: pair_id must not be empty")
 	}
-	if !t.State.IsValid() {
-		return fmt.Errorf("store: invalid task state %q", t.State)
+
+	// Canonical initial edge enforcement: [*] -> DRAFT with current_attempt = 0
+	if t.State != domain.StateDraft {
+		return fmt.Errorf("%w: new task state must be DRAFT, got %q", ErrInvalidInitialTaskState, t.State)
 	}
-	if t.CurrentAttempt < 0 {
-		return fmt.Errorf("store: current_attempt must be non-negative (got %d)", t.CurrentAttempt)
+	if t.CurrentAttempt != 0 {
+		return fmt.Errorf("%w: new task current_attempt must be 0, got %d", ErrInvalidInitialTaskState, t.CurrentAttempt)
 	}
 
 	createdAt := t.CreatedAt
@@ -114,20 +118,65 @@ WHERE task_id = ?
 }
 
 // TransitionTask executes a compare-and-set state transition on a Task using canonical workflow validation.
+// The READY -> DISPATCHED transition is exclusively owned by PrepareDispatch and is rejected here.
+// When transitioning into active lane states (RUNNING or REVIEWING), the pair active-lane invariant is enforced.
 func (s *Store) TransitionTask(ctx context.Context, taskID string, expectedFrom, to domain.TaskState) error {
+	// Reject generic READY -> DISPATCHED bypass (Finding R2-001)
+	if expectedFrom == domain.StateReady && to == domain.StateDispatched {
+		return ErrAtomicDispatchRequired
+	}
+
 	if err := workflow.Transition(expectedFrom, to); err != nil {
 		return fmt.Errorf("store: canonical transition rejected: %w", err)
 	}
 
-	now := formatTime(timeNow())
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: failed to begin transition transaction: %w", err)
+	}
+	defer tx.Rollback()
 
+	// 1. Query pair_id and current state of taskID
+	var pairID string
+	var currentState string
+	err = tx.QueryRowContext(ctx, "SELECT pair_id, state FROM tasks WHERE task_id = ?", taskID).Scan(&pairID, &currentState)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrTaskNotFound
+		}
+		return fmt.Errorf("store: failed to query task: %w", err)
+	}
+	if currentState != string(expectedFrom) {
+		return fmt.Errorf("%w: task %q is in state %q, expected %q", ErrStateConflict, taskID, currentState, expectedFrom)
+	}
+
+	// 2. Pair active-lane invariant: exactly one task may be in DISPATCHED, RUNNING, or REVIEWING per Pair (Finding R2-006)
+	if to == domain.StateRunning || to == domain.StateReviewing {
+		var activeTaskID, activeState string
+		checkPairQuery := `
+SELECT task_id, state
+FROM tasks
+WHERE pair_id = ?
+  AND task_id != ?
+  AND state IN ('DISPATCHED', 'RUNNING', 'REVIEWING')
+LIMIT 1`
+		err = tx.QueryRowContext(ctx, checkPairQuery, pairID, taskID).Scan(&activeTaskID, &activeState)
+		if err == nil {
+			return fmt.Errorf("%w: pair %q already has active task %q in state %q", ErrPairBusy, pairID, activeTaskID, activeState)
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("store: failed to check pair active lane: %w", err)
+		}
+	}
+
+	// 3. Execute compare-and-set update
+	now := formatTime(timeNow())
 	query := `
 UPDATE tasks
 SET state = ?, updated_at = ?
 WHERE task_id = ? AND state = ?
 `
 
-	res, err := s.db.ExecContext(ctx, query, string(to), now, taskID, string(expectedFrom))
+	res, err := tx.ExecContext(ctx, query, string(to), now, taskID, string(expectedFrom))
 	if err != nil {
 		return fmt.Errorf("store: failed to update task state: %w", err)
 	}
@@ -138,11 +187,18 @@ WHERE task_id = ? AND state = ?
 	}
 	if rows == 0 {
 		var actualState string
-		err := s.db.QueryRowContext(ctx, "SELECT state FROM tasks WHERE task_id = ?", taskID).Scan(&actualState)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrTaskNotFound
+		err := tx.QueryRowContext(ctx, "SELECT state FROM tasks WHERE task_id = ?", taskID).Scan(&actualState)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrTaskNotFound
+			}
+			return fmt.Errorf("store: failed to query task state: %w", err)
 		}
 		return fmt.Errorf("%w: task %q is in state %q, expected %q", ErrStateConflict, taskID, actualState, expectedFrom)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: failed to commit transition: %w", err)
 	}
 
 	return nil

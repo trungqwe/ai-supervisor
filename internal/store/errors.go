@@ -18,4 +18,12 @@ var (
 	ErrDuplicateKey               = errors.New("store: duplicate key constraint violation")
 	ErrForeignKeyViolation        = errors.New("store: foreign key constraint violation")
 	ErrUnsupportedSchemaVersion   = errors.New("store: unsupported database schema version")
+
+	// Revision 2 additions
+	ErrAtomicDispatchRequired  = errors.New("store: READY -> DISPATCHED transition requires PrepareDispatch atomic allocation")
+	ErrInvalidInitialTaskState = errors.New("store: initial task state must be DRAFT with current_attempt 0")
+	ErrReportPathMismatch      = errors.New("store: expected_report_path does not match canonical path")
+	ErrStaleContractRevision   = errors.New("store: contract revision is not the latest revision for the task")
+	ErrInvalidContractLineage  = errors.New("store: invalid contract revision lineage")
+	ErrPairBusy                = errors.New("store: pair already has an active task in DISPATCHED, RUNNING, or REVIEWING")
 )
