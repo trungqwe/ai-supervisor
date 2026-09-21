@@ -85,3 +85,7 @@ The 13 requirements mapped to Phase P02 in `docs/21_TRACEABILITY_MATRIX.md` are 
 - **Phase P02 Scope**: Strictly bounded to domain entities, state machine, contract validation, SQLite store, and audit core.
 - **Traceability Matrix**: Reconciled in `docs/21_TRACEABILITY_MATRIX.md`.
 - **Status**: **`APPROVED_WITH_SCOPE_CORRECTIONS`**.
+
+### 3.6 `VerificationPolicyCatalog` (Pure Domain Policy Boundary)
+- **P02 Scope**: Expose pure domain abstraction `VerificationPolicyCatalog` and `VerificationProfilePolicy` domain metadata. Enables `TaskContractValidator` to validate profile existence, parameter schemas, cwd policies, and timeout bounds without importing or depending on Phase P04 execution runner logic. P02 unit tests supply an in-memory fake catalog.
+- **Deferred to P04**: Concrete `VerificationRunner` implementation, host registry executable resolution, argument construction, Windows Job Object assignment, and execution isolation.

@@ -52,49 +52,39 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES (PHASE 1 — UPSTREAM PROOF)
+# SECTION 2: CURRENT PHASE RULES — P02 SUPERVISOR DOMAIN CORE
 
 > [!CRITICAL]
-> Phase 0 is **FROZEN** (`docs/audits/PHASE0_FREEZE_RECORD.md`). The following rules govern **Phase 1 (Upstream Proof)**.  
-> This Phase-1 governance change does **NOT** authorize application coding. Application/source implementation remains prohibited until a later User-authorized implementation phase.
+> Phase P01 runtime proof activity is **COMPLETE**. The architecture baseline is frozen at **`phase1-architecture-v2.1`** (commit `62d3fe0df4a3a05697da77349ff085430ea452f7`) together with accepted amendments **ADR-012**, **ADR-013**, **ADR-014**, and **ADR-015**.
+> The following rules govern **Phase P02 (Supervisor Domain Core)**.
 
-1. **NO SUPERVISOR APPLICATION IMPLEMENTATION YET**:
-   - Absolutely no Supervisor backend, frontend, API server, or CLI runtime implementation code may be written.
-   - No application/source code (`.go`, `.ts`, `.js`, `.py`, `.rs`, `.sql`) or scaffolding files may be created.
+1. **PHASE P02 STRICT DOMAIN BOUNDARY**:
+   - Implementation in Phase P02 is strictly confined to the self-contained headless core:
+     * `Project`, `Pair`, `Task` domain entities and relational invariants;
+     * `TaskContract` (immutable revision model, baseline `base_sha` immutability, `verification_requests`);
+     * `TaskAttempt` (attempt lineage, allocation);
+     * `WorkerClaim` and core evidence value types required by the domain model;
+     * `ReviewDecision` and associated state transition value types;
+     * 13-state `StateMachine` engine with 25 canonical transitions;
+     * `TaskContractValidator` enforcing schema, revision progression, and pre-dispatch path containment (SEC-002);
+     * Pure validation policy interfaces required by P02 (`VerificationPolicyCatalog` / `VerificationProfilePolicy`);
+     * Local SQLite `StateStore` (schema DDL, migrations, relational foreign keys, WAL mode, `synchronous = FULL`);
+     * Atomic pre-dispatch intent persistence (allocating `TaskAttempt` and committing `READY → DISPATCHED` in StateStore before external calls);
+     * Restart recovery classification (detecting dangling `DISPATCHED` attempts and recording `EXTERNAL_RECONCILIATION_REQUIRED` without querying AO);
+     * `AuditEvent` model, append-only persistence, and automated token/credential secret scrubbing (SEC-004);
+     * Deterministic StateStore component close and transaction cleanup API (OPS-002).
 
-2. **NO AOADAPTER IMPLEMENTATION YET**:
-   - Do not implement custom adapter packages or translation layers during Phase 1.
+2. **EXPLICITLY FORBIDDEN DURING PHASE P02**:
+   - Absolutely NO `AOAdapter` implementation or external AO REST client code (owned by Phase P03);
+   - Absolutely NO direct Antigravity CLI (`agy`) harness integration code (owned by Phase P03);
+   - Absolutely NO concrete `VerificationRunner` execution or Windows verification sandbox / Job Object runner implementation (owned by Phase P04);
+   - Absolutely NO `ReviewBundleBuilder` assembly or review policy engine implementation (owned by Phase P04);
+   - Absolutely NO Model Context Protocol (MCP) server, Go MCP server, or loopback transport code (owned by Phase P05);
+   - Absolutely NO `ContextEngine` workspace AST / tree-sitter indexing code (owned by Phase P05);
+   - Absolutely NO human-facing operator UI, CLI distribution packaging, or telemetry dashboards (owned by Phase P06).
 
-3. **NO CHATGPT TRANSPORT IMPLEMENTATION YET**:
-   - Do not implement ChatGPT transport abstractions, connectors, or MCP server code yet.
-
-4. **RUNTIME PROOF AND EVIDENCE COLLECTION ONLY**:
-   - Permitted activities in Phase 1 are strictly limited to running isolated runtime proofs and collecting empirical evidence against upstream tools.
-
-5. **USE PINNED AO/AGY BASELINES**:
-   - All proofs must evaluate the pinned upstream baselines (AO `v0.13.0` commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`, Agy `1.2.7` commit `7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`) unless a proof explicitly concerns upstream version compatibility.
-
-6. **NO SILENT UPSTREAM UPGRADES**:
-   - Do not upgrade upstream versions without explicit governance review and documented ADR.
-
-7. **NO WORKAROUND CODE**:
-   - Do not write custom integration code or workarounds to force a failed proof to pass.
-
-8. **FAILURE PROTOCOL — GAP_REQUIRES_ADR OR BLOCKER**:
-   - If an upstream capability fails or behaves differently than required, record either `GAP_REQUIRES_ADR` or `BLOCKER`. Do not attempt workarounds.
-
-9. **FOUR INDEPENDENT TRACKS**:
-   - Execution is strictly organized into four independent tracks:
-     * **P01-A**: AO Runtime Proof
-     * **P01-B**: Direct Antigravity CLI Capability Proof
-     * **P01-C**: AO ↔ Agy Structured Completion / WorkerReport Proof
-     * **P01-D**: ChatGPT Plus Transport Feasibility Proof
-
-10. **STOP AFTER PROOF RESULTS**:
-    - Record literal evidence in the corresponding Phase 1 audit dossier and **STOP**. Do not automatically proceed to Phase P02.
-
-11. **P01 DISPOSABLE TEST CREDENTIAL EXCEPTION**:
-    - Per explicit User authorization (`TEST_CREDENTIAL_POLICY = USER_AUTHORIZED`), disposable proof credentials may be received, assigned to process/session environment variables, and passed to proof tools (such as `tunnel-client` or OpenAI CLI/API) within isolated P01 proof environments.
-    - Appearance of disposable proof credentials in transient IDE/terminal execution transcripts or command history is permitted and is not classified as a security incident (`PERMITTED_BY_USER_TEST_POLICY`).
-    - Committing credentials to Git, pushing to GitHub, inserting into canonical project documentation, hard-coding into production source, or embedding in public/distributable artifacts remains strictly prohibited (`GIT_SECRET_EXPOSURE` / `PUBLIC_ARTIFACT_SECRET_EXPOSURE`).
-    - This exception applies exclusively to disposable proof/test environments; production credential hygiene remains unchanged.
+3. **P02 CODE AUTHORIZATION GUARD**:
+   - Production P02 coding in this repository is authorized **ONLY** when:
+     1. `docs/18_CURRENT_STATE.md` explicitly declares: `P02_CODE = AUTHORIZED`, **AND**
+     2. The active implementation task is accompanied by an explicit Task Contract / External Supervisor execution authorization.
+   - Until both conditions are met, `P02_CODE` remains strictly **HELD**, and no application source files (`.go`, `go.mod`, `go.sum`) may be created.

@@ -58,7 +58,7 @@ This selection is based on primary technological evidence across MCP protocol co
 | Binary & Deployment Simplicity | 10% | **10.0** (Single static `supervisor.exe`) | 6.0 (Requires Node 24 runtime) | 5.0 (Venv / packaging) |
 | Daemon Stability & Memory Efficiency | 10% | **10.0** (Compiled daemon, goroutines) | 7.0 (V8 runtime footprint) | 6.5 (GIL constraints) |
 | Type Safety & Domain Modeling | 10% | 9.0 (Strict static structs) | 9.0 (Discriminated unions) | 6.5 (Optional typing) |
-| JSON Schema Validation | 10% | 8.5 (`santhosh-tekuri/jsonschema/v6`) | **10.0** (`Ajv` v8) | 8.0 (`jsonschema`) |
+| JSON Schema Validation | 10% | 8.5 (Standards-compliant Go validator) | **10.0** (`Ajv` v8) | 8.0 (`jsonschema`) |
 | Developer Velocity & Tooling | 10% | 8.0 (Disciplined typing) | **9.0** (Rapid prototyping) | 8.5 (Scripting speed) |
 | Structured Logging & Audit Integrity | 5% | **10.0** (Built-in `log/slog`) | 9.0 (`pino`) | 7.5 (Standard logging) |
 | **Weighted Total** | **100%** | **9.30 / 10** | **8.35 / 10** | **7.25 / 10** |

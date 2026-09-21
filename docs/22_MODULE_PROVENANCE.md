@@ -105,3 +105,8 @@
 - **Classification**: **`OPTIONAL PACKAGING/WORKFLOW LAYER`**
 - **Purpose**: Packaging static prompt guidance (`SKILL.md`) alongside MCP tools.
 - **Status**: Optional. Prohibited from duplicating or bypassing server-side `TaskContractManager` or `PolicyEngine` invariants.
+
+### `VerificationPolicyCatalog` (Domain Policy Interface)
+- **Phase**: P02 (Interface & In-Memory Fake) / P04 (Host Configuration Loader)
+- **Provenance**: Proxide / Architecture V2.1
+- **Purpose**: Exposes read-only `VerificationProfilePolicy` metadata to `TaskContractValidator` for semantic verification request validation without exposing executable paths or command construction logic to the core domain.

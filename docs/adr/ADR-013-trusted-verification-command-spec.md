@@ -130,17 +130,41 @@ Legacy `required_tests: string[]` is migrated to `verification_requests`:
 }
 ```
 
-### 5.2 Two-Layer Validation Responsibilities
-1. **Generic JSON Schema Validation (`task-contract.schema.json`)**:
-   - Validates structural shape: `id` and `profile_id` format, `parameters` is an object, `cwd` is a relative path, `timeout_seconds` is a bounded integer (`[1, 3600]`).
-   - Rejects extraneous properties (`additionalProperties: false`), forbidding `executable`, `command`, `shell`, `args`, or `environment`.
-2. **Semantic Profile Validation (`TaskContractValidator` in Phase P02)**:
-   - Validates that `profile_id` exists in host `ProjectPolicy`.
-   - Validates that `parameters` conforms to the profile's parameter schema.
-   - Verifies target paths resolve within the workspace worktree.
-   - Enforces that requested timeouts do not exceed profile maximums.
+### 5.2 Two-Stage Validation & VerificationPolicyCatalog Boundary
 
-Execution of verification commands belongs to Phase **P04**.
+To maintain complete architectural decoupling between Phase P02 (domain contract validation) and Phase P04 (concrete execution runner):
+
+```
+JSON SCHEMA SHAPE VALIDATION != PATH CONTAINMENT VALIDATION
+```
+
+1. **Stage A — Generic JSON Schema Validation (`task-contract.schema.json`)**:
+   - Validates structural shape: `id` and `profile_id` format, `parameters` is an object, `cwd` is an optional non-empty string bounded to 256 characters, `timeout_seconds` is an integer bounded by `[1, 3600]`.
+   - Rejects extraneous properties (`additionalProperties: false`), forbidding `executable`, `command`, `shell`, `args`, or `environment`.
+   - Makes **zero claim** of filesystem containment or safety.
+
+2. **Stage B — Semantic Validation (`TaskContractValidator` in Phase P02)**:
+   - Validates `cwd`: Rejects absolute paths, Windows volume/UNC syntax, and `..` traversals that escape the assigned workspace root. The target directory must resolve strictly as a descendant of the worktree.
+   - Depends exclusively on a pure domain abstraction: **`VerificationPolicyCatalog`**:
+     ```go
+     type VerificationPolicyCatalog interface {
+         LookupProfile(profileID string) (VerificationProfilePolicy, bool)
+     }
+     ```
+   - **`VerificationProfilePolicy`** exposes only validation metadata required by Phase P02:
+     * `ProfileID`: Identifier string;
+     * `ParameterSchema`: Schema specification defining permitted parameter properties;
+     * `CwdPolicy`: Constraints on allowed relative working directories;
+     * `MaxTimeoutSeconds`: Upper bound ceiling on allowable execution time;
+     * `AllowedCapabilities`: Declarative capability flags.
+   - It strictly **does NOT expose** arbitrary executable paths, raw argument templates, or shell options to TaskContract.
+   - P02 unit tests remain fully testable using an in-memory mock/fake `VerificationPolicyCatalog`.
+
+3. **Execution Phase (Phase P04)**:
+   - Concrete `VerificationRunner` implementation;
+   - Trusted executable resolution and host registry binding;
+   - Immutable argument prefix construction;
+   - Windows Job Object assignment and execution isolation boundary enforcement.
 
 ---
 

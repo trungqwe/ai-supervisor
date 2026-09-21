@@ -46,7 +46,11 @@ Implement the headless core domain model, 13-state workflow state machine, immut
   - Immutability enforcement: contracts cannot be mutated post-dispatch.
   - Revision lineage validation: monotonic revision numbers, valid `supersedes_contract_id`, baseline `base_sha` immutability.
   - Pre-dispatch path containment checks: verify `allowed_scope` and `forbidden_scope` reside strictly within project boundaries (SEC-002).
-  - Pre-dispatch verification request profile existence and parameter schema validation (ADR-013 Layer A).
+  - Pre-dispatch verification request semantic validation via `VerificationPolicyCatalog` (ADR-013 Layer A):
+    * Pure domain interface `VerificationPolicyCatalog` (`LookupProfile(profileID) (VerificationProfilePolicy, bool)`);
+    * `VerificationProfilePolicy` domain metadata exposing parameter schema, cwd policy, and max timeout;
+    * Enforces `JSON SCHEMA SHAPE VALIDATION != PATH CONTAINMENT VALIDATION`, verifying `cwd` strictly resolves as a descendant of the workspace worktree;
+    * P02 testable via in-memory fake policy catalog.
 
 ### 2.3 StateStore (Local SQLite)
 - DDL schema and migration manager using `PRAGMA user_version;`.
@@ -64,7 +68,7 @@ Implement the headless core domain model, 13-state workflow state machine, immut
 ## 3. Explicit Phase Boundaries (Anti-Scope-Creep)
 - **P03 Owns**: `AOAdapter` implementation, AO REST calls, external worker session lifecycle, and live AO restart reconciliation.
 - **P04 Owns**: `EvidenceCollector`, Git diff analysis, `VerificationRunner` (Layer B execution isolation and Windows Job Object enforcement), and `ReviewBundleBuilder`.
-- **P05 Owns**: Fastify/MCP daemon server, Streamable HTTP transport, ChatGPT tool surface (`ToolSurface`), interactive project/pair registration/binding tools, `ContextEngine`, and process-level signal handling (`SIGINT`, `SIGTERM`).
+- **P05 Owns**: Go Supervisor host / MCP server using the approved MCP Go SDK and Streamable HTTP, ChatGPT tool surface (`ToolSurface`), interactive project/pair registration/binding tools, `ContextEngine`, and process-level signal handling (`SIGINT`, `SIGTERM`).
 - **P06 Owns**: Operator UI, packaging, export utilities.
 
 ---

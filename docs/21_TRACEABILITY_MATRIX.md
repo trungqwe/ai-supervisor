@@ -18,7 +18,7 @@
 | **FR-009** (Scope Violation) | `docs/07_SECURITY_MODEL.md#sec-2` | ADR-010 | `PolicyEngine` | P04 | Flag file touched outside allowed_scope | Proxide |
 | **FR-010** (Review Bundle) | `docs/10_REVIEW_BUNDLE.md` | ADR-006, ADR-011, ADR-012 | `ReviewBundleBuilder` | P04 | Attempt-scoped bundle schema compliance | AIWorkHub / Codencer |
 | **FR-011** (Supervisor Decision)| `docs/06_WORKFLOW_STATE_MACHINE.md` | ADR-005, ADR-011, ADR-012 | `StateMachine` | P02 | Test APPROVE / REVISION transitions bound to task_id and attempt_id | Symphony |
-| **FR-012** (Revision Loop) | `docs/06_WORKFLOW_STATE_MACHINE.md` | ADR-005, ADR-011, ADR-012 | `StateMachine` | P04 | Test re-dispatch with new contract revision & attempt_id | Symphony |
+| **FR-012** (Revision Loop) | `docs/06_WORKFLOW_STATE_MACHINE.md` | ADR-005, ADR-011, ADR-012 | `StateMachine` / `AOAdapter` / `ReviewPolicyEngine` | P02 / P03 / P04 | P02: REVISION_REQUIRED transition & new contract validation; P03: AO worker re-dispatch; P04: review outcome feedback | Symphony |
 | **FR-013** (Audit Trail) | `docs/15_OBSERVABILITY.md#sec-2` | ADR-007, ADR-012 | `AuditLogger` | P02 / P05 / P06 | Test append-only persistence (P02); tool read (P05); export/dashboard (P06) | Proxide |
 | **FR-014** (Multi-Project Domain)| `docs/05_DOMAIN_MODEL.md#sec-1` | ADR-001 | `DomainModel` | P02 | Unit test project isolation | Mieruko |
 | **FR-015** (Upstream Health) | `docs/12_UPSTREAM_INTEGRATION.md#sec-1` | ADR-002 | `AOAdapter` | P01 | Live /healthz & /readyz check on AO daemon | Agent Orchestrator |
@@ -33,9 +33,9 @@
 | **NFR-008** (Performance) | `docs/10_REVIEW_BUNDLE.md` | ADR-006 | `ReviewBundleBuilder` | P04 | Benchmark bundle creation < 3 sec | Inherent |
 | **SEC-001** (Readonly Supervisor)| `docs/07_SECURITY_MODEL.md` | ADR-005 | `ToolSurface` | P05 | Verify no file write tools exposed & no auto-merge | Proxide |
 | **SEC-002** (Path Containment) | `docs/07_SECURITY_MODEL.md` | ADR-005 | `PolicyEngine` | P02 / P04 | Pre-dispatch scope path containment (P02); post-execution diff checking (P04) | Proxide |
-| **SEC-003** (No Arbitrary Shell)| `docs/07_SECURITY_MODEL.md` | ADR-004 | `ToolSurface` / `EvidenceCollector` | P05 | Verify no shell tools for ChatGPT; constrained runner for tests | Proxide |
-| **SEC-004** (Secret Sanitization)| `docs/07_SECURITY_MODEL.md` | ADR-007 | `AuditLogger` | P02 | Token scrubber regex test | Proxide |
+| **SEC-003** (No Arbitrary Shell) | `docs/07_SECURITY_MODEL.md` | ADR-004, ADR-013 | `VerificationRunner` / `ToolSurface` | P04 / P05 | P04: host-profile command authority & Layer-B execution isolation; P05: ChatGPT exposes zero arbitrary shell/process tools | Proxide |
+| **SEC-004** (Secret Sanitization) | `docs/07_SECURITY_MODEL.md` | ADR-007 | `AuditLogger` | P02 | Token scrubber regex & credential masking for persisted audit/error data | Proxide |
 | **SEC-005** (Scope Enforcement) | `docs/08_TASK_CONTRACT.md` | ADR-010 | `PolicyEngine` | P04 | Rejection test on forbidden scope | Symphony |
 | **OPS-001** (Single Command) | `docs/17_ROADMAP.md#sec-1` | ADR-001 | Deployment | P06 | CLI startup command verification | Inherent |
 | **OPS-002** (Clean Termination) | `docs/14_FAILURE_RECOVERY.md` | ADR-002 | `SupervisorCore` | P02 / P05 | StateStore/domain close API (P02); process lifecycle & signal handling (P05) | Agent Orchestrator |
-| **OPS-003** (Self-Contained Store)| `docs/05_DOMAIN_MODEL.md` | ADR-007 | `StateStore` | P02 | Zero cloud database dependency test | AIWorkHub |
+| **OPS-003** (Self-Contained Store) | `docs/05_DOMAIN_MODEL.md` | ADR-007, ADR-015 | `StateStore` | P02 | Zero cloud database dependency; SQLite WAL + synchronous=FULL durability | AIWorkHub |

@@ -61,4 +61,4 @@ The implementation language for the Supervisor Core daemon is **Go**.
 
 ### Negative / Tradeoffs:
 - Slightly more verbose boilerplate for JSON handling compared to dynamic languages.
-- Contract JSON schemas (`task-contract.schema.json`) are compiled and validated using Go schema libraries (`santhosh-tekuri/jsonschema/v6`) rather than direct in-memory TypeScript type sharing.
+- Contract JSON schemas (`task-contract.schema.json`) are compiled and validated using a standards-compliant JSON Schema Draft-07 validator selected, audited and pinned during P02 dependency bootstrap rather than direct in-memory TypeScript type sharing.

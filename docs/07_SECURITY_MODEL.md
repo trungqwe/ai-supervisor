@@ -20,6 +20,10 @@
      4. Reject relative path traversal (`../`);
      5. Reject absolute path escape outside root boundaries;
      6. Handle unsafe symlink, directory junction, or reparse-point escapes according to the selected implementation platform and runtime library.
+   - **Two-Stage Path Containment Architecture**:
+     * **Stage A (Structural JSON Schema)**: `task-contract.schema.json` enforces string types and bounded lengths (`minLength: 1`, `maxLength: 256`) on `cwd` and scope arrays. Generic schema validation makes zero claim of filesystem containment.
+     * **Stage B (Domain Semantic Validation in P02)**: `TaskContractValidator` evaluates paths against the assigned workspace worktree: rejecting absolute paths, Windows drive/UNC syntax, and `..` traversals that escape the assigned root, ensuring target directories strictly resolve as descendants of the worktree root.
+     * **Rule**: `JSON SCHEMA SHAPE VALIDATION != PATH CONTAINMENT VALIDATION`.
 3. **No Arbitrary Shell or Terminal Primitives for ChatGPT**:
    - Neither ChatGPT nor external web requests can execute arbitrary bash, PowerShell, or shell commands.
    - ChatGPT is provided with zero shell or terminal command execution primitives.

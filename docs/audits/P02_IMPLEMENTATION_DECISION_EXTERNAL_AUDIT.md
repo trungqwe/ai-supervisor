@@ -105,7 +105,7 @@ This audit evaluates the final pre-code technology decisions, contract migration
 - **Excluded Subsystems**:
   - P03: `AOAdapter`, session lifecycle, AO-backed restart reconciliation.
   - P04: `EvidenceCollector`, Git diff analysis, `VerificationRunner` (Layer B execution isolation), `ReviewBundleBuilder`.
-  - P05: Fastify/MCP server, Streamable HTTP, `ToolSurface`, interactive project/pair tools, `ContextEngine`, OS signal handling.
+  - P05: Go Supervisor host / MCP server using the approved MCP Go SDK and Streamable HTTP, `ToolSurface`, interactive project/pair tools, `ContextEngine`, OS signal handling.
   - P06: Operator UI, packaging, export utilities.
 - Traceability matrix reconciled across all 14 affected requirements in `docs/21_TRACEABILITY_MATRIX.md`.
 
@@ -134,3 +134,30 @@ P02_PHASE_OWNERSHIP = APPROVED
 P02_IMPLEMENTATION_DECISIONS = APPROVED
 P02_CODE = READY_PENDING_EXTERNAL_COMMIT_AUDIT
 ```
+
+---
+
+## 9. Implementation Release Remediation Addendum
+
+> **Addendum Date**: 2026-09-22
+> **Addendum Status**: PENDING_FINAL_REMEDIATION_AUDIT
+> **Verdict**: `P02_IMPLEMENTATION_DECISIONS = APPROVED`; `P02_IMPLEMENTATION_RELEASE = PENDING_FINAL_REMEDIATION_AUDIT`
+
+The External Supervisor implementation release audit identified six canonical inconsistencies, which have been remediated:
+1. **AGENTS.md Governance Alignment**:
+   - Replaced Phase 1 rules with **SECTION 2: CURRENT PHASE RULES — P02 SUPERVISOR DOMAIN CORE**.
+   - Established strict P02 domain boundaries and explicit exclusions.
+   - Enacted **Code Authorization Guard**: production coding requires `docs/18_CURRENT_STATE.md` to state `P02_CODE = AUTHORIZED` alongside an explicit Task Contract.
+2. **Elimination of Stale Node/Framework Canonical Wording**:
+   - Replaced all active framework references with Go MCP host / Streamable HTTP architecture.
+3. **Verification Request `cwd` Semantic Validation Boundary**:
+   - Removed regex from `task-contract.schema.json`, using structural bounds (`minLength: 1`, `maxLength: 256`).
+   - Enforced two-stage rule: Stage A (schema shape) != Stage B (`TaskContractValidator` worktree descendant verification).
+4. **`VerificationPolicyCatalog` Pure Domain Boundary**:
+   - Established read-only `VerificationPolicyCatalog` interface and `VerificationProfilePolicy` domain metadata in P02, enabling complete unit testability via in-memory fakes without importing P04 execution runner logic.
+5. **Traceability Matrix Precision**:
+   - `SEC-003`: Mapped across P04 (runner authority & Layer-B isolation) and P05 (no ChatGPT shell tools).
+   - `FR-008`: Added ADR-013 reference.
+   - `FR-012`: Formally split across P02 (transition & contract revision), P03 (worker re-dispatch), and P04 (review feedback).
+6. **JSON Schema Validator Dependency Unpinning**:
+   - Retired premature architectural preselection of `santhosh-tekuri/jsonschema/v6`; deferred to P02 dependency bootstrap audit.
