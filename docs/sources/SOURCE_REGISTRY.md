@@ -33,3 +33,26 @@
 2. **Passive Sources (`03` through `09`)**:
    - Fixed architectural and pattern references.
    - Never updated or tracked as moving package dependencies.
+
+---
+
+# 3. Mutable Official Product Documentation Register
+
+> **Governance Notice**: Unlike pinned Git repositories, official vendor product documentation is subject to live updates by OpenAI.  
+> This register indexes authoritative documentation surfaces consulted for the ChatGPT Plus / MCP transport architecture without fabricating static Git commit SHAs.
+
+| Index | Source Family | Official Domain / URL | Architectural Role | Access Date | Volatility | Runtime Proof Status | Dossier |
+|---|---|---|---|---|---|---|---|
+| **DOC-01** | **OpenAI Plugins** | `https://developers.openai.com/plugins/quickstart` | Primary Architecture / Concepts | 2026-09-21 | High (Live Platform) | EVALUATED | [10_OPENAI_PLUGIN_PLATFORM.md](10_OPENAI_PLUGIN_PLATFORM.md) |
+| **DOC-02** | **OpenAI Plugins** | `https://developers.openai.com/plugins/build/skills` | Supporting / Workflow Context | 2026-09-21 | Medium (SEP-2640 Draft) | EVALUATED | [10_OPENAI_PLUGIN_PLATFORM.md](10_OPENAI_PLUGIN_PLATFORM.md) |
+| **DOC-03** | **OpenAI Plugins** | `https://developers.openai.com/plugins/build/mcp-server` | Canonical Transport / Tool Runtime | 2026-09-21 | Medium (MCP Spec Alignment)| PROVEN_LOCAL / P01-D3A_IN_PROGRESS | [10_OPENAI_PLUGIN_PLATFORM.md](10_OPENAI_PLUGIN_PLATFORM.md) |
+| **DOC-04** | **OpenAI Plugins** | `https://developers.openai.com/plugins/build/plugins` | Primary Architecture / Packaging | 2026-09-21 | Medium (Platform Lifecycle) | EVALUATED | [10_OPENAI_PLUGIN_PLATFORM.md](10_OPENAI_PLUGIN_PLATFORM.md) |
+| **DOC-05** | **OpenAI API** | `https://developers.openai.com/api/docs` | Supporting / General Reference | 2026-09-21 | Low (Core API Platform) | EVALUATED | [11_OPENAI_API_MCP_RUNTIME.md](11_OPENAI_API_MCP_RUNTIME.md) |
+| **DOC-06** | **OpenAI Codex** | `https://developers.openai.com/learn/developers-codex-plugin` | Reference / Local Pattern | 2026-09-21 | Medium (Product Guide) | EVALUATED | [11_OPENAI_API_MCP_RUNTIME.md](11_OPENAI_API_MCP_RUNTIME.md) |
+| **DOC-07** | **OpenAI API** | `https://developers.openai.com/api/docs/guides/text` | Supporting / Responses Guide | 2026-09-21 | Low (API Guide) | EVALUATED | [11_OPENAI_API_MCP_RUNTIME.md](11_OPENAI_API_MCP_RUNTIME.md) |
+| **DOC-08** | **OpenAI Agents** | `https://developers.openai.com/api/docs/guides/agents/quickstart` | Reference Only (Not Dependency) | 2026-09-21 | High (Evolving SDK) | EXCLUDED_FROM_PRODUCTION | [11_OPENAI_API_MCP_RUNTIME.md](11_OPENAI_API_MCP_RUNTIME.md) |
+| **DOC-09** | **OpenAI Models** | `https://developers.openai.com/api/docs/models/gpt-5.6-sol` | Runtime Reference Only | 2026-09-21 | High (Model Lifecycle/Pricing)| TEST_ONLY_EVALUATED | [11_OPENAI_API_MCP_RUNTIME.md](11_OPENAI_API_MCP_RUNTIME.md) |
+| **DOC-10** | **OpenAI Transport**| `https://developers.openai.com/api/docs/guides/secure-mcp-tunnels`| Canonical Upstream Transport | 2026-09-21 | Medium (Official Tunnel Client)| RUNTIME_PROOF_IN_PROGRESS (P01-D3A)| [11_OPENAI_API_MCP_RUNTIME.md](11_OPENAI_API_MCP_RUNTIME.md) |
+| **DOC-11** | **OpenAI Transport**| `https://developers.openai.com/api/docs/guides/tools-connectors-mcp`| Canonical Tool Protocol (Responses) | 2026-09-21 | Medium (Responses MCP API) | RUNTIME_PROOF_IN_PROGRESS (P01-D3A)| [11_OPENAI_API_MCP_RUNTIME.md](11_OPENAI_API_MCP_RUNTIME.md) |
+| **DOC-12** | **OpenAI Deployment**| `https://developers.openai.com/plugins/deploy/submission` | Canonical Deployment Specification | 2026-09-21 | Medium (Platform Portal) | GATED_PENDING_IDENTITY_VERIF | [10_OPENAI_PLUGIN_PLATFORM.md](10_OPENAI_PLUGIN_PLATFORM.md) |
+| **DOC-13** | **OpenAI Deployment**| `https://developers.openai.com/plugins/deploy/app-review` | Canonical Security / Review Rules | 2026-09-21 | Medium (Review Guidelines) | GATED_PENDING_IDENTITY_VERIF | [10_OPENAI_PLUGIN_PLATFORM.md](10_OPENAI_PLUGIN_PLATFORM.md) |

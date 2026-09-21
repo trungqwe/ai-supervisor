@@ -26,3 +26,10 @@
 # 2. Evidence Rule
 
 For code evidence in this matrix and all source dossiers, prefer `file path` + `symbol name` over manually copied long signatures. Only include a full signature if copied byte-for-byte from the pinned source. This prevents hybrid-signature errors.
+
+| **Secure MCP Tunnel** | NFR-005, SEC-001 | `openai/tunnel-client` | `https://developers.openai.com/api/docs/guides/secure-mcp-tunnels` | `UPSTREAM` | External / `tunnel-client` | Outbound-only tunnel connecting private local MCP to OpenAI without inbound ports. | Custom WebSocket relay or reverse SSH tunnel |
+| **MCP Protocol / SDK** | NFR-005 | `modelcontextprotocol` | `@modelcontextprotocol/sdk` (TypeScript) / `mcp` (Python) | `UPSTREAM` | `SupervisorMCPAdapter` | Official Model Context Protocol SDK provides streamable HTTP server and schema validation. | Custom ad-hoc JSON-RPC protocol |
+| **Responses API MCP** | FR-001, NFR-005 | OpenAI Platform | `https://developers.openai.com/api/docs/guides/tools-connectors-mcp` | `UPSTREAM` | OpenAI Product Capability | OpenAI runtime invokes MCP tools via `tunnel_id` with native approval lifecycle. | Reimplementing LLM-side tool calling |
+| **Supervisor Domain MCP Tools** | FR-001, FR-002, SEC-002 | `ai-supervisor` (In-House) | `supervisor_probe_read`, `supervisor_probe_write` | `ORIGINAL` | `SupervisorMCPAdapter` | Domain-specific read-only and state-mutating tools strictly bounded to local sandbox. | Exposing raw OS execution or arbitrary filesystem access |
+| **Production Public MCP Gateway**| FR-001, NFR-005 | `ai-supervisor` (In-House) | Architecture V2 Proposal | `PENDING_DESIGN`| `SupervisorPublicGateway` | P01-D3B design decision pending identity verification and public marketplace review. | Exposing unprotected local node directly to internet |
+| **Plugin Skills Packaging** | FR-004 | OpenAI Plugins Platform | `https://developers.openai.com/plugins/build/skills` | `OPTIONAL` | Future Guidance Layer | Optional static instruction layer; must never duplicate canonical TaskContract/Policy logic. | Duplicating server-side policy in LLM prompt |

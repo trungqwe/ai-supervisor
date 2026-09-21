@@ -78,3 +78,30 @@
 - **Reason This Module Exists in Our Code**: Provides the cognitive interface for ChatGPT Web.
 - **Why We Own This**: Tailored cognitive interface for our supervision model.
 - **Forbidden Responsibility**: Does NOT expose arbitrary shell, raw file writing, OS GUI automation, or low-level process details (such as worker PID). Does NOT perform branch merges, commits, or pushes upon task approval (V1 approval strictly records decision).
+
+---
+
+# 2. Phase P01-D Transport Provenance & Anti-Reinvention Clarifications
+
+### Component: `Secure MCP Tunnel (tunnel-client)`
+- **Classification**: **`UPSTREAM — OpenAI`**
+- **Existing Upstream Capability Checked**: YES (`openai/tunnel-client` binary / GitHub releases).
+- **Reason We Do Not Implement**: OpenAI provides the official outbound-only secure tunnel connecting loopback MCP servers to OpenAI products.
+- **Why We Own This**: We do NOT own or reimplement this; we consume it strictly as an upstream utility.
+
+### Component: `SupervisorMCPAdapter` (Local MCP Server)
+- **Classification**: **`OUR ADAPTER SURFACE`**
+- **Purpose**: Implements Model Context Protocol (via official `@modelcontextprotocol/sdk`) exposing domain supervisor probes (`supervisor_probe_read`, `supervisor_probe_write`) and tool schemas.
+- **Existing Upstream Capability Checked**: YES (Generic MCP servers exist, but none provide Supervisor Control Plane lifecycle and contract tooling).
+- **Why We Own This**: Domain-specific cognitive and audit surface for ChatGPT supervision.
+- **Forbidden Responsibility**: Does NOT expose arbitrary command execution, raw disk access, or external network egress.
+
+### Component: `SupervisorPublicGateway`
+- **Classification**: **`P01-D3B DESIGN DECISION PENDING`**
+- **Purpose**: Public HTTPS MCP proxy required if public plugin distribution is pursued after publisher identity verification.
+- **Status**: Gated pending identity verification. Zero implementation authorized in Phase P01.
+
+### Component: `Plugin Skills Packaging`
+- **Classification**: **`OPTIONAL PACKAGING/WORKFLOW LAYER`**
+- **Purpose**: Packaging static prompt guidance (`SKILL.md`) alongside MCP tools.
+- **Status**: Optional. Prohibited from duplicating or bypassing server-side `TaskContractManager` or `PolicyEngine` invariants.
