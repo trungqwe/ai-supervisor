@@ -1,7 +1,7 @@
 # UPSTREAM CONTRACT BASELINE
 
 > **Focus**: Evidence-Driven Mapping of Upstream Public Interfaces
-> **Status**: Literal Evidence Updated (Track P01-A AO Runtime PASS; Track P01-B Agy RUNTIME_TESTED_PASS; Track P01-C AO ↔ Agy Integration GAP_REQUIRES_ADR)
+> **Status**: Literal Evidence Updated (Track P01-A AO Runtime PASS; Track P01-B Agy RUNTIME_TESTED_PASS; Track P01-C AO ↔ Agy Integration GAP_RESOLVED_BY_ADR_PENDING_PHASE_P01_FINAL_AUDIT with ADR-011)
 > **Date Convention**: All commit timestamps are explicitly recorded in ISO-8601 UTC format (`YYYY-MM-DDTHH:MM:SSZ`).
 > **License Convention**: Repository SPDX License is explicitly distinguished from Product / Usage Terms.
 
@@ -54,7 +54,7 @@ agy --add-dir <path> --dangerously-skip-permissions --prompt-interactive <prompt
 ```
 AO wraps Agy in an interactive harness rather than passing `--json-schema` or using `--print`.
 
-### C. The Integration Gap & Empirical Resolution (Track P01-C: `GAP_REQUIRES_ADR`)
+### C. The Integration Gap & Empirical Resolution (Track P01-C: `GAP_RESOLVED_BY_ADR` via ADR-011)
 Track P01-C evaluated the empirical integration between pinned AO `v0.13.0` and pinned Agy `1.2.7`:
 > *Can the existing AO Agy integration satisfy our WorkerReport contract without custom integration code?*
 
@@ -65,4 +65,4 @@ Track P01-C evaluated the empirical integration between pinned AO `v0.13.0` and 
 4. **WorkerReport via Workspace File API**: The integration loop is empirically proven by having the worker output `.supervisor/worker-report.json`, which the Supervisor retrieves via AO's public workspace file API (`GET /api/v1/sessions/{id}/workspace/file?path=.supervisor/worker-report.json`).
 5. **Context Retention across Restore**: Native conversation UUID is captured and passed to `--conversation <id>` on restore. Context retention of memory-only tokens was proven across restore cycles without disk persistence.
 6. **No Upstream Patches**: Neither AO nor Agy requires code modifications (`AO_UPSTREAM_PATCH_REQUIRED = NO`, `AGY_UPSTREAM_PATCH_REQUIRED = NO`).
-7. **Architectural Gap**: Adopting the `.supervisor/worker-report.json` convention and formalizing the pre-invocation validation boundary (`SUPERVISOR_AOADAPTER_BOUNDARY`) requires an approved Architecture Decision Record (`GAP_REQUIRES_ADR`).
+7. **Architectural Gap Accommodation**: Formally resolved by **ADR-011** (`docs/adr/ADR-011-worker-report-handoff-and-agy-invocation-boundary.md`). Canonical report delivery uses attempt-scoped paths (`.supervisor/reports/<task_id>/<attempt_id>.json`) over AO's public workspace file API under zero-trust validation rules without upstream code modifications (`GAP_RESOLVED_BY_ADR_PENDING_PHASE_P01_FINAL_AUDIT`).

@@ -76,7 +76,7 @@ Section / symbol:
   GetRestoreCommand
 Verification: VERIFIED
 Confidence: HIGH
-Notes: agy.go defines the Plugin struct and func New() *Plugin. GetLaunchCommand and GetRestoreCommand are the interface-mandated methods for argv construction (defined in backend/internal/ports/agent.go as the Agent interface). GetAgentHooks is also implemented (hooks.go). Integration gap regarding structured WorkerReport collection was empirically evaluated under Track P01-C (GAP_REQUIRES_ADR). Pinned AO does not natively expose assistant responses or WorkerReport; the integration reliably transports WorkerReport via the .supervisor/worker-report.json workspace file convention without upstream patches.
+Notes: agy.go defines the Plugin struct and func New() *Plugin. GetLaunchCommand and GetRestoreCommand are the interface-mandated methods for argv construction (defined in backend/internal/ports/agent.go as the Agent interface). GetAgentHooks is also implemented (hooks.go). Integration gap regarding structured WorkerReport collection was empirically evaluated under Track P01-C and resolved by ADR-011 (docs/adr/ADR-011-worker-report-handoff-and-agy-invocation-boundary.md). Pinned AO does not natively expose assistant responses or WorkerReport; the integration reliably transports WorkerReport via attempt-scoped workspace file paths (.supervisor/reports/<task_id>/<attempt_id>.json) retrieved through GET /api/v1/sessions/{id}/workspace/file without upstream patches.
 ```
 
 ---

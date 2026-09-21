@@ -105,9 +105,9 @@ Empirical negative testing (P01-B safe negative suite) established that Agy 1.2.
 **Operational Constraint:** `CALLER_VALIDATION_REQUIRED` / `SUPERVISOR_MUST_VALIDATE_AGY_INVOCATION_INPUTS_BEFORE_EXECUTION`
 The Supervisor Control Plane / AOAdapter must validate all CLI parameters (format enums, path accessibility, schema readability and parseability) prior to invoking Agy.
 
-### P01-C Empirical Findings (`GAP_REQUIRES_ADR`):
+### P01-C Empirical Findings (`GAP_RESOLVED_BY_ADR_PENDING_PHASE_P01_FINAL_AUDIT` via ADR-011):
 - **Interactive Invocation**: AO launches Agy interactively using `--prompt-interactive` without `--json-schema` or `--output-format`.
 - **Completion Detection**: AO detects turn completion via the Agy `Stop` hook (`.agents/hooks.json`), triggering `ActivityIdle` while processes remain running.
 - **Conversation Restore**: Native Agy conversation UUID is captured and restored via `--conversation <id>`, successfully preserving memory tokens across restore cycles without disk persistence.
-- **WorkerReport Delivery**: WorkerReport contract is satisfied without upstream patches using the report-file convention (`.supervisor/worker-report.json`), retrieved via AO's public workspace file API (`GET /api/v1/sessions/{id}/workspace/file?path=...`).
-- **Architectural Adoption**: Formalizing the `.supervisor/worker-report.json` convention and pre-invocation validation boundary requires an approved ADR.
+- **WorkerReport Delivery**: WorkerReport contract is satisfied without upstream patches using attempt-scoped report paths (`.supervisor/reports/<task_id>/<attempt_id>.json`), retrieved via AO's public workspace file API (`GET /api/v1/sessions/{id}/workspace/file?path=...`).
+- **Architectural Resolution**: Formally resolved by **ADR-011** (`docs/adr/ADR-011-worker-report-handoff-and-agy-invocation-boundary.md`), establishing turn completion semantics, attempt-scoped artifact paths, public report transport, and the zero-trust verification boundary.

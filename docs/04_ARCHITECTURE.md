@@ -1,6 +1,6 @@
-﻿# 04. CANONICAL ARCHITECTURE
+# 04. CANONICAL ARCHITECTURE
 
-> **Authority**: System Architecture Blueprint (Single Canonical Reference)  
+> **Authority**: System Architecture Blueprint (Single Canonical Reference)
 > **Status**: Verified Documentation Baseline (Post-Remediation)
 
 ---
@@ -94,7 +94,7 @@ sequenceDiagram
     Agy->>AO: Worker execution completes turn
     AO-->>SCP: AOAdapter observes session completion [P01_PROOF_REQUIRED]
     SCP->>DB: Transition state to REPORT_READY
-    
+
     rect rgb(240, 248, 255)
         Note over SCP,Git: Independent Evidence Collection (Zero Trust)
         SCP->>Git: git diff --stat base_sha..head_sha
@@ -106,10 +106,10 @@ sequenceDiagram
     SCP->>DB: Store Evidence (State: EVIDENCE_READY)
     SCP->>SCP: Build Review Bundle (Contract + Claims + Diff + Policy findings)
     SCP->>DB: Transition state to REVIEWING
-    
+
     ChatGPT->>SCP: get_review_bundle(task_id)
     SCP-->>ChatGPT: Return compiled ReviewBundle
-    
+
     alt Approval Decision
         ChatGPT->>SCP: approve_task(task_id, rationale)
         SCP->>DB: Transition state to APPROVED
@@ -136,7 +136,7 @@ Detailed HTTP mappings reside exclusively in `docs/sources/UPSTREAM_CONTRACT_BAS
 
 ### 3.2 AO ↔ Agy Integration Realism & P01 Proof
 - **Known Upstream Finding**: AO `v0.13.0` invokes Agy interactively using `--prompt-interactive`. Official Agy separately supports headless print mode (`--print`, `--output-format stream-json`, `--json-schema`).
-- **Integration Boundary**: The exact mechanism for extracting normalized `WorkerReport` data from AO session runs is designated `P01_PROOF_REQUIRED`. The Supervisor treats worker report generation as a normalized contract requirement, not an unverified upstream native feature.
+- **Integration Boundary**: Formally resolved by **ADR-011** (`docs/adr/ADR-011-worker-report-handoff-and-agy-invocation-boundary.md`). In pinned AO `v0.13.0`, turn completion is signaled by the Agy Stop hook transitioning session activity to `IDLE` (`PROCESS_ALIVE != TURN_RUNNING`; `AO_IDLE != REPORT_READY`). Attempt-scoped structured reports (`.supervisor/reports/<task_id>/<attempt_id>.json`) are delivered via AO's public workspace file API (`GET /api/v1/sessions/{id}/workspace/file?path=...`) and normalized by the Supervisor under zero-trust verification rules without requiring upstream code patches.
 
 ---
 
@@ -147,4 +147,3 @@ Detailed HTTP mappings reside exclusively in `docs/sources/UPSTREAM_CONTRACT_BAS
 > 2. **No Automatic Merge on Approval**: `approve_task` formally records review approval and updates task state to `APPROVED`. It does **NOT** automatically merge branches, commit to main, or push to remotes. Source promotion remains a human/explicit workflow.
 > 3. **AO internal database is NOT an integration API**: We never read or write directly to AO SQLite stores.
 > 4. **Code truth belongs exclusively to Git**: Commit SHAs, diffs, and worktree states are authoritative.
-

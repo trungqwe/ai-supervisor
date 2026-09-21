@@ -1,6 +1,6 @@
-﻿# 09. WORKER REPORT CONTRACT
+# 09. WORKER REPORT CONTRACT
 
-> **Focus**: Standardized Execution Output, Claims vs. Ground Truth & Auditability  
+> **Focus**: Standardized Execution Output, Claims vs. Ground Truth & Auditability
 > **Status**: Approved Baseline
 
 ---
@@ -8,8 +8,19 @@
 # 1. The Core Verification Rule
 
 > [!CRITICAL]
-> **THIS REPORT CONTAINS CLAIMS, NOT VERIFIED TRUTH.**  
+> **THIS REPORT CONTAINS CLAIMS, NOT VERIFIED TRUTH.**
 > The Supervisor Control Plane treats all data in this report as candidate information. The Supervisor independently collects Git diffs, head SHAs, and test exit codes before compiling the Review Bundle.
+
+---
+
+# 1.1 Transport & Handoff Boundary (ADR-011)
+
+Per **ADR-011** (`docs/adr/ADR-011-worker-report-handoff-and-agy-invocation-boundary.md`):
+- **Attempt-Scoped Report Path**: Reports are addressed as `.supervisor/reports/<task_id>/<attempt_id>.json`. Static singleton paths (such as `.supervisor/worker-report.json`) are strictly prohibited in production V1.
+- **Handoff Transport**: Retrieved through AO's public workspace file API (`GET /api/v1/sessions/{id}/workspace/file?path=.supervisor/reports/<task_id>/<attempt_id>.json`).
+- **Turn Completion Semantics**: Agy Stop hook transitions session activity to `IDLE` (`PROCESS_ALIVE != TURN_RUNNING`; `AO_IDLE != REPORT_READY`).
+- **Zero-Trust Verification**: Report fields are treated strictly as unverified worker claims. Ground truth is independently established by the Supervisor.
+- **Git Separation**: `.supervisor/` files are excluded from application Git promotion.
 
 ---
 
