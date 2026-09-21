@@ -8,7 +8,8 @@
 > **Target Account**: Personal ChatGPT Plus
 > **Plus Developer Mode**: `EMPIRICALLY_PROVEN` on target account (Settings → Security and login → Developer mode: VISIBLE and ENABLED)
 > **P01-D3C Status**: `IN_PROGRESS`
-> **P01-D3A-SEC-001**: `REMEDIATION_PENDING` (awaits User platform key revocation confirmation)
+> **P01-D3A-SEC-001**: `REMEDIATED` (Explicit User confirmation: `OLD_D3A_PLATFORM_KEY_REVOKED = TRUE` on 2026-09-21)
+> **P01-D3A Security Status**: `PASS_WITH_REMEDIATED_SECURITY_INCIDENT`
 > **P01-A / P01-B / P01-C**: `HELD`
 > **Sandbox**: `D:\TU_CODE\_ai_supervisor_p01d_openai_mcp_proof\` (D3A assets reused; strictly isolated)
 
@@ -161,20 +162,19 @@ Key confirmed facts:
 
 ## 4. Security Status
 
-### P01-D3A-SEC-001 — REMEDIATION_PENDING
+### P01-D3A-SEC-001 — REMEDIATED
 
-Status: REMEDIATION_PENDING (unchanged)
-Reason: Awaits explicit User confirmation that the temporary Platform API key has been revoked on the OpenAI Platform Dashboard.
-Local env: Verified clean (OPENAI_API_KEY and CONTROL_PLANE_API_KEY both False in User and Process scopes).
-Repository: Zero sk-proj- strings in commit history or remote repository.
-Action required: User must navigate to platform.openai.com -> API Keys and delete/revoke the temporary key.
-Closure: When User explicitly confirms revocation, update to REMEDIATED and P01-D3A_SECURITY = PASS_WITH_REMEDIATED_SECURITY_INCIDENT.
+- **Status**: `REMEDIATED` (Closed 2026-09-21)
+- **Closure Basis**: User explicitly confirmed on 2026-09-21: `OLD_D3A_PLATFORM_KEY_REVOKED = TRUE`. The exposed temporary platform key was revoked and deleted on the OpenAI Platform Dashboard.
+- **Local Environment**: Clean (zero persistent keys stored in User scope; ephemeral session/process scope only for disposable proof).
+- **Repository Hygiene**: Verified zero `sk-proj-` strings or secrets across git working tree, history, and remote GitHub repository.
+- **P01-D3A Security Verdict**: `PASS_WITH_REMEDIATED_SECURITY_INCIDENT`.
 
 ### Runtime Key Rule (D3C)
 
-If tunnel-client requires a runtime key: return HUMAN_REQUIRED_CONFIGURE_NEW_TUNNEL_RUNTIME_KEY.
-User must create a fresh temporary Platform key locally. Never request the plaintext key.
-Only test present/absent as boolean. Do NOT store any key in the repository.
+- **Execution Scope**: Ephemeral process-only environment variable (`$env:CONTROL_PLANE_API_KEY`).
+- **Presence Verification**: Verified via boolean-only inspection (`[bool]$env:CONTROL_PLANE_API_KEY = True`).
+- **Secret Protection**: Plaintext key was never echoed, logged, committed, or written to disk.
 
 ---
 
@@ -214,15 +214,44 @@ All D3B research preserved as: FALLBACK_PUBLIC_DISTRIBUTION_PATH
 ### Preparation
 
 #### Step P1 — Local MCP Server Health
-Status: [TO BE RECORDED]
-GET http://127.0.0.1:3182/healthz -> [TO BE RECORDED]
+- **Status**: `PASS`
+- **Probe**: `GET http://127.0.0.1:3182/healthz` -> HTTP 200 `{"status":"ok","service":"supervisor-proof-mcp","port":3182}`
+- **Security Boundary**: Loopback bind confirmed strictly to `127.0.0.1:3182` (PID 26608).
 
 #### Step P2 — Tunnel Doctor
-All required live checks: [TO BE RECORDED]
+- **Status**: `PASS`
+- **Command**: `tunnel-client.exe doctor --control-plane.api-key "env:CONTROL_PLANE_API_KEY" --control-plane.tunnel-id tunnel_6ab0ae480cec81919b3db157c622eb53 --mcp.server-url "url=http://127.0.0.1:3182/mcp" --log.format struct-text --explain`
+- **Checks Verified**:
+  - `CHECK config_source`: `PASS` (flags/environment only)
+  - `CHECK profile_load`: `PASS` (flags/environment only)
+  - `CHECK tunnel_id`: `PASS` (`tunnel_6ab0ae480cec81919b3db157c622eb53`)
+  - `CHECK control_plane_api_key`: `PASS` (`env:CONTROL_PLANE_API_KEY`)
+  - `CHECK tunnels_management_url`: `PASS` (`https://platform.openai.com/settings/organization/tunnels`)
+  - `CHECK runtime_api_keys_url`: `PASS` (`https://platform.openai.com/settings/organization/api-keys`)
+  - `CHECK admin_api_keys_url`: `PASS` (`https://platform.openai.com/settings/organization/admin-keys`)
+  - `CHECK chatgpt_connector_settings_url`: `PASS` (`https://chatgpt.com/#settings/Connectors`)
+  - `CHECK mcp_target`: `PASS` (`http://127.0.0.1:3182/mcp`)
+  - `CHECK mcp_server_reachable`: `PASS` (HTTP 405 from `http://127.0.0.1:3182/mcp`)
+  - `CHECK oauth_metadata`: `PASS` (OAuth metadata not advertised; all candidates returned HTTP 404)
+  - `CHECK health_listener`: `PASS` (will bind `http://127.0.0.1:8080`)
+  - `CHECK ui`: `PASS` (`http://127.0.0.1:8080/ui`)
+  - `CHECK codex_plugin`: `SKIP` (Codex detected; Tunnel MCP plugin not installed)
+- **Doctor Verdict**: `RESULT ok` -> `NEXT tunnel-client run`.
 
 #### Step P3 — Tunnel Start
-Tunnel: ai-supervisor-p01d (tunnel_6ab0ae480cec81919b3db157c622eb53)
-Status: [TO BE RECORDED] (expected: ready / connected)
+- **Status**: `PASS`
+- **Tunnel Binary**: `bin\tunnel-client.exe` v0.0.14 (checksum verified `fcc85a69ec...`)
+- **Tunnel ID**: `tunnel_6ab0ae480cec81919b3db157c622eb53` (`ai-supervisor-p01d`)
+- **Process Status**: Running in daemon background (PID 43288).
+- **Probes**:
+  - `healthz`: `http://127.0.0.1:8080/healthz` -> HTTP 200 `"live"` (`ok: true`)
+  - `readyz`: `http://127.0.0.1:8080/readyz` -> HTTP 200 `"ready"` (`ok: true`)
+  - `control_plane_poll`: Probed via `--require-control-plane-poll` -> `ok: true` (`value: 1789970639`).
+- **Log Verification**:
+  - `level=INFO msg="mcp session initialized" server_name=ai-supervisor-p01d-proof-server`
+  - `level=INFO msg="tunnel metadata fetched" name=ai-supervisor-p01d`
+  - `level=INFO msg="🟢 tunnel-client started" tunnel_url=https://api.openai.com/v1/tunnel/tunnel_6ab0ae480cec81919b3db157c622eb53`
+- **Live Readiness**: `HEALTHY / READY / CONNECTED`.
 
 HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP — issued after Steps P1/P2/P3 pass
 
@@ -321,19 +350,23 @@ Verdict: [TO BE RECORDED]
 
 ### D3C-12 — No Inbound Exposure
 
-Local MCP bind: 127.0.0.1 only (loopback)
-Windows inbound firewall rule: None added
-Router port forwarding: None
-Public MCP endpoint: None
-Verdict: [TO BE RECORDED]
+- **Local MCP Bind**: `127.0.0.1:3182` only (loopback).
+- **Tunnel Admin Bind**: `127.0.0.1:8080` only (loopback).
+- **Windows Inbound Firewall Rule**: None added.
+- **Router Port Forwarding**: None.
+- **Public MCP Endpoint**: None (outbound HTTPS long-polling only to OpenAI control plane).
+- **Verdict**: `PASS` (Pre-verified).
 
 ---
 
 ## 8. Human Checkpoint — ChatGPT Developer App Creation
 
-```
+```text
 HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP
-Status: WAITING_FOR_USER_ACTION
+Status: ACTIVE_WAITING_FOR_USER_ACTION
+P1_LOCAL_MCP: PASS (127.0.0.1:3182)
+P2_TUNNEL_DOCTOR: PASS
+P3_TUNNEL_READY: PASS (PID 43288, live/ready, control_plane_poll ok)
 ```
 
 Pre-conditions confirmed before issuing this checkpoint:
@@ -411,22 +444,22 @@ No workarounds. No browser automation. No silent architecture switch.
 
 | Sub-Gate | Verdict | Notes |
 |---|---|---|
-| P1 — Local MCP Health | [TO BE RECORDED] | |
-| P2 — Tunnel Doctor | [TO BE RECORDED] | |
-| P3 — Tunnel Ready | [TO BE RECORDED] | |
-| HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP | ISSUED | Awaiting user action |
-| D3C-01 — App Connection | [TO BE RECORDED] | |
-| D3C-02 — Tool Discovery | [TO BE RECORDED] | |
-| D3C-03 — ChatGPT Read | [TO BE RECORDED] | |
-| D3C-04 — Write Classification | [TO BE RECORDED] | |
-| D3C-05 — Approved Write | [TO BE RECORDED] | |
-| D3C-06 — Read-Back | [TO BE RECORDED] | |
-| D3C-07 — Denied Write | [TO BE RECORDED] | |
-| D3C-08 — Replay | [TO BE RECORDED] | |
-| D3C-09 — Tunnel Reconnect | [TO BE RECORDED] | |
-| D3C-10 — Chat Continuity | [TO BE RECORDED] | |
-| D3C-11 — MCP Offline/Recovery | [TO BE RECORDED] | |
-| D3C-12 — No Inbound Exposure | [TO BE RECORDED] | |
+| P1 — Local MCP Health | `PASS` | HTTP 200 loopback 127.0.0.1:3182 |
+| P2 — Tunnel Doctor | `PASS` | All required checks PASS; RESULT ok |
+| P3 — Tunnel Ready | `PASS` | PID 43288; live/ready/poll ok; outbound connected |
+| HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP | `ISSUED` | Awaiting user developer app connection in ChatGPT Plus |
+| D3C-01 — App Connection | `PENDING` | User action required |
+| D3C-02 — Tool Discovery | `PENDING` | Awaiting D3C-01 |
+| D3C-03 — ChatGPT Read | `PENDING` | Awaiting External Supervisor approval after D3C-02 |
+| D3C-04 — Write Classification | `PENDING` | Awaiting External Supervisor approval after D3C-02 |
+| D3C-05 — Approved Write | `PENDING` | Awaiting External Supervisor approval after D3C-02 |
+| D3C-06 — Read-Back | `PENDING` | Awaiting External Supervisor approval after D3C-02 |
+| D3C-07 — Denied Write | `PENDING` | Awaiting External Supervisor approval after D3C-02 |
+| D3C-08 — Replay | `PENDING` | Awaiting External Supervisor approval after D3C-02 |
+| D3C-09 — Tunnel Reconnect | `PENDING` | Awaiting External Supervisor approval after D3C-02 |
+| D3C-10 — Chat Continuity | `PENDING` | Awaiting External Supervisor approval after D3C-02 |
+| D3C-11 — MCP Offline/Recovery | `PENDING` | Awaiting External Supervisor approval after D3C-02 |
+| D3C-12 — No Inbound Exposure | `PASS` | Pre-verified loopback-only 127.0.0.1; zero public ingress |
 
 ---
 
@@ -435,16 +468,20 @@ No workarounds. No browser automation. No silent architecture switch.
 ```
 ================================================================================
 P01-D3C VERDICT:
-[TO BE RECORDED]
+IN_PROGRESS (ACTIVE GATE: HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP)
 
 REASON:
-[TO BE RECORDED]
+Preparation steps P1 (Local MCP Health), P2 (Tunnel Doctor), and P3 (Tunnel Ready)
+completed successfully with zero secrets committed or exposed.
+Dedicated tunnel ai-supervisor-p01d is connected and polling OpenAI control plane.
+Awaiting user creation of developer app in Personal ChatGPT Plus to execute
+D3C-01 (App Connection) and D3C-02 (Tool Discovery).
 
 P01-D STATUS:
-[TO BE RECORDED]
+PARTIALLY_PROVEN / D3C_IN_PROGRESS
 
 P01-D3A_FUNCTIONAL = PASS
-P01-D3A_SECURITY = REMEDIATION_PENDING (SEC-001 awaits User key revocation confirmation)
+P01-D3A_SECURITY = PASS_WITH_REMEDIATED_SECURITY_INCIDENT (P01-D3A-SEC-001 REMEDIATED)
 
 ARCHITECTURE V2 STATUS:
 CANDIDATE (NOT FROZEN — pending External Transport Audit)
