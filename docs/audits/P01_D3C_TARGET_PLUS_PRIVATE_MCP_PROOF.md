@@ -700,11 +700,96 @@ HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP — issued after Steps P1/P2/P3 pass
 
 ### D3C-11 — Local MCP Offline / Recovery
 
-Action: Stop local MCP; tunnel-client remains running
-ChatGPT read behavior: [TO BE RECORDED - actual failure behavior]
-MCP restarted: YES
-Recovery: [TO BE RECORDED - ChatGPT app not recreated]
-Verdict: [TO BE RECORDED]
+- **Objective**: Empirically verify that when the local Node MCP server is terminated while the tunnel-client process remains running, Personal ChatGPT Plus receives a truthful tool failure rather than a false cached success, and when the local MCP server is restarted on the same loopback port, the same developer app seamlessly recovers and reads persisted state without app recreation or tunnel restart.
+- **Environment**:
+  - Caller: Personal ChatGPT Plus Web UI (`https://chatgpt.com`).
+  - App: `AI Supervisor P01-D3C Proof` (preserved continuously without modification).
+  - Tunnel: `ai-supervisor-p01d` (`tunnel_6ab0ae480cec81919b3db157c622eb53`).
+  - Tunnel Process: `tunnel-client.exe` v0.0.14 (PID `38624`, running continuously since Checkpoint G).
+  - Local MCP Server: `server.js` (PID `26608` stopped; restarted as PID `36504`).
+  - State Baseline: `current_value = "D3C_PLUS_WRITE_1789974395862"`, `mutation_count = 1`.
+
+#### Part A — Offline Failure Proof
+1. **Local MCP Termination**:
+   - Command: `Stop-Process -Id 26608 -Force` under explicit User authorization.
+   - Verification: Old PID `26608` eliminated; port `127.0.0.1:3182` listener closed.
+   - Health Probe: `GET http://127.0.0.1:3182/healthz` timed out (connection unavailable).
+   - `LOCAL_MCP_OFFLINE = PASS`
+2. **Tunnel Survival & Polling During Outage**:
+   - Tunnel PID `38624` remained running continuously.
+   - `GET http://127.0.0.1:8080/healthz` -> `HTTP 200 live`.
+   - `GET http://127.0.0.1:8080/readyz` -> `HTTP 200 ready`.
+   - Control-plane polling active (`commands_polled=0 commands_enqueued=0` cycles logged every 30s).
+   - `TUNNEL_PROCESS_ALIVE = PASS`, `TUNNEL_CONTROL_PLANE_ALIVE = PASS`.
+3. **Offline ChatGPT Invocation**:
+   - **User Prompt**: `"@AI Supervisor P01-D3C Proof Use AI Supervisor P01-D3C Proof to read the current local supervisor proof state while the local backend is intentionally offline using correlation ID 'd3c-offline-read-01'. Return the result or the exact error you receive. Do not perform any write or recovery action"`
+   - User prompt did not disclose expected state values (`RECOVERY_EXPECTED_VALUE_DISCLOSED = NO`).
+   - UI Indicator: `Worked for 6s >`; Called tool card: NOT_SHOWN.
+   - **ChatGPT Literal Output**:
+     > `"The exact error returned by the read-only supervisor probe was:`
+     > `The tool failed internally.`
+     > `No write or recovery action was performed."`
+4. **Tunnel Log Correlation (Offline Failure)**:
+   - Poll Timestamp: `2026-09-21T15:43:24.944+07:00` (`commands_polled=1 commands_enqueued=1`).
+   - Request ID: `cmd_7b6d1a8b_a878_4e68_b4dd_395e7eb6ae8b` (`cmd_request_id=91c167fc-373e-430a-bd20-edcf7607acdc/0sy2`, `rpc_method=tools/call`).
+   - Local Dispatch Failure: `failure_source=connect`, `transport_error_kind=dial`, `upstream_response_received=false`.
+   - Control Plane Response: `status_code=502` Bad Gateway error returned at `15:43:25.217+07:00` (`tunnel_request_id=req_b78434f406d24a45b6267602a626a3ed`).
+   - `OFFLINE_TOOL_REQUEST_REACHED_TUNNEL = PASS`
+   - `OFFLINE_LOCAL_DISPATCH_FAILED = PASS`
+   - `OFFLINE_ERROR_RETURNED_UPSTREAM = PASS`
+5. **Critical Negative Assertion (No False Success)**:
+   - ChatGPT did NOT fabricate or return cached state `D3C_PLUS_WRITE_1789974395862` or `mutation_count: 1`.
+   - `OFFLINE_FALSE_SUCCESS = NO`
+6. **Offline State Integrity**:
+   - `data/state.json` strictly unchanged (`current_value = "D3C_PLUS_WRITE_1789974395862"`, `mutation_count = 1`, `LastWriteTime = 2026-09-21 14:10:15`).
+   - `OFFLINE_FAILURE_STATE_INTEGRITY = PASS`
+   - **Offline Half Verdict**: `D3C11_OFFLINE_FAILURE = PASS`
+
+#### Part B — Backend Recovery Proof
+1. **MCP Restart**:
+   - Same implementation restarted: `node server.js` (`D:\TU_CODE\_ai_supervisor_p01d_openai_mcp_proof\server.js`).
+   - New Process ID: `36504` owning port `127.0.0.1:3182` (`SINGLE_MCP_INSTANCE = PASS`).
+   - Health Probe: `GET http://127.0.0.1:3182/healthz` -> `HTTP 200 {"status":"ok","service":"supervisor-proof-mcp","port":3182}` (`RECOVERED_MCP_HEALTH = PASS`).
+   - Tunnel Survival: Tunnel PID `38624` survived throughout without restart (`TUNNEL_SURVIVED_BACKEND_RECOVERY = PASS`).
+   - Pre-probe state persistence: `data/state.json` unchanged by restart (`MCP_RESTART_STATE_PERSISTENCE = PASS`).
+2. **Post-Recovery ChatGPT Invocation**:
+   - **User Prompt**: `"Use AI Supervisor P01-D3C Proof to read the current local supervisor proof state after local backend recovery using correlation ID 'd3c-recovery-read-01'. Return the disposable state, mutation count, proof identifier, timestamp, and correlation ID. Do not modify anything."`
+   - UI Indicator: `Worked for a few seconds >`; Tool card `Called tool ˅` displayed.
+   - **ChatGPT Literal Output**:
+     > `"Read-only supervisor proof state:`
+     > `• Disposable state: D3C_PLUS_WRITE_1789974395862`
+     > `• Mutation count: 1`
+     > `• Proof identifier: P01-D3A-OPENAI-MCP-RUNTIME-PROOF`
+     > `• Timestamp: 2026-09-21T08:48:01.503Z`
+     > `• Correlation ID: d3c-recovery-read-01`
+     > `No modification was performed."`
+3. **Tunnel Log Correlation (Post-Recovery Read)**:
+   - Poll Timestamp: `2026-09-21T15:48:01.486+07:00` (`commands_polled=1 commands_enqueued=1`).
+   - Request ID: `cmd_0e5bef47_2017_4354_ab96_5a0e7795eb81` (`cmd_request_id=2364a864-22a3-416b-a873-b903e8dca422/8qye`, `rpc_method=tools/call`).
+   - Local Dispatch & Response: Dispatched to local MCP at `15:48:01.486+07:00`; response received at `15:48:01.507+07:00` (latency: 21ms; `has_error=false`).
+   - Control Plane Response: Delivered at `15:48:01.804+07:00` (`tunnel_request_id=req_c0a4a1e70ff04fd2b0ee6ab81ca905a4`, `status_code=200`, `channel=main`, `finalResponse=true`).
+   - Millisecond Match: ChatGPT timestamp `2026-09-21T08:48:01.503Z` (UTC) = `15:48:01.503+07:00`, perfectly aligned with local MCP execution.
+   - `RECOVERY_TOOL_REQUEST_REACHED_TUNNEL = PASS`
+   - `RECOVERY_LOCAL_DISPATCH_SUCCEEDED = PASS`
+   - `RECOVERY_RESPONSE_RETURNED_UPSTREAM = PASS`
+4. **Returned State Validation**:
+   - `current_value`: `"D3C_PLUS_WRITE_1789974395862"` (`RECOVERY_VALUE_MATCH = PASS`).
+   - `mutation_count`: `1` (`RECOVERY_MUTATION_COUNT_MATCH = PASS`).
+   - `proof_identifier`: `P01-D3A-OPENAI-MCP-RUNTIME-PROOF` (`RECOVERY_PROOF_ID_MATCH = PASS`).
+5. **Zero Side Effects Post-Recovery Read**:
+   - `data/state.json` inspected post-read: `current_value` unchanged, `mutation_count` unchanged at 1, `LastWriteTime` strictly unchanged at `2026-09-21 14:10:15`.
+   - `RECOVERY_READ_SIDE_EFFECTS = ZERO`
+
+#### Runtime & Architectural Finding
+- **Observation**: During the backend outage, `tunnel-client` reported `/healthz = live` and `/readyz = ready` despite loopback port `3182` being completely closed.
+- **Empirical Finding**: `TUNNEL_READINESS_DOES_NOT_PROVE_LOCAL_BACKEND_READINESS = EMPIRICALLY_OBSERVED`.
+- **Architectural Implication**: Production health monitoring and routing cannot rely solely on tunnel daemon `/readyz`; health semantics must compose transport reachability with local backend service health.
+
+#### Overall Verdict
+- `D3C-11`: `PASS`
+- `D3C_OFFLINE_FAILURE_BEHAVIOR = EMPIRICALLY_PROVEN_ON_TARGET_PLUS`
+- `D3C_BACKEND_RECOVERY = EMPIRICALLY_PROVEN_ON_TARGET_PLUS`
+- `D3C_CHECKPOINT_I = PASS`
 
 ### D3C-12 — No Inbound Exposure
 
@@ -804,38 +889,22 @@ PRESERVED_MUTATION_COUNT: 1
 
 ```text
 HUMAN_REQUIRED_D3C_MCP_OFFLINE_RECOVERY
-Status: ACTIVE_WAITING_FOR_USER_ACTION
+Status: CLOSED (PASS)
 Checkpoint: D3C_CHECKPOINT_I (D3C-11 Local MCP Offline / Recovery)
 TUNNEL_NAME: ai-supervisor-p01d
 TUNNEL_ID: tunnel_6ab0ae480cec81919b3db157c622eb53
-TUNNEL_PID: 38624 (KEEP RUNNING)
-MCP_PID: 26608 (TARGET FOR STOP/START)
-APP: AI Supervisor P01-D3C Proof (do NOT recreate or edit)
+TUNNEL_PID: 38624 (survived throughout)
+MCP_PID_BEFORE: 26608 (terminated for outage test)
+MCP_PID_AFTER: 36504 (restarted on port 3182)
+APP: AI Supervisor P01-D3C Proof (preserved without recreation/editing)
 PRESERVED_VALUE: D3C_PLUS_WRITE_1789974395862
 PRESERVED_MUTATION_COUNT: 1
 ```
 
-**Objective**:
-Empirically verify that when the local Node MCP server is terminated while the tunnel-client remains running, the Personal ChatGPT Plus developer app receives a graceful transport error, and when the local MCP server is restarted on the same port, the same developer app immediately recovers and can read persisted state without recreation.
-
-**Preliminary Procedure (AWAITING USER AUTHORIZATION)**:
-1. Capture local MCP server process PID (`26608`).
-2. Keep tunnel-client running (`PID 38624`).
-3. Stop local MCP server only.
-4. Verify port `127.0.0.1:3182` is closed.
-5. In Personal ChatGPT Plus Web, without recreating or editing the app, invoke `supervisor_probe_read`.
-6. Capture and document the exact failure behavior and error presentation in ChatGPT UI.
-7. Verify zero state corruption in sandbox.
-8. Restart local MCP server on `127.0.0.1:3182/mcp`.
-9. Verify `GET http://127.0.0.1:3182/healthz` returns HTTP 200.
-10. In Personal ChatGPT Plus Web, without recreating the app, invoke `supervisor_probe_read` again.
-11. Require returned state to match `D3C_PLUS_WRITE_1789974395862` with `mutation_count: 1`.
-
-PROHIBITED:
-- Do NOT stop the tunnel-client process
-- Do NOT recreate or edit the ChatGPT developer app
-- Do NOT reconfigure the tunnel connection
-- Do NOT modify the state file
+**Execution & Findings Summary**:
+- **Part A (Offline Failure)**: Node MCP PID 26608 stopped; port 3182 offline. User sent probe `d3c-offline-read-01`. Tunnel polled `cmd_7b6d1a8b_a878_4e68_b4dd_395e7eb6ae8b` (`tools/call`), failed local dial connect, returned HTTP 502 upstream. ChatGPT displayed `"The tool failed internally."` without hallucinating cached state (`OFFLINE_FALSE_SUCCESS = NO`). Local state.json remained untouched.
+- **Part B (Backend Recovery)**: Same `server.js` restarted as PID 36504 on port 3182 (health HTTP 200). Tunnel PID 38624 survived without restart. User sent probe `d3c-recovery-read-01`. Tunnel polled `cmd_0e5bef47_2017_4354_ab96_5a0e7795eb81` (`tools/call`), dispatched to MCP in 21ms, returned HTTP 200 upstream. ChatGPT displayed tool output card with exact persisted state `D3C_PLUS_WRITE_1789974395862`, `mutation_count: 1`, timestamp `2026-09-21T08:48:01.503Z`. Zero mutation occurred.
+- **Verdict**: `D3C_CHECKPOINT_I = PASS`.
 
 ---
 
@@ -907,14 +976,18 @@ No workarounds. No browser automation. No silent architecture switch.
 | HUMAN_REQUIRED_D3C_REPLAY | `CLOSED` | Completed by User |
 | D3C-08 — Replay | `PASS` | Replay rejected as DUPLICATE_REPLAY; count remained 1; singleton correlation |
 | D3C Checkpoint F | `PASS` | Real ChatGPT Plus replay protection & exactly-once proven |
-| HUMAN_REQUIRED_D3C_TUNNEL_RECONNECT | `ISSUED` | Awaiting authorized tunnel restart and reconnect verification |
 | D3C-09 — Tunnel Reconnect | `PASS` | Old PID 43288 → New PID 38624; same tunnel_id; MCP survived; post-restart invocation via new process; value D3C_PLUS_WRITE_1789974395862 confirmed; zero side effects |
 | D3C Checkpoint G | `PASS` | Tunnel reconnect empirically proven on Personal ChatGPT Plus |
 | HUMAN_REQUIRED_D3C_TUNNEL_RECONNECT | `CLOSED` | Completed by User |
 | D3C-10 — Chat Continuity | `PASS` | Same-conversation read + new-conversation read verified; distinct tools/call correlated; zero mutation |
-| HUMAN_REQUIRED_D3C_CHAT_CONTINUITY | `ISSUED` | Awaiting User same-conversation and new-conversation reads |
-| D3C-11 — MCP Offline/Recovery | `PENDING` | Active Gate: HUMAN_REQUIRED_D3C_MCP_OFFLINE_RECOVERY (Checkpoint I) |
+| D3C Checkpoint H | `PASS` | Chat continuity & multi-conversation access empirically proven |
+| HUMAN_REQUIRED_D3C_CHAT_CONTINUITY | `CLOSED` | Completed by User |
+| D3C-11 — MCP Offline/Recovery | `PASS` | Offline failure (truthful error "The tool failed internally", zero false success) + Recovery read (exact state D3C_PLUS_WRITE_1789974395862 read back, 0 mutation) |
+| D3C Checkpoint I | `PASS` | Local MCP offline failure behavior and seamless recovery empirically proven |
+| HUMAN_REQUIRED_D3C_MCP_OFFLINE_RECOVERY | `CLOSED` | Completed by User |
 | D3C-12 — No Inbound Exposure | `PASS` | Pre-verified loopback-only 127.0.0.1; zero public ingress |
+| **P01-D3C Final** | `PASS` | **All 12 sub-gates and Checkpoints A through I PASS; PLUS_PRIVATE_MCP_TRANSPORT PROVEN_ON_TARGET_ACCOUNT** |
+| **Active Gate** | `ISSUED` | **EXTERNAL_SUPERVISOR_D3C_TRANSPORT_AUDIT** |
 
 ---
 
@@ -922,32 +995,36 @@ No workarounds. No browser automation. No silent architecture switch.
 
 ```
 ================================================================================
-P01-D3C VERDICT:
-IN_PROGRESS (CHECKPOINT A, B, C, D, E, F, G, H: PASS; ACTIVE GATE: HUMAN_REQUIRED_D3C_MCP_OFFLINE_RECOVERY)
+P01-D3C FINAL VERDICT: PASS
 
-D3C_CHAT_CONTINUITY = EMPIRICALLY_PROVEN_ON_TARGET_PLUS
-D3C_NEW_CONVERSATION_ACCESS = EMPIRICALLY_PROVEN_ON_TARGET_PLUS
-D3C10_STATE_INTEGRITY = PASS
-D3C_CHECKPOINT_H = PASS
+PLUS_PRIVATE_MCP_TRANSPORT = PROVEN_ON_TARGET_ACCOUNT
+P01-D = TRANSPORT_PROVEN_PENDING_EXTERNAL_ARCHITECTURE_AUDIT
+PUBLIC_PLUGIN_PATH = OPTIONAL_FUTURE_DISTRIBUTION
+P01-D3B = PRESERVED_FALLBACK_RESEARCH
+ARCHITECTURE_V2 = CANDIDATE_READY_FOR_EXTERNAL_TRANSPORT_AUDIT
+P01-A / P01-B / P01-C = HELD
 
-REASON:
-D3C-10 (Chat Continuity / Multi-Conversation Access) successfully verified on Personal ChatGPT Plus Web over Secure MCP Tunnel:
-- Same-conversation continuity (Part A): User sent non-plugin query ("Explain in one sentence what idempotency means"); model answered; then user invoked supervisor_probe_read with correlation d3c-continuity-same-01. Tunnel polled cmd_277d30ca_08d3_4ef2_884b_91cfed19647c (tools/call) at 15:23:46.881+07:00; local MCP responded in 2ms; control plane posted HTTP 200. Returned D3C_PLUS_WRITE_1789974395862, mutation_count=1, "No state was modified."
-- New-conversation access (Part B): User opened genuinely new ChatGPT conversation window without recreating or reconfiguring the developer app. Invoked supervisor_probe_read with correlation d3c-continuity-new-01. Tunnel polled cmd_d8c549af_d37e_47f0_92f4_e38f7a04a59d (tools/call) at 15:24:34.921+07:00; local MCP responded in 2ms; control plane posted HTTP 200. Returned D3C_PLUS_WRITE_1789974395862, mutation_count=1, "No state was modified."
-- Distinct tools/call: cmd_277d30ca vs cmd_d8c549af verified distinct.
-- State integrity strictly preserved: mutation_count remained 1, current_value unchanged, LastWriteTime unchanged.
-- Zero UI automation, zero manual relay, zero proxy.
-Checkpoint H complete (PASS). Checkpoint I issued: HUMAN_REQUIRED_D3C_MCP_OFFLINE_RECOVERY.
+ACTIVE GATE: EXTERNAL_SUPERVISOR_D3C_TRANSPORT_AUDIT
 
-P01-D STATUS:
-PARTIALLY_PROVEN / D3C_IN_PROGRESS
+EMPIRICAL TRANSPORT FINDINGS SUMMARY:
+1. Target Personal ChatGPT Plus developer mode app connects reliably via official Secure MCP Tunnel.
+2. ChatGPT Plus reads local Windows MCP state (supervisor_probe_read) with millisecond-aligned log correlation.
+3. ChatGPT Plus performs approved state writes (supervisor_probe_write) triggering native confirmation UI.
+4. WRITE/DESTRUCTIVE tool metadata enforces interactive user consent ([Allow once], [Always allow], [Deny]).
+5. User denial intercepts invocation cleanly with zero server-side mutation or correlation leak.
+6. Replay protection enforces strict idempotency (DUPLICATE_REPLAY status, mutation count unchanged).
+7. Persisted state survives across independent conversation turns and multiple reads.
+8. Tunnel-client daemon can be terminated and restarted with identical tunnel ID without app recreation.
+9. Existing developer app operates seamlessly across existing conversations and newly created conversations.
+10. Local MCP backend outage produces truthful tool failure ("The tool failed internally.") without fabricating cached state.
+11. Existing developer app recovers immediately upon local MCP server restart without app recreation or tunnel restart.
+12. Tunnel readiness (/readyz = ready) reflects control-plane connection, NOT loopback backend availability.
+13. Server boundary remains strictly 127.0.0.1 loopback; zero inbound firewall or public IP exposure required.
 
-P01-D3A_FUNCTIONAL = PASS
-P01-D3A-SEC-001 = HISTORICAL_PROCESS_RECORD (ACTIVE_P01_GATE_FROM_SEC001 = NONE)
-
-ARCHITECTURE V2 STATUS:
-CANDIDATE (NOT FROZEN — pending External Transport Audit)
+SCOPE BOUNDARY:
+Empirical proof is verified strictly on the target Personal ChatGPT Plus account in Developer Mode.
+Generalization to all account tiers or enterprise workspaces requires separate empirical validation.
 ================================================================================
 ```
 
-Tracks P01-A, P01-B, and P01-C remain strictly HELD.
+Tracks P01-A, P01-B, and P01-C remain strictly HELD pending External Supervisor Transport Architecture Audit.
