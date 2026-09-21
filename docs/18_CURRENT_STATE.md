@@ -1,10 +1,10 @@
 # 18_CURRENT_STATE.md — Operational Tracking & Proof Status
 
-> **Status**: P02 PRE-CODE DECISION GATE (Architecture V2.1 Frozen — Pre-Code Research Complete)
+> **Status**: P02 DECISION GATE (Architecture V2.1 Frozen — Pre-Code Research Remediation Complete)
 > **Phase 0 Baseline**: Frozen at tag `phase0-architecture-v1` (commit `6f72eaca30be3fc3ac00f25829dd4283ed98c3f5`)
 > **Phase 1 Historical Freeze**: Tag `phase1-architecture-v2` (commit `883b083023398d95d50e3bb88e90dcfca0171745`; `HISTORICAL_FREEZE_SNAPSHOT_SUPERSEDED_BY_REAUDIT`)
 > **Phase 1 Current Baseline**: Frozen at tag `phase1-architecture-v2.1` (commit `62d3fe0df4a3a05697da77349ff085430ea452f7`)
-> **Updated**: 2026-09-22 (P02 Pre-Code Decision Gate: Entry Semantics Errata Corrected; ADR-013 Verification Spec Proposed; Q3 & Q4 Research Complete; Production Code Held)
+> **Updated**: 2026-09-22 (P02 Decision Gate Remediation: Entry Semantics & ADR-012 Approved; ADR-013 Hardened Profile Model Proposed; Q3 Research Revised with Official Go MCP SDK; Q4 Durability Corrected to synchronous=FULL; P02 Ownership Rebuilt; Production Code Held)
 
 ## 1. High-Level Summary
 
@@ -14,14 +14,14 @@
 | **Phase 1 (Upstream Proof)** | **COMPLETE** (Track P01-A: `EXTERNAL_AUDIT_APPROVED`; Track P01-B: `EXTERNAL_AUDIT_APPROVED`; Track P01-C: `EXTERNAL_AUDIT_APPROVED_WITH_ADR_011`; Track P01-D: `TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). All proofs verified. |
 | **Architecture V2 (Historical Freeze)** | **FROZEN** at tag `phase1-architecture-v2` (`HISTORICAL_FREEZE_SNAPSHOT_SUPERSEDED_BY_REAUDIT`). Immutable historical snapshot. |
 | **Architecture V2.1 (Current Baseline)** | **FROZEN** at tag `phase1-architecture-v2.1`. Zero modifications permitted without architecture governance amendment. |
-| **Project Stage** | **P02 ENTRY** (`P02 = PRE_CODE_DECISION_RESEARCH_COMPLETE_PENDING_EXTERNAL_AUDIT`). Application code is `NOT_STARTED`. |
+| **Project Stage** | **P02 ENTRY** (`P02 = DECISION_REMEDIATION_COMPLETE_PENDING_EXTERNAL_AUDIT`). Application code is `NOT_STARTED`. |
 | **Blocked Issues** | V1 ChatGPT transport blocker: **NONE**. P01 upstream-proof blocker: **NONE**. Pre-code verification command gap tracked as `P02_PRECODE_GAP_VERIFICATION_COMMAND_SPEC` (ADR-013 proposed). |
 | **Known Process Deviations** | P00-DEV-001 (`ACCEPTED_AT_PHASE0_FREEZE`); Process Hygiene Deviation recorded; **P01B-DEV-001**; **P01C-DEV-001**; **P01C-DEV-002**; **P01C-DEV-003**; **P01C-DEV-004**. |
-| **Open Implementation Decisions** | `Q3_SUPERVISOR_CORE_LANGUAGE = RESEARCH_COMPLETE_PENDING_EXTERNAL_DECISION` (ADR-014 proposed: TypeScript/Node.js v22+); `Q4_LOCAL_STATE_STORE_ENGINE = RESEARCH_COMPLETE_PENDING_EXTERNAL_DECISION` (ADR-015 proposed: SQLite WAL). |
+| **Open Implementation Decisions** | `Q3_SUPERVISOR_CORE_LANGUAGE = RESEARCH_REVISED_PENDING_EXTERNAL_DECISION` (ADR-014 proposed: Go recommended, TypeScript Node 24 LTS runner-up); `Q4_LOCAL_STATE_STORE_ENGINE = SQLITE_DIRECTION_APPROVED_CONFIGURATION_PENDING_EXTERNAL_DECISION` (ADR-015 proposed: SQLite WAL with synchronous=FULL); `P02_PHASE_OWNERSHIP = RESEARCH_COMPLETE_PENDING_EXTERNAL_DECISION`. |
 | **Documentation Baseline Versions** | AO `v0.13.0` (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`), Agy `1.2.7` (`7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`), `tunnel-client` `v0.0.14`. |
 | **Upstream Runtime Proofs (P01)** | Track P01-A (`EXTERNAL_AUDIT_APPROVED`), Track P01-B (`EXTERNAL_AUDIT_APPROVED`), Track P01-C (`EXTERNAL_AUDIT_APPROVED_WITH_ADR_011`), Track P01-D (`TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). Phase P01 proof activity is **COMPLETE**. |
-| **Next Approved Action** | External Supervisor Audit of P02 Decision Dossiers (`ADR-013`, `Q3 Research`, `Q4 Research`, `P02 Ownership Matrix`). Production code remains strictly **HELD**. |
-| **Active Gate** | `EXTERNAL_SUPERVISOR_P02_DECISION_AUDIT` |
+| **Next Approved Action** | External Supervisor Audit of Remediated P02 Decision Dossiers (`ADR-013`, `Q3 Research`, `Q4 Research`, `P02 Ownership Research`). Production code remains strictly **HELD**. |
+| **Active Gate** | `EXTERNAL_SUPERVISOR_P02_DECISION_REAUDIT` |
 | **P01 Execution Status** | `COMPLETE` |
 
 ---

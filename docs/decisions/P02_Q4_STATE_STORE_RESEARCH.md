@@ -1,99 +1,85 @@
-# P02 Research Dossier: Q4 — Local State Store Storage Engine
+# P02 Q4 State Store Research & Durability Specification
 
-> **Status**: RESEARCH_COMPLETE (PENDING_EXTERNAL_DECISION)
+> **Authority**: P02 Pre-Code Implementation Decision Gate (Reaudit Remediation)
 > **Date**: 2026-09-22
-> **Related**: ADR-007 (Durable State Persistence), ADR-012 (TaskContract Revision & Attempt Binding), ADR-015 (Proposed Storage Decision)
+> **Status**: SQLITE_DIRECTION_APPROVED_CONFIGURATION_PENDING_EXTERNAL_DECISION
+> **Prior Direction**: SQLite direction accepted; durability configuration corrected to `synchronous=FULL`.
 
 ---
 
-## 1. Executive Summary & Objective
-This research dossier evaluates local embedded storage engine candidates for the **Supervisor Control Plane State Store** (Phase P02+). The State Store persists project registration metadata, active pair session tokens, 13-state workflow transitions, immutable TaskContract revisions, multi-turn TaskAttempt lineages, worker claims, independent evidence packets, and review decisions.
+## 1. Engine Selection Baseline
 
-A paramount new operational requirement established at the P02 pre-code gate is the **atomic pre-dispatch persistence invariant**:
-```text
-TaskAttempt allocation (attempt_id, attempt_number, contract_id, expected_report_path)
-+
-Task state transition (READY -> DISPATCHED)
+The External Supervisor has confirmed the storage engine direction:
 ```
-must be committed atomically and durably to disk before any external side effects (AO session spawn or task send) are initiated.
-
-Candidates evaluated:
-1. **SQLite (WAL Mode)**
-2. **Durable Atomic JSON / File Store**
-3. **Embedded Key-Value Engine (LMDB / LevelDB)**
+STATE_STORE_ENGINE_DIRECTION = SQLITE
+```
+This dossier establishes the exact operational, concurrency, durability, and backup configuration required to satisfy the Supervisor Control Plane's atomic pre-dispatch persistence invariant.
 
 ---
 
-## 2. Technical & Governance Requirements
-- **Crash Recovery & ACID Durability (NFR-003)**: Uncorrupted recovery after sudden power loss, OS reboot, or daemon crash.
-- **Atomic Multi-Entity Mutation**: Ability to insert a new attempt record and update task state within a single atomic transaction.
-- **Relational Lineage**: Clean representation of `Task 1 -> 1..* TaskContract` (revisions) and `Task 1 -> 1..* TaskAttempt` (execution iterations).
-- **Windows Filesystem Behavior**: Safe concurrency and file handle semantics under Windows NTFS/ReFS, handling file locks cleanly.
-- **Zero Cloud & Zero External Daemon Dependency (OPS-003)**: Entirely self-contained on the host machine without external database server processes.
-- **Schema Evolution & Migration**: Clear versioning mechanism as domain models expand across phases.
-- **Auditability**: Direct read-only inspection by human developers or diagnostic tools.
+## 2. Durability Configuration & Power-Loss Safety
 
----
+### 2.1 The Dispatch Transaction Invariant
+The canonical dispatch boundary requires:
+1. `TaskAttempt` is allocated;
+2. Foreign key to `contract_id` is bound;
+3. State transition `READY → DISPATCHED` is committed in the database;
+4. **All steps 1–3 must be durably committed to disk BEFORE invoking external AO dispatch.**
 
-## 3. Candidate Deep Dive & Empirical Analysis
-
-### Candidate 1: SQLite (in WAL Mode)
-- **Transaction Model & Atomicity (Score: 10/10)**: Full ACID compliance. The atomic pre-dispatch persistence requirement is natively satisfied via a standard SQL transaction:
+### 2.2 Correction: `synchronous = FULL` vs `NORMAL`
+In SQLite WAL mode:
+- `synchronous = NORMAL`: SQLite syncs the WAL file on checkpoint operations, but not on every transaction commit. While resistant to application crashes, **a hard OS crash or power loss can lose recently committed transactions**.
+- **Failure Mode with `NORMAL`**: If the Supervisor commits `READY → DISPATCHED`, invokes AO to spawn an external worker, and power is suddenly interrupted before a WAL sync, the database rolls back upon reboot. The external worker would be executing an attempt for which the Supervisor has zero record, corrupting the attempt lineage.
+- **Canonical V1 Durability Baseline**:
   ```sql
-  BEGIN IMMEDIATE;
-  INSERT INTO task_attempts (attempt_id, attempt_number, task_id, contract_id, expected_report_path, started_at)
-    VALUES (?, ?, ?, ?, ?, ?);
-  UPDATE tasks SET state = 'DISPATCHED', current_attempt = ? WHERE task_id = ?;
-  COMMIT;
+  PRAGMA journal_mode = WAL;
+  PRAGMA synchronous = FULL;
+  PRAGMA foreign_keys = ON;
+  PRAGMA busy_timeout = 5000;
   ```
-  If any crash occurs before `COMMIT`, the entire operation rolls back cleanly.
-- **Crash Consistency & WAL (Score: 10/10)**: Configured with Write-Ahead Logging (`PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;`), writes append sequentially to a `-wal` file while reads continue concurrently without blocking writers. On crash, recovery is automatic during next connection open.
-- **Windows Locking Behavior (Score: 8/10)**: In default rollback journal mode, Windows mandatory locking frequently triggers `busy` errors if multiple processes or threads touch the file. In **WAL mode**, readers and writers do not block each other, drastically mitigating Windows file-locking contention.
-- **Queryability & Lineage (Score: 10/10)**: Foreign keys enforce relational integrity across `tasks`, `task_contracts`, `task_attempts`, `worker_claims`, `evidence`, and `review_decisions`. Complex governance queries (e.g., "fetch latest reviewable attempt for task X under contract revision Y") execute in sub-millisecond indexed queries.
-- **Migrations & Backup (Score: 9/10)**: Standard migration version tables (`schema_migrations`). Online backup via `VACUUM INTO 'backup.db'` or native backup APIs. Single-file portability.
-
-### Candidate 2: Durable Atomic JSON / File Store
-- **Transaction Model & Atomicity (Score: 4/10)**: Atomically replacing a single file on Windows is possible via `ReplaceFileW` / `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`. However, updating `tasks/<task_id>.json` AND writing `attempts/<attempt_id>.json` **cannot be made atomic across two files** without building a custom write-ahead transaction log in application code.
-- If all state is consolidated into a single monolithic `state.json`, write amplification grows with every event, and concurrent reads/writes require global file-level mutexes.
-- **Windows Locking Behavior (Score: 5/10)**: Replacing open files on Windows frequently encounters `EBUSY` / `EPERM` if Windows Defender, search indexers, or backup tools temporarily hold read handles.
-- **Queryability & Lineage (Score: 5/10)**: Requires reading and parsing all JSON files into memory to filter by state, attempt, or contract revision.
-- **Verdict**: Inadequate for atomic multi-entity dispatch transactions and relational lineage.
-
-### Candidate 3: Embedded Key-Value Engine (e.g. LMDB / LevelDB)
-- **Transaction Model & Atomicity (Score: 8/10)**: Key-value engines support atomic batch writes (`WriteBatch`), allowing multiple key mutations to commit atomically.
-- **Queryability & Operational Complexity (Score: 5/10)**: Lacks native relational indexing. Querying attempts by task, finding latest revisions, or enforcing foreign keys requires manually designing, writing, and updating secondary index keys (e.g., `idx:task_attempts:<task_id>:<attempt_id>`). Schema evolution is manual and brittle.
-- **Windows Ecosystem (Score: 6/10)**: C++ build requirements for LevelDB or RocksDB on Windows create significant integration friction across runtimes.
-- **Verdict**: Adds unnecessary complexity without providing any meaningful benefit over SQLite.
+  Under `synchronous = FULL` in WAL mode, the WAL file is flushed to physical storage on every commit, guaranteeing full ACID durability across hard OS crashes and power loss.
 
 ---
 
-## 4. Evaluation Matrix
+## 3. WAL Concurrency Model & Precision
 
-| Criterion | Weight | SQLite (WAL) | Durable JSON Store | Embedded Key-Value |
-|---|---|---|---|---|
-| **ACID & Atomic Multi-Entity Transactions** | 25% | **10** (2.5) | 4 (1.0) | 8 (2.0) |
-| **Crash Consistency & Recovery (NFR-003)** | 20% | **10** (2.0) | 5 (1.0) | 8 (1.6) |
-| **Relational Lineage & Queryability** | 20% | **10** (2.0) | 5 (1.0) | 5 (1.0) |
-| **Windows Locking & Filesystem Stability** | 15% | **8** (1.2) | 5 (0.75) | 7 (1.05) |
-| **Schema Migration & Backup Simplicity** | 10% | **9** (0.9) | 5 (0.5) | 6 (0.6) |
-| **Operational & Developer Simplicity** | 10% | **9** (0.9) | 7 (0.7) | 6 (0.6) |
-| **TOTAL WEIGHTED SCORE** | **100%** | **9.50 / 10** | **4.95 / 10** | **6.85 / 10** |
+### 3.1 Concurrency Semantics
+- **Clarification**: WAL mode **does not eliminate write contention**.
+- **Precise Invariant**:
+  - WAL allows **any number of concurrent readers** alongside **exactly one writer**. Readers never block writers, and writers never block readers.
+  - However, **writers are strictly serialized**. If two threads or processes attempt to write simultaneously, one must wait or will receive `SQLITE_BUSY`.
+- **Mitigation & Invariant**:
+  - `PRAGMA busy_timeout = 5000;` ensures SQLite will automatically retry for up to 5 seconds if a lock contention occurs.
+  - All write transactions must be **strictly bounded and short-lived (< 50ms)**. No external I/O, child process execution, or network calls may ever take place inside an active database transaction.
 
----
-
-## 5. Synthesis & Recommendation
-
-### Recommended Storage Engine: **SQLite (in WAL Mode)**
-- **Core Rationale**:
-  1. The new atomic requirement (`TaskAttempt` allocation + `READY → DISPATCHED` committed before external AO invocation) requires true transactional atomicity. SQLite provides this out of the box with zero custom transaction code.
-  2. Multi-turn revision and attempt governance (ADR-011, ADR-012) represents a relational graph: tasks have multiple contract revisions, attempts bind to contracts, and claims/evidence bind to attempts. Relational schema with foreign keys is the natural, safest representation.
-  3. WAL mode (`PRAGMA journal_mode = WAL`) eliminates read/write contention and handles Windows process concurrency cleanly.
-  4. Single-file database (`.supervisor/supervisor.db`) satisfies self-contained zero-cloud mandates (OPS-003).
-
-### Runner-Up:
-- There is no competitive runner-up for multi-entity transactional state. Simple JSON files remain useful exclusively for standalone point-in-time exported artifacts (such as `ReviewBundle` JSON files or append-only `audit.jsonl`), but cannot serve as the core transactional state store.
+### 3.2 Runtime Multi-File Topology
+- **Clarification**: While commonly referred to as a "single-file database", an active SQLite database in WAL mode consists of up to three runtime files:
+  1. `supervisor.db` — The primary database file containing committed schema pages.
+  2. `supervisor.db-wal` — The write-ahead log file containing committed transaction pages pending checkpoint.
+  3. `supervisor.db-shm` — The shared-memory index file used for concurrent reader coordination.
+- On clean daemon shutdown, SQLite automatically checkpoints and removes or truncates the `-wal` and `-shm` files, leaving a single portable `supervisor.db`.
 
 ---
 
-## 6. Conditions That Would Change the Recommendation
-- A mandate for human-editable plaintext state files (though this would violate tamper-resistance and transactional atomicity invariants).
+## 4. Architecture-Level Backup Policy
+
+### 4.1 Strict Invariant on Active Backups
+**DO NOT backup an active WAL database by naively copying only `supervisor.db`.**
+- *Failure Mode*: Naive filesystem copying of `supervisor.db` while the database is open will capture an inconsistent snapshot missing all pages residing in `supervisor.db-wal`.
+
+### 4.2 Approved Backup Mechanisms
+Backups must use one of the following canonical SQLite mechanisms:
+1. **SQLite Online Backup API** (`sqlite3_backup`):
+   - Atomically streams database pages to a target file while the source database remains live and accessible.
+2. **`VACUUM INTO 'backup_path.db';`**:
+   - Single atomic SQL command that writes a fully checkpointed, consistent snapshot into a new standalone database file.
+3. **Controlled Checkpoint Snapshot**:
+   - Execute `PRAGMA wal_checkpoint(TRUNCATE);` during an idle window, then perform filesystem snapshot.
+
+---
+
+## 5. Schema Migration & Integrity
+
+1. **Schema Versioning**: Track schema evolution via `PRAGMA user_version;`.
+2. **Integrity Check**: On daemon startup, execute `PRAGMA integrity_check;` and `PRAGMA foreign_key_check;` as part of the `OPS-003` self-contained storage initialization.
+3. **Foreign Key Enforcement**: `PRAGMA foreign_keys = ON;` must be executed for every opened connection to preserve relational integrity across tasks, contracts, attempts, and audit logs.

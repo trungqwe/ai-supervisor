@@ -1,146 +1,132 @@
-# ADR-013: Trusted Verification Command Specification
+# ADR-013: Trusted Verification Command Specification & Security Architecture
 
 > **Status**: PROPOSED (PENDING_EXTERNAL_SUPERVISOR_APPROVAL)
 > **Date**: 2026-09-22
-> **Authority**: Architecture Decision Proposal
-> **Tracking**: `P02_PRECODE_GAP_VERIFICATION_COMMAND_SPEC`
-> **Related**: ADR-004 (Read-Only Interface), ADR-005 (Supervisor Authority), ADR-010 (Contract Immutability), ADR-012 (Revision & Attempt Binding)
+> **Authority**: Architecture Decision Record
+> **Deciders**: External Supervisor, Engineering Team
+> **Tracks**: SEC-003, NFR-004, FR-004, FR-008
+> **Replaces**: Initial draft of ADR-013 (Option B allowlist model invalidated by security audit)
 
 ---
 
-## Context & Problem Statement
-In the canonical architecture, the Supervisor Evidence subsystem independently validates worker claims prior to transitioning from `REPORT_READY` to `EVIDENCE_READY`. This independent evidence collection requires executing approved test and build verification specifications against the worker worktree.
+## 1. Context and Problem Statement
 
-However, an audit of the pre-code baseline revealed a critical security and contract representation contradiction:
-1. `docs/schemas/task-contract.schema.json` and `docs/08_TASK_CONTRACT.md` currently define:
-   ```json
-   "required_tests": {
-     "type": "array",
-     "items": { "type": "string" }
-   }
-   ```
-2. Canonical examples specify shell-interpolated command strings such as:
-   `powershell -Command './tests/smoke.ps1'`
-3. Conversely, `docs/07_SECURITY_MODEL.md` explicitly mandates:
-   - Zero arbitrary shell access exposed to ChatGPT;
-   - Execution without shell interpolation (`shell = false`);
-   - Parameter passing as discrete argument arrays;
-   - Execution exclusively through a constrained, allowlisted verification runner.
-
-If `required_tests` strings are executed via a shell (`cmd.exe /c` or `powershell -Command`), arbitrary command injection becomes possible if a malicious prompt or compromised worker manipulates contract strings. Conversely, if executed without a shell, raw string commands fail because arguments, flags, quotes, and executables cannot be deterministically separated without a complex, error-prone shell tokenizer.
-
-A safe, canonical representation for verification commands must be designed and formalized before Phase P02 code can proceed.
+Canonical `docs/08_TASK_CONTRACT.md` previously specified:
+```json
+"required_tests": [
+  "powershell -Command './tests/smoke.ps1'"
+]
+```
+This contradicts Security Directive **SEC-003** (No Arbitrary Shell Execution):
+1. **Shell Injection Vulnerabilities**: Passing raw string commands to a shell interpreter (`powershell`, `cmd`, `sh`) invites command injection via chaining operators (`&`, `|`, `;`), backticks, subshells, and uncontrolled parameter interpolation.
+2. **Executable-Native Code Execution Flaw in Option B**: An earlier draft proposed `shell: false` with a simple executable allowlist (`node`, `python`, `npm`, `git`, `cargo`). The External Supervisor security audit proved this is **insufficient**:
+   - Allowlisted executables possess built-in evaluation flags that execute arbitrary code (e.g. `node -e '...'`, `python -c '...'`).
+   - Package managers support arbitrary package downloading/execution (e.g. `npm exec`, `npx`).
+   - Version control tools can invoke external commands via config/hooks (e.g. `git -c core.fsmonitor=...`).
+   - Resolving executables via worker-controlled `cwd` or mutable `PATH` allows binary spoofing and DLL hijacking.
+3. **Supervisor vs Worker Authority Boundary**: Internal Git evidence collection (`git diff`, `git status`) is fixed, internal Supervisor functionality. It must never be exposed as an arbitrary user-controllable test runner executable.
 
 ---
 
-## Architectural Options Evaluated
+## 2. Decision Candidates Evaluated
 
-### Option A: String Command + Shell Tokenizer / Parser + Allowlist
-- **Mechanism**: Keep `required_tests: string[]`, implement a shell lexical analyzer / tokenizer (e.g., POSIX shell words / Windows CommandLineToArgvW parser), extract executable and arguments, and validate against a regex allowlist.
-- **Evaluation**:
-  - *Command Injection Resistance*: POOR. Windows CommandLine rules differ drastically between `cmd.exe`, PowerShell, and direct Win32 `CreateProcess`. Parsing shell metacharacters (`&`, `|`, `;`, `>`, `<`, `` ` ``, `$()`) safely across platforms is notoriously brittle.
-  - *Complexity*: HIGH. Requires bundling a custom grammar/tokenizer into the Supervisor.
-  - *Windows Compatibility*: PROBLEMATIC due to varied argument quoting rules across Windows runtimes.
-- **Verdict**: REJECTED. Parsing shell strings is an anti-pattern when structured contracts are available.
+### Option A: String Command + Shell Parser + Allowlist
+- Parse shell strings into AST, validate AST nodes, reject chained commands.
+- *Verdict*: **REJECTED**. Fragile across Windows quoting, PowerShell alias expansions, and cmd.exe edge cases.
 
-### Option B: Fully Structured Verification Command Spec
-- **Mechanism**: Replace raw string commands with a fully structured object:
-  ```json
-  {
-    "id": "verify-unit-tests",
-    "executable": "go",
-    "args": ["test", "-v", "./..."],
-    "cwd": "tests",
-    "timeout_seconds": 120,
-    "env": { "CI": "true" }
-  }
-  ```
-- **Evaluation**:
-  - *Command Injection Resistance*: EXCELLENT. Discrete array elements are passed directly to OS `execFile` / `exec.Command` / `subprocess.Popen` without shell invocation (`shell = false`). Metacharacters are treated as literal strings.
-  - *Windows Compatibility*: EXCELLENT. Direct process spawn bypassing `cmd.exe` or PowerShell shell wrappers.
-  - *TaskContract Schema Validation*: EXCELLENT. Clear JSON Schema validation with strict regex patterns on `executable` (e.g., allowlisting `go`, `node`, `npm`, `pytest`, `cargo`, `python`) and `args`.
-  - *Auditability*: EXCELLENT. Exact command invocation is serialized unambiguously in the audit trail.
-- **Verdict**: STRONGLY RECOMMENDED for general verification flexibility.
+### Option B: Structured Executable + Arguments Array with Generic Allowlist
+- Pass discrete `args: string[]` with `shell: false` against an allowlist of binary names (`node`, `python`).
+- *Verdict*: **REJECTED**. Fails to prevent executable-native arbitrary execution flags (`-e`, `-c`) and is vulnerable to mutable `PATH` resolution.
 
-### Option C: Server-Side Named Test Profiles
-- **Mechanism**: The Supervisor configuration defines pre-approved test profiles on the host machine:
-  ```json
-  {
-    "profiles": {
-      "smoke": { "executable": "node", "args": ["tests/smoke.js"] },
-      "unit": { "executable": "go", "args": ["test", "./..."] }
-    }
-  }
-  ```
-  The TaskContract only specifies profile identifiers: `required_test_profiles: ["smoke", "unit"]`.
-- **Evaluation**:
-  - *Command Injection Resistance*: MAXIMUM. ChatGPT and workers can only reference pre-declared server profiles; zero dynamic commands are accepted.
-  - *Flexibility*: LOW. Dynamic tasks that test a specific new test file or package cannot be parameterized by ChatGPT without reconfiguring the Supervisor daemon.
-- **Verdict**: INSUFFICIENT for dynamic pair programming, though highly secure.
+### Option C: Fixed Project Test Profiles (Server-Side Only)
+- The `TaskContract` specifies only a profile identifier (e.g. `"smoke"`, `"unit"`); all command details are static on the host.
+- *Verdict*: Highly secure, but lacks flexibility for targeted test execution (e.g. running a specific test file or package).
 
-### Option D: Hybrid Named Profile with Structured Parameter Overrides
-- **Mechanism**: A server-side allowlist defines base profile templates (e.g., `go-test`, `npm-test`, `pytest`), and the TaskContract specifies allowed target paths or arguments constrained by strict whitelist regexes.
-- **Evaluation**:
-  - Balances server-side allowlisting with task-level parameterization.
-  - Higher specification complexity than Option B.
-- **Verdict**: Viable alternative, but adds unnecessary abstraction layers for V1 single-user development.
+### Option D: Host-Owned Verification Profiles with Structured Typed Parameters (HYBRID)
+- Host `ProjectPolicy` defines immutable verification profiles with validated absolute executable paths and fixed argument prefixes.
+- `TaskContract` supplies strictly typed, schema-validated parameters.
+- *Verdict*: **RECOMMENDED**. Solves all security and authority containment requirements.
 
 ---
 
-## Proposed Direction (Option B with Host Allowlist)
+## 3. Recommended Security Architecture: Option D
 
-The proposed design establishes a structured `VerificationCommandSpec` governed by a host allowlist policy:
+### 3.1 Trusted Executable Identity & Registry
+Executables must **never** be resolved from worker-controlled `cwd` or mutable system `PATH`.
+The Supervisor maintains a **Host-Owned Executable Registry** resolved at Supervisor startup:
+```
+go-test     → C:\Program Files\Go\bin\go.exe (validated SHA-256 / absolute path)
+node-runner → C:\Program Files\nodejs\node.exe
+python-env  → C:\Users\Admin\AppData\Local\Programs\Python\Python311\python.exe
+```
+Worker workspaces cannot redefine this mapping.
 
+### 3.2 Host-Owned Verification Profiles (`ProjectPolicy`)
+Each profile defines strict command-family semantics:
+
+1. **`go-test` Profile**:
+   - `trusted_executable`: Absolute `go.exe` path from registry.
+   - `fixed_args_prefix`: `["test"]`
+   - `allowed_parameters`:
+     - `package`: String conforming to `^\./[a-zA-Z0-9_./-]+$` (must resolve inside workspace worktree).
+     - `run_pattern`: Optional regex conforming to `^[a-zA-Z0-9_./-]+$`.
+     - `timeout_seconds`: Integer bounded by `[5, 300]`.
+     - `flags`: Enum allowlist only (`["-v", "-race", "-count=1"]`).
+   - *Forbidden*: Flags such as `-exec`, `-toolexec`, or arbitrary compiler arguments are rejected at contract validation.
+
+2. **`npm-test` Profile**:
+   - `trusted_executable`: Absolute `npm.cmd` or `node.exe` path.
+   - `fixed_args_prefix`: `["test", "--"]`
+   - `allowed_parameters`: Approved test target scripts; arbitrary `npm exec` or package injection is strictly prohibited.
+
+3. **`pytest` Profile**:
+   - `trusted_executable`: Absolute path to virtualenv Python interpreter.
+   - `fixed_args_prefix`: `["-m", "pytest"]`
+   - `allowed_parameters`: Relative file path within workspace `tests/` directory; allowed flags limited to `["-v", "-k", "-q"]`.
+
+4. **Internal Git Isolation**:
+   - `git` is **never** registered as a user-accessible verification executable. Git operations for diff and hash verification remain internal to `EvidenceCollector`.
+
+### 3.3 Strict Environment Policy
+Child verification processes run under a host-controlled environment policy:
+- **Minimal Inherited Environment**: Only OS-essential variables (`SYSTEMROOT`, `WINDIR`, `TEMP`).
+- **Explicit Allowlist**: Only host-approved development variables (`GOROOT`, `GOPATH`, `NODE_PATH`).
+- **Zero Secret Forwarding**: Host API tokens, tunnel credentials, or worker session tokens are strictly excluded from child process environments.
+
+### 3.4 Verification Request Structure in TaskContract
 ```json
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "VerificationCommandSpec",
-  "type": "object",
-  "required": ["id", "executable", "args"],
-  "properties": {
-    "id": {
-      "type": "string",
-      "pattern": "^[a-z0-9_-]{3,32}$"
-    },
-    "executable": {
-      "type": "string",
-      "enum": ["go", "node", "npm", "python", "pytest", "cargo", "git"]
-    },
-    "args": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "maxLength": 256
+  "verification_requests": [
+    {
+      "id": "verify-state-machine",
+      "profile_id": "go-test",
+      "parameters": {
+        "package": "./pkg/statemachine/...",
+        "run_pattern": "TestAttemptLineage",
+        "flags": ["-v", "-count=1"]
       },
-      "maxItems": 32
-    },
-    "cwd": {
-      "type": "string",
-      "description": "Relative directory path strictly contained within worktree root"
-    },
-    "timeout_seconds": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 600,
-      "default": 120
+      "cwd": ".",
+      "timeout_seconds": 60
     }
-  },
-  "additionalProperties": false
+  ]
 }
 ```
 
-### Execution Invariants:
-1. **Zero Shell Invocation**: `shell` is hardcoded to `false`. Commands are executed via direct OS process spawn.
-2. **Discrete Parameter Passing**: Arguments are passed as discrete array elements; no command line string concatenation is performed.
-3. **Executable Allowlisting**: The `executable` field must match a strictly allowlisted binary verified to exist on the host PATH.
-4. **CWD Containment**: If `cwd` is specified, it must resolve to a strict descendant of the allocated worktree root.
-5. **Timeout Bounding**: Each command execution enforces a hard OS timeout with clean tree termination.
-6. **Output Capture**: Captures exact exit code, stdout (bounded size), and stderr as objective ground truth.
+---
+
+## 4. Operational Invariants
+
+1. **Direct Child Process Execution**: Executed strictly via OS process APIs (`execFile` / `os/exec.Command`) with `shell = false`.
+2. **Workspace Containment**: The execution `cwd` must be verified to reside within the task's assigned worktree. Directory traversal (`..`) is rejected.
+3. **Timeout & Resource Limits**: Every verification process is bound to a hard timeout. On Windows, processes are assigned to a **Windows Job Object** to guarantee that child process trees are terminated upon timeout or cancellation (OPS-002).
+4. **Output Capture Bounds**: stdout and stderr streams are capped (e.g. 1 MB maximum) to prevent memory exhaustion DoS.
 
 ---
 
-## Status and Gate Condition
-- **Current Status**: `PROPOSED (PENDING_EXTERNAL_SUPERVISOR_APPROVAL)`.
-- **Pre-Code Gate Tracking**: `P02_PRECODE_GAP_VERIFICATION_COMMAND_SPEC`.
-- **Policy**: Canonical `docs/schemas/task-contract.schema.json` is **NOT modified** in this task. TaskContract schema mutation and Evidence subsystem integration will occur only after the External Supervisor formally reviews and accepts ADR-013.
-- Phase P02 production code remains held pending this decision.
+## 5. Schema Alignment Status
+
+- **Status**: This ADR is **PROPOSED (PENDING_EXTERNAL_SUPERVISOR_APPROVAL)**.
+- **Contract Schema Guard**: `task-contract.schema.json` remains **unmodified** in this phase.
+- **Tracking Flag**: The gap between canonical `required_tests: string[]` and this hardened specification is tracked as:
+  `P02_PRECODE_GAP_VERIFICATION_COMMAND_SPEC`.
+- Implementation of this schema change is blocked until the External Supervisor formally approves ADR-013.
