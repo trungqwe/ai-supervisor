@@ -528,23 +528,77 @@ HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP — issued after Steps P1/P2/P3 pass
 
 ### D3C-08 — Replay Protection
 
-- **Target Replay Value**: `D3C_PLUS_WRITE_1789974395862` (identical to already applied value from D3C-05)
-- **Replay Correlation ID**: `d3c-write-1789974395862` (repeating the approved correlation from D3C-05)
+- **Target Replay Value**: `D3C_PLUS_WRITE_1789974395862` (repeating D3C-05 value)
+- **Replay Correlation ID**: `d3c-write-1789974395862` (repeating D3C-05 correlation ID)
 - **Pre-Replay Baseline**:
   - `PRE_REPLAY_CURRENT_VALUE`: `D3C_PLUS_WRITE_1789974395862`
   - `PRE_REPLAY_MUTATION_COUNT`: `1`
+  - `PRE_REPLAY_LAST_UPDATED`: `2026-09-21T07:10:15.269Z`
   - `PRE_REPLAY_APPLIED_CORRELATIONS`: `["d3c-write-1789974395862"]`
-- **Objective**: Prove that repeating the same correlation ID through ChatGPT Plus produces idempotent rejection (`status: DUPLICATE_REPLAY`) with zero mutation count increment and zero additional correlation entries.
-- **Status**: [AWAITING USER EXECUTION IN CHECKPOINT F]
-- **Verdict**: `PENDING_USER_INVOCATION`
+- **User Prompt Executed**:
+  `"@AI Supervisor P01-D3C Proof Use AI Supervisor P01-D3C Proof to update the disposable supervisor proof state to 'D3C_PLUS_WRITE_1789974395862' using correlation ID 'd3c-write-1789974395862'. This intentionally repeats the previously applied correlation ID to test replay protection. Do not perform any other action."`
+- **Approval Behavior**:
+  - `REPLAY_APPROVAL_UI`: `SHOWN` (ChatGPT presented confirmation dialog `Allow ChatGPT to use AI Supervisor P01-D3C Proof?` with `[Always allow]`, `[Deny]`, `[Allow once ˅]`).
+  - **User Action**: Clicked `Allow once`.
+  - **Note**: Approval card reflects ChatGPT's destructive tool confirmation policy. Server idempotency independently protects state against duplication.
+- **Tool Invocation**:
+  - `D3C08_TOOL_INVOCATION`: `PASS` (Tool card `{} Called tool ˅` appeared in ChatGPT UI).
+- **ChatGPT Output Received Post-Replay**:
+  `"Replay protection worked: the repeated correlation ID was detected as DUPLICATE_REPLAY , and no additional mutation occurred."`
+  - `REPLAY_STATUS`: `DUPLICATE_REPLAY`
+  - `REPLAY_RETURNED_MUTATION_COUNT`: `1`
+  - `REPLAY_RETURNED_CURRENT_VALUE`: `D3C_PLUS_WRITE_1789974395862`
+  - `REPLAY_RETURNED_CORRELATION`: `d3c-write-1789974395862`
+- **Post-Replay Local State Audit (`data/state.json`)**:
+  ```json
+  {
+    "mutation_count": 1,
+    "current_value": "D3C_PLUS_WRITE_1789974395862",
+    "last_updated": "2026-09-21T07:10:15.269Z",
+    "applied_correlations": [
+      "d3c-write-1789974395862"
+    ]
+  }
+  ```
+- **Zero-Mutation / Idempotency Evaluation**:
+  - `REPLAY_VALUE_UNCHANGED`: `PASS` (`current_value` remained `D3C_PLUS_WRITE_1789974395862`).
+  - `REPLAY_MUTATION_COUNT_UNCHANGED`: `PASS` (`mutation_count` remained `1`).
+  - `REPLAY_LAST_UPDATED_UNCHANGED`: `PASS` (`last_updated` remained `2026-09-21T07:10:15.269Z`).
+  - `REPLAY_CORRELATION_SINGLETON`: `PASS` (`applied_correlations` retained exactly one entry, no duplicates).
+  - `END_TO_END_EXACTLY_ONCE`: `PASS` (First write: `APPLIED` 0 -> 1; Second write: `DUPLICATE_REPLAY` 1 -> 1).
+- **Tunnel / Local MCP Log Correlation**:
+  - `14:36:41.404+07:00`: Polled command `cmd_20399a75_ff96_40c1_a173_e912684e3b26` (`rpc_method=tools/call`, `cmd_request_id=6a9167d3-6808-4446-8645-33274b19f7d9/s1wh`).
+  - `14:36:41.408+07:00`: Dispatcher received response from MCP server (`has_error=false`, `rpc_method=tools/call`).
+  - `14:36:41.686+07:00`: Posted HTTP 200 response to control-plane (`channel=main`, `tunnel_request_id=req_cca65d775edf435492c1a3237fc51821`).
+  - `D3C08_TUNNEL_CORRELATION`: `PASS`
+- **Verdict**: `D3C-08 = PASS`
+- **Sub-Gate Verdicts**:
+  - `D3C_REPLAY_PROTECTION = EMPIRICALLY_PROVEN_ON_TARGET_PLUS`
+  - `D3C_EXACTLY_ONCE = EMPIRICALLY_PROVEN_ON_TARGET_PLUS`
+- **Checkpoint Verdict**: `D3C_CHECKPOINT_F = PASS`
 
 ### D3C-09 — Tunnel Reconnect
 
-Action: Restart tunnel-client while local MCP server remains running
-Tunnel ID recreated: NO (same tunnel_6ab0ae480cec81919b3db157c622eb53)
-ChatGPT app recreated: NO (same developer app)
-Read after reconnect: [TO BE RECORDED]
-Verdict: [TO BE RECORDED]
+- **Objective**: Prove the same ChatGPT developer app and same tunnel ID reconnect and operate after restarting `tunnel-client`, without recreating the tunnel, without recreating the ChatGPT app, and without state drift.
+- **Existing Tunnel Identity**:
+  - Tunnel Name: `ai-supervisor-p01d`
+  - Tunnel ID: `tunnel_6ab0ae480cec81919b3db157c622eb53`
+- **Existing ChatGPT App**:
+  - Name: `AI Supervisor P01-D3C Proof` (in `dev mode`)
+- **Preserved Server & State Baseline**:
+  - Local MCP Server: Running on `127.0.0.1:3182/mcp` (preserved running)
+  - `current_value`: `D3C_PLUS_WRITE_1789974395862`
+  - `mutation_count`: `1`
+  - `applied_correlations`: `["d3c-write-1789974395862"]`
+- **Planned Operation (Next Checkpoint)**:
+  1. Terminate running `tunnel-client.exe` process (PID 43288).
+  2. Keep local Node MCP server running (PID 26608).
+  3. Restart `tunnel-client.exe` with identical flags and SAME `tunnel_6ab0ae480cec81919b3db157c622eb53`.
+  4. Verify `/healthz` live and `/readyz` ready.
+  5. In Personal ChatGPT Plus Web, without recreating or editing the app, invoke `supervisor_probe_read`.
+  6. Verify state returned is `D3C_PLUS_WRITE_1789974395862` with `mutation_count: 1`.
+- **Status**: [AWAITING USER AUTHORIZATION IN CHECKPOINT G]
+- **Verdict**: `PENDING_RECONNECT_GATE`
 
 ### D3C-10 — Chat Continuity
 
@@ -574,12 +628,12 @@ Verdict: [TO BE RECORDED]
 
 ---
 
-## 8. Human Checkpoint — ChatGPT Replay Protection Test (Checkpoint F)
+## 8. Human Checkpoint — Tunnel Reconnect Test (Checkpoint G)
 
 ```text
-HUMAN_REQUIRED_D3C_REPLAY
+HUMAN_REQUIRED_D3C_TUNNEL_RECONNECT
 Status: ACTIVE_WAITING_FOR_USER_ACTION
-Checkpoint: D3C_CHECKPOINT_F (D3C-08 Replay / Idempotency Execution)
+Checkpoint: D3C_CHECKPOINT_G (D3C-09 Tunnel Reconnect & App Continuity)
 D3C-01_APP_CONNECTION: PASS
 D3C-02_TOOL_DISCOVERY: PASS
 D3C-03_CHATGPT_READ: PASS
@@ -587,37 +641,30 @@ D3C-04_WRITE_CLASSIFICATION: PASS
 D3C-05_APPROVED_WRITE: PASS
 D3C-06_READ_BACK: PASS
 D3C-07_DENIED_WRITE: PASS
+D3C-08_REPLAY_PROTECTION: PASS
 D3C_CHECKPOINT_A: PASS
 D3C_CHECKPOINT_B: PASS
 D3C_CHECKPOINT_C: PASS
 D3C_CHECKPOINT_D: PASS
 D3C_CHECKPOINT_E: PASS
-REQUIRED_PERMISSION: ALLOW_READ_ACTIONS (Confirmed by User)
-REPLAY_WRITE_VALUE: D3C_PLUS_WRITE_1789974395862 (Reusing applied write)
-REPLAY_CORRELATION_ID: d3c-write-1789974395862 (Reusing applied correlation)
+D3C_CHECKPOINT_F: PASS
+TUNNEL_NAME: ai-supervisor-p01d
+TUNNEL_ID: tunnel_6ab0ae480cec81919b3db157c622eb53
+PRESERVED_VALUE: D3C_PLUS_WRITE_1789974395862
+PRESERVED_MUTATION_COUNT: 1
 ```
 
 Pre-conditions confirmed before issuing this checkpoint:
-- D3C-01 through D3C-07: All PASS
-- Pre-replay local baseline captured: `current_value = D3C_PLUS_WRITE_1789974395862`, `mutation_count = 1`, `applied_correlations = ["d3c-write-1789974395862"]`
-- Tunnel and local MCP running, healthy, and connected
+- D3C-01 through D3C-08: All PASS
+- Pre-reconnect local baseline captured: `current_value = D3C_PLUS_WRITE_1789974395862`, `mutation_count = 1`, `applied_correlations = ["d3c-write-1789974395862"]`
+- Local MCP server running continuously on `127.0.0.1:3182`
+- Existing tunnel `ai-supervisor-p01d` and ChatGPT app `AI Supervisor P01-D3C Proof` preserved
 
-User Instructions:
+Required Next Action:
+- External Supervisor / User authorization to perform the restart of `tunnel-client.exe` while preserving local MCP, followed by a read-back probe in ChatGPT to verify transport continuity without app recreation.
+- Do NOT kill or restart `tunnel-client` until explicitly authorized in Checkpoint G.
 
-1. In the same or a new ChatGPT conversation, select / mention:
-   `AI Supervisor P01-D3C Proof`
-2. Send the following prompt:
-   "Use AI Supervisor P01-D3C Proof to update the disposable supervisor proof state to 'D3C_PLUS_WRITE_1789974395862' using correlation ID 'd3c-write-1789974395862'. This intentionally repeats the previously applied correlation ID to test replay protection. Do not perform any other action."
-3. If ChatGPT presents a confirmation dialog ("Allow ChatGPT to use AI Supervisor P01-D3C Proof?"):
-   - Take a screenshot of the dialog.
-   - Click **`Allow once`**.
-4. Observe ChatGPT's response after execution.
-5. Capture and send back screenshots/text showing:
-   - The confirmation prompt (if displayed);
-   - The full tool execution card and response in chat.
-6. **Do NOT issue the request twice.**
-
-STOP after receiving the replay response. Do NOT execute reconnect or continuity tests yet.
+STOP after issuing this checkpoint.
 
 PROHIBITED:
 - Do NOT automate the ChatGPT UI
@@ -692,9 +739,11 @@ No workarounds. No browser automation. No silent architecture switch.
 | HUMAN_REQUIRED_D3C_DENIED_WRITE | `CLOSED` | Completed by User |
 | D3C-07 — Denied Write | `PASS` | Interactive denial verified; zero local mutation; correlation absent |
 | D3C Checkpoint E | `PASS` | Real ChatGPT Plus denial safety empirically proven |
-| HUMAN_REQUIRED_D3C_REPLAY | `ISSUED` | Awaiting user execution of replay test in ChatGPT |
-| D3C-08 — Replay | `PENDING` | Active Gate (Checkpoint F) |
-| D3C-09 — Tunnel Reconnect | `PENDING` | Awaiting External Supervisor approval after D3C-05 |
+| HUMAN_REQUIRED_D3C_REPLAY | `CLOSED` | Completed by User |
+| D3C-08 — Replay | `PASS` | Replay rejected as DUPLICATE_REPLAY; count remained 1; singleton correlation |
+| D3C Checkpoint F | `PASS` | Real ChatGPT Plus replay protection & exactly-once proven |
+| HUMAN_REQUIRED_D3C_TUNNEL_RECONNECT | `ISSUED` | Awaiting authorized tunnel restart and reconnect verification |
+| D3C-09 — Tunnel Reconnect | `PENDING` | Active Gate (Checkpoint G) |
 | D3C-10 — Chat Continuity | `PENDING` | Awaiting External Supervisor approval after D3C-05 |
 | D3C-11 — MCP Offline/Recovery | `PENDING` | Awaiting External Supervisor approval after D3C-05 |
 | D3C-12 — No Inbound Exposure | `PASS` | Pre-verified loopback-only 127.0.0.1; zero public ingress |
@@ -706,19 +755,19 @@ No workarounds. No browser automation. No silent architecture switch.
 ```
 ================================================================================
 P01-D3C VERDICT:
-IN_PROGRESS (CHECKPOINT A, B, C, D, E: PASS; ACTIVE GATE: HUMAN_REQUIRED_D3C_REPLAY)
+IN_PROGRESS (CHECKPOINT A, B, C, D, E, F: PASS; ACTIVE GATE: HUMAN_REQUIRED_D3C_TUNNEL_RECONNECT)
 
 REASON:
-D3C-07 (Denied Write) successfully verified on Personal ChatGPT Plus Web over Secure MCP Tunnel:
-- Confirmation prompt displayed: "Allow ChatGPT to use AI Supervisor P01-D3C Proof? ... [Deny]"
-- User clicked Deny
-- ChatGPT returned: "The write was denied, as intended for this denial-path test. No other action was performed."
-- Zero command forwarded to tunnel/MCP (DENIED_WRITE_REACHED_LOCAL_MCP = NO)
-- Local state completely untouched: current_value unchanged, mutation_count remains 1
-- Correlation d3c-deny-1789974938621 not recorded
-Checkpoint E is complete (PASS).
-Checkpoint F prepared for replay protection verification reusing d3c-write-1789974395862.
-Awaiting user execution of replay test.
+D3C-08 (Replay Protection / Idempotency) successfully verified on Personal ChatGPT Plus Web over Secure MCP Tunnel:
+- Reused correlation d3c-write-1789974395862 with identical value D3C_PLUS_WRITE_1789974395862
+- ChatGPT requested confirmation card; User selected "Allow once"
+- Local MCP returned DUPLICATE_REPLAY status
+- ChatGPT returned: "Replay protection worked: the repeated correlation ID was detected as DUPLICATE_REPLAY , and no additional mutation occurred."
+- Local state verified strictly unchanged: mutation_count remained 1, current_value unchanged, correlation list remained singleton
+- End-to-end exactly-once property proven on target Plus transport
+Checkpoint F is complete (PASS).
+Checkpoint G prepared for tunnel reconnect verification.
+Awaiting user authorization for tunnel reconnect test.
 
 P01-D STATUS:
 PARTIALLY_PROVEN / D3C_IN_PROGRESS
