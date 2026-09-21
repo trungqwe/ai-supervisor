@@ -8,8 +8,8 @@
 > **Target Account**: Personal ChatGPT Plus
 > **Plus Developer Mode**: `EMPIRICALLY_PROVEN` on target account (Settings → Security and login → Developer mode: VISIBLE and ENABLED)
 > **P01-D3C Status**: `IN_PROGRESS`
-> **P01-D3A-SEC-001**: HISTORICAL_PROCESS_RECORD (ACTIVE_P01_GATE_FROM_SEC001 = NONE)
-> **P01-D3A Security Status**: PASS (Functional PASS; SEC-001 Historical Record)
+> **P01-D3A-SEC-001**: `HISTORICAL_PROCESS_RECORD` (`ACTIVE_P01_GATE_FROM_SEC001 = NONE`)
+> **P01-D3A Security Status**: `PASS` (Functional PASS; SEC-001 Historical Record)
 > **P01-A / P01-B / P01-C**: `HELD`
 > **Sandbox**: `D:\TU_CODE\_ai_supervisor_p01d_openai_mcp_proof\` (D3A assets reused; strictly isolated)
 
@@ -486,19 +486,57 @@ HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP — issued after Steps P1/P2/P3 pass
 - **Pre-Denial Baseline**:
   - `PRE_DENY_CURRENT_VALUE`: `D3C_PLUS_WRITE_1789974395862`
   - `PRE_DENY_MUTATION_COUNT`: `1`
+  - `PRE_DENY_LAST_UPDATED`: `2026-09-21T07:10:15.269Z`
   - `PRE_DENY_APPLIED_CORRELATIONS`: `["d3c-write-1789974395862"]`
-- **Objective**: Prove that when User clicks `Deny` on the ChatGPT confirmation prompt, the tool call is blocked or aborted, causing zero server-side state mutation.
-- **Status**: [AWAITING USER EXECUTION IN CHECKPOINT E]
-- **Verdict**: `PENDING_USER_INVOCATION`
+- **User Prompt Executed**:
+  `"@AI Supervisor P01-D3C Proof Use AI Supervisor P01-D3C Proof to update the disposable supervisor proof state to 'D3C_DENIED_WRITE_1789974938621' using correlation ID 'd3c-deny-1789974938621'. This is a denial-path test. Do not perform any other action."`
+- **Approval Dialog Behavior**:
+  - `DENIAL_UI_SHOWN`: `PASS`
+  - Dialog Title: `Allow ChatGPT to use AI Supervisor P01-D3C Proof?`
+  - Subtext: `ChatGPT will call AI Supervisor P01-D3C Proof's Supervisor Probe Write tool. See details`
+  - Options Presented: `[Always allow]`, `[Deny]`, `[Allow once v]`
+- **User Action**: Clicked `Deny`.
+  - `USER_DENY_ACTION`: `PASS`
+- **ChatGPT Output Received Post-Denial**:
+  `"The write was denied, as intended for this denial-path test. No other action was performed."`
+  - `CHATGPT_DENIAL_RESULT`: `WRITE_DENIED_USER_DECLINED_PERMISSION` (clean termination, zero retries).
+- **Post-Denial Local State Audit (`data/state.json`)**:
+  ```json
+  {
+    "mutation_count": 1,
+    "current_value": "D3C_PLUS_WRITE_1789974395862",
+    "last_updated": "2026-09-21T07:10:15.269Z",
+    "applied_correlations": [
+      "d3c-write-1789974395862"
+    ]
+  }
+  ```
+- **Zero-Mutation Audit Verification**:
+  - `DENIAL_VALUE_UNCHANGED`: `PASS` (`current_value` remained `D3C_PLUS_WRITE_1789974395862`).
+  - `DENIAL_MUTATION_COUNT_UNCHANGED`: `PASS` (`mutation_count` remained `1`).
+  - `DENIAL_TIMESTAMP_UNCHANGED`: `PASS` (`last_updated` remained `2026-09-21T07:10:15.269Z`).
+  - `DENIAL_CORRELATION_ABSENT`: `PASS` (`d3c-deny-1789974938621` was NOT appended to `applied_correlations`).
+  - `DENIAL_ZERO_MUTATION`: `PASS` (Zero server-side mutation occurred).
+- **Tunnel / Local MCP Log Verification**:
+  - Tunnel client logs from 14:16 through 14:25:29 show `commands_polled=0 commands_enqueued=0`.
+  - Zero `supervisor_probe_write` tools/call reached local dispatcher or MCP server.
+  - Platform authorization layer intercepted and cancelled invocation cleanly before dispatching to the tunnel.
+  - `DENIED_WRITE_REACHED_LOCAL_MCP`: `NO`
+- **Verdict**: `D3C-07 = PASS`
+- **Sub-Gate Verdict**: `D3C_DENIAL_SAFETY = EMPIRICALLY_PROVEN_ON_TARGET_PLUS`
+- **Checkpoint Verdict**: `D3C_CHECKPOINT_E = PASS`
 
 ### D3C-08 — Replay Protection
 
-Correlation ID: same as D3C-05
-First invocation: APPLIED (already recorded in D3C-05)
-Second invocation: [TO BE RECORDED - expected: DUPLICATE_REPLAY]
-Mutation count change on second call: Expected 0
-Caller: ChatGPT Plus
-Verdict: [TO BE RECORDED]
+- **Target Replay Value**: `D3C_PLUS_WRITE_1789974395862` (identical to already applied value from D3C-05)
+- **Replay Correlation ID**: `d3c-write-1789974395862` (repeating the approved correlation from D3C-05)
+- **Pre-Replay Baseline**:
+  - `PRE_REPLAY_CURRENT_VALUE`: `D3C_PLUS_WRITE_1789974395862`
+  - `PRE_REPLAY_MUTATION_COUNT`: `1`
+  - `PRE_REPLAY_APPLIED_CORRELATIONS`: `["d3c-write-1789974395862"]`
+- **Objective**: Prove that repeating the same correlation ID through ChatGPT Plus produces idempotent rejection (`status: DUPLICATE_REPLAY`) with zero mutation count increment and zero additional correlation entries.
+- **Status**: [AWAITING USER EXECUTION IN CHECKPOINT F]
+- **Verdict**: `PENDING_USER_INVOCATION`
 
 ### D3C-09 — Tunnel Reconnect
 
@@ -536,30 +574,32 @@ Verdict: [TO BE RECORDED]
 
 ---
 
-## 8. Human Checkpoint — ChatGPT Denied Write Test (Checkpoint E)
+## 8. Human Checkpoint — ChatGPT Replay Protection Test (Checkpoint F)
 
 ```text
-HUMAN_REQUIRED_D3C_DENIED_WRITE
+HUMAN_REQUIRED_D3C_REPLAY
 Status: ACTIVE_WAITING_FOR_USER_ACTION
-Checkpoint: D3C_CHECKPOINT_E (D3C-07 Denied Write Execution)
+Checkpoint: D3C_CHECKPOINT_F (D3C-08 Replay / Idempotency Execution)
 D3C-01_APP_CONNECTION: PASS
 D3C-02_TOOL_DISCOVERY: PASS
 D3C-03_CHATGPT_READ: PASS
 D3C-04_WRITE_CLASSIFICATION: PASS
 D3C-05_APPROVED_WRITE: PASS
 D3C-06_READ_BACK: PASS
+D3C-07_DENIED_WRITE: PASS
 D3C_CHECKPOINT_A: PASS
 D3C_CHECKPOINT_B: PASS
 D3C_CHECKPOINT_C: PASS
 D3C_CHECKPOINT_D: PASS
+D3C_CHECKPOINT_E: PASS
 REQUIRED_PERMISSION: ALLOW_READ_ACTIONS (Confirmed by User)
-DENIED_WRITE_VALUE: D3C_DENIED_WRITE_1789974938621
-DENIED_CORRELATION_ID: d3c-deny-1789974938621
+REPLAY_WRITE_VALUE: D3C_PLUS_WRITE_1789974395862 (Reusing applied write)
+REPLAY_CORRELATION_ID: d3c-write-1789974395862 (Reusing applied correlation)
 ```
 
 Pre-conditions confirmed before issuing this checkpoint:
-- D3C-01 through D3C-06: All PASS
-- Pre-denial local baseline captured: `current_value = D3C_PLUS_WRITE_1789974395862`, `mutation_count = 1`
+- D3C-01 through D3C-07: All PASS
+- Pre-replay local baseline captured: `current_value = D3C_PLUS_WRITE_1789974395862`, `mutation_count = 1`, `applied_correlations = ["d3c-write-1789974395862"]`
 - Tunnel and local MCP running, healthy, and connected
 
 User Instructions:
@@ -567,17 +607,17 @@ User Instructions:
 1. In the same or a new ChatGPT conversation, select / mention:
    `AI Supervisor P01-D3C Proof`
 2. Send the following prompt:
-   "Use AI Supervisor P01-D3C Proof to update the disposable supervisor proof state to 'D3C_DENIED_WRITE_1789974938621' using correlation ID 'd3c-deny-1789974938621'. This is a denial-path test. Do not perform any other action."
-3. When the ChatGPT confirmation dialog appears ("Allow ChatGPT to use AI Supervisor P01-D3C Proof?"):
+   "Use AI Supervisor P01-D3C Proof to update the disposable supervisor proof state to 'D3C_PLUS_WRITE_1789974395862' using correlation ID 'd3c-write-1789974395862'. This intentionally repeats the previously applied correlation ID to test replay protection. Do not perform any other action."
+3. If ChatGPT presents a confirmation dialog ("Allow ChatGPT to use AI Supervisor P01-D3C Proof?"):
    - Take a screenshot of the dialog.
-   - Click **`Deny`** (do NOT click Allow).
-4. Observe ChatGPT's response after denial.
+   - Click **`Allow once`**.
+4. Observe ChatGPT's response after execution.
 5. Capture and send back screenshots/text showing:
-   - The confirmation prompt;
-   - The result in chat after clicking Deny.
-6. **Do NOT retry or re-approve afterward.**
+   - The confirmation prompt (if displayed);
+   - The full tool execution card and response in chat.
+6. **Do NOT issue the request twice.**
 
-STOP after receiving the denial response. Do NOT execute replay tests yet.
+STOP after receiving the replay response. Do NOT execute reconnect or continuity tests yet.
 
 PROHIBITED:
 - Do NOT automate the ChatGPT UI
@@ -649,9 +689,11 @@ No workarounds. No browser automation. No silent architecture switch.
 | HUMAN_REQUIRED_D3C_READ_BACK | `CLOSED` | Completed by User |
 | D3C-06 — Read-Back | `PASS` | Returned exact post-write value D3C_PLUS_WRITE_1789974395862, count 1, zero side effects |
 | D3C Checkpoint D | `PASS` | Real ChatGPT Plus write persistence read-back proven |
-| HUMAN_REQUIRED_D3C_DENIED_WRITE | `ISSUED` | Awaiting user execution of denied write in ChatGPT |
-| D3C-07 — Denied Write | `PENDING` | Active Gate (Checkpoint E) |
-| D3C-08 — Replay | `PENDING` | Awaiting External Supervisor approval after D3C-05 |
+| HUMAN_REQUIRED_D3C_DENIED_WRITE | `CLOSED` | Completed by User |
+| D3C-07 — Denied Write | `PASS` | Interactive denial verified; zero local mutation; correlation absent |
+| D3C Checkpoint E | `PASS` | Real ChatGPT Plus denial safety empirically proven |
+| HUMAN_REQUIRED_D3C_REPLAY | `ISSUED` | Awaiting user execution of replay test in ChatGPT |
+| D3C-08 — Replay | `PENDING` | Active Gate (Checkpoint F) |
 | D3C-09 — Tunnel Reconnect | `PENDING` | Awaiting External Supervisor approval after D3C-05 |
 | D3C-10 — Chat Continuity | `PENDING` | Awaiting External Supervisor approval after D3C-05 |
 | D3C-11 — MCP Offline/Recovery | `PENDING` | Awaiting External Supervisor approval after D3C-05 |
@@ -664,18 +706,19 @@ No workarounds. No browser automation. No silent architecture switch.
 ```
 ================================================================================
 P01-D3C VERDICT:
-IN_PROGRESS (CHECKPOINT A, B, C, D: PASS; ACTIVE GATE: HUMAN_REQUIRED_D3C_DENIED_WRITE)
+IN_PROGRESS (CHECKPOINT A, B, C, D, E: PASS; ACTIVE GATE: HUMAN_REQUIRED_D3C_REPLAY)
 
 REASON:
-D3C-06 (Real ChatGPT Read-Back Persistence) successfully verified on Personal ChatGPT Plus Web:
-- User prompt did not disclose expected value (out-of-band test)
-- Returned state matched persisted value D3C_PLUS_WRITE_1789974395862 exactly
-- Returned mutation count equaled 1
-- Zero read side effects verified
-- Temporal correlation confirmed to the millisecond (14:14:23.085+07:00)
-Checkpoint D is complete (PASS).
-Checkpoint E prepared with denial target D3C_DENIED_WRITE_1789974938621.
-Awaiting user execution of denied write.
+D3C-07 (Denied Write) successfully verified on Personal ChatGPT Plus Web over Secure MCP Tunnel:
+- Confirmation prompt displayed: "Allow ChatGPT to use AI Supervisor P01-D3C Proof? ... [Deny]"
+- User clicked Deny
+- ChatGPT returned: "The write was denied, as intended for this denial-path test. No other action was performed."
+- Zero command forwarded to tunnel/MCP (DENIED_WRITE_REACHED_LOCAL_MCP = NO)
+- Local state completely untouched: current_value unchanged, mutation_count remains 1
+- Correlation d3c-deny-1789974938621 not recorded
+Checkpoint E is complete (PASS).
+Checkpoint F prepared for replay protection verification reusing d3c-write-1789974395862.
+Awaiting user execution of replay test.
 
 P01-D STATUS:
 PARTIALLY_PROVEN / D3C_IN_PROGRESS
