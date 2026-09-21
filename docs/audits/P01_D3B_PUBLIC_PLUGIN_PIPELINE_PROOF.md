@@ -6,7 +6,7 @@
 > **Identity Verification**: `VERIFIED` (Individual identity verified on OpenAI Platform)  
 > **Plugin Draft Creation**: `PASS` (Real draft created in submission portal)  
 > **Submission Mode**: `WITH_MCP`  
-> **P01-D3B Pre-Submit Pipeline**: `PARTIAL` (`PRE_SUBMIT_READINESS_COMPLETED`; External Audit Corrections Applied)  
+> **P01-D3B Pre-Submit Pipeline**: `PARTIAL` (External Audit Corrections Applied; Portal Preflight PASS; Reclassified FALLBACK_PUBLIC_DISTRIBUTION_PATH)  
 > **Overall P01-D Transport Gate**: `PARTIALLY_PROVEN / FINAL_PLUGIN_GATE_PENDING`  
 > **P01-D Phase Verdict**: `GAP_REQUIRES_ADR`  
 > **P01-A / P01-B / P01-C Status**: `HELD`  
@@ -295,20 +295,24 @@ Prepared in exact accordance with portal review guidelines:
 
 - **Portal Observation**: The portal UI explicitly requests a `Demo Recording URL` to validate plugin functionality and references Developer Mode.
 
-> [!CAUTION]
-> **Official OpenAI Fact (as of 2026-09-21)**:
-> Full MCP Developer Mode (allowing write/modify operations and live MCP app testing in ChatGPT) is officially documented for **Business, Enterprise, and Edu workspaces**. It is **NOT** confirmed as generally available for **Personal ChatGPT Plus** accounts at this time.
-> Do NOT assume published-plugin submission bypasses the demo/developer-mode requirement until the actual portal submission flow proves it empirically.
-> `D3B-DEVELOPER-MODE-FOR-PLUS = ASSUMPTION_UNVERIFIED`
+> [!NOTE]
+> **SUPERSEDED (2026-09-21)**: Prior state `D3B-DEVELOPER-MODE-FOR-PLUS = ASSUMPTION_UNVERIFIED` is superseded by new empirical evidence.
+>
+> **NEW EMPIRICAL EVIDENCE (2026-09-21)**:
+> `PLUS_DEVELOPER_MODE_ON_TARGET_ACCOUNT = EMPIRICALLY_PROVEN`
+> Target Personal ChatGPT Plus account: `Settings → Security and login → Developer mode` is **VISIBLE and ENABLED**.
+> UI warning observed: "Developer Mode allows adding unverified connectors which may modify or erase data permanently."
+>
+> **Account-specific caveat**: This is TARGET_ACCOUNT_EMPIRICAL_CAPABILITY, not universal plan-level policy.
+> Official docs state: "Developer mode availability can depend on account and workspace policy."
+> Do NOT generalize: "All ChatGPT Plus accounts have full MCP write access."
 
 - **Account Surface Evaluation**:
-  - **Personal ChatGPT Plus**: Developer Mode availability is `NOT_CONFIRMED`. Pending empirical check under `Settings → Security & login` on the User's actual Plus account.
+  - **Personal ChatGPT Plus (target account)**: `DEVELOPER_MODE_VISIBLE = TRUE`, `DEVELOPER_MODE_ENABLED = TRUE` — EMPIRICALLY_PROVEN 2026-09-21.
   - **Edu K12 Member Workspace**: Availability is governed by workspace administrator policies.
-- **Gate Classification**:
-  - **`D3B-DEVELOPER-MODE = BLOCKED_PENDING_EMPIRICAL_PORTAL_CHECK`**
-  - This is a hard external dependency gate. It blocks Demo Recording and may affect reviewer testing workflow.
+- **Gate Classification**: **`D3B-DEVELOPER-MODE = EMPIRICALLY_PROVEN`** on target account.
   - Does NOT block public endpoint construction, domain verification, or tool scanning.
-- **Mandatory vs Optional Status**: **`UNVERIFIED`** — to be determined empirically during `D3B-PORTAL-EMPIRICAL-PREFLIGHT` (Section 18). Do not assume optional until the portal explicitly confirms it.
+- **Demo Recording**: `DEMO_RECORDING_FINAL_REQUIREMENT = NOT_YET_PROVEN` — Submit tab issue panel did not list Demo Recording as a required error; final mandatory/optional status remains empirically undetermined.
 
 ---
 
@@ -355,11 +359,30 @@ The User must navigate the real OpenAI Plugin Submission Portal for the existing
 ### Gate Verdict
 
 ```text
-D3B-PORTAL-EMPIRICAL-PREFLIGHT: OPEN
-Status: AWAITING_USER_SCREENSHOT_EVIDENCE
-Blocking: MCP tab, Testing tab, Submit tab, Developer Mode on Plus
-Do NOT proceed to final submission or public deployment until this gate provides empirical answers.
+D3B-PORTAL-EMPIRICAL-PREFLIGHT: PASS
+Status: EMPIRICALLY_COMPLETED (2026-09-21)
+
+MCP tab: EMPIRICALLY_CAPTURED
+  - MCP Server URL field: present (text input)
+  - Authentication: No Auth (default observed)
+  - Scan Tools button: present
+  - Domain verification: Domain not verified / Challenge Base URL / URL+Token+Verify Domain
+
+Testing tab: EMPIRICALLY_CAPTURED
+  - 5 positive test cases required
+  - 3 negative test cases required
+  - Fields: Scenario, User prompt, Tool triggered, Expected output
+
+Submit tab: EMPIRICALLY_CAPTURED
+  - Release Notes field: required
+  - Compliance attestations: reviewed; validated
+  - Current required field errors: Name, MCP URL, Test case scenario, Release notes
+  - Demo Recording: NOT in current error list (mandatory/optional status still UNKNOWN)
+
+Developer Mode on Plus: EMPIRICALLY_PROVEN (target account)
 ```
+
+> This gate is CLOSED. Proceed to D3C.
 
 ---
 ## 16. Pre-Submit Readiness Report (`P01-D3B_PRE_SUBMIT_READINESS_REPORT`)
