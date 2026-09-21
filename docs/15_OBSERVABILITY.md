@@ -34,7 +34,7 @@ All lifecycle occurrences within the Supervisor Control Plane are emitted as str
 # 2. Sanitized Audit Trail Principles
 1. **Append-Only Immutability**: Audit log records cannot be edited or deleted.
 2. **Deterministic Scrubbing**: Outbound logs pass through pattern filters to strip API keys, Bearer tokens, and secrets.
-3. **Structured Storage**: Events are written as JSON lines (`audit.jsonl`) for local querying.
+3. **Authoritative Durable Storage (Local SQLite StateStore)**: Canonical `AuditEvent` records are durably persisted in the local SQLite `StateStore` (per ADR-015: append-only domain semantics, transactional persistence, secret sanitization before persistence, and task/contract/attempt lineage reconstructability). Phase P06 may later export/query audit records into human-readable or JSONL form for operator tooling; JSONL is NOT the authoritative P02 StateStore.
 4. **Full Lineage Reconstructability**: The sequence of events allows complete offline reconstruction of:
    ```
    task_id -> contract_id (revision_number) -> attempt_id -> worker claims -> evidence -> review bundle -> review decision

@@ -91,7 +91,7 @@
 
 ### Component: `SupervisorMCPAdapter` (Local MCP Server)
 - **Classification**: **`OUR ADAPTER SURFACE`**
-- **Purpose**: Implements Model Context Protocol (via official `@modelcontextprotocol/sdk`) exposing domain supervisor probes (`supervisor_probe_read`, `supervisor_probe_write`) and tool schemas.
+- **Purpose**: Implements Model Context Protocol for future Phase P05 (via official Go MCP SDK: `github.com/modelcontextprotocol/go-sdk`, Transport: Streamable HTTP per proven P01-D3C architecture distinction) exposing domain supervisor probes (`supervisor_probe_read`, `supervisor_probe_write`) and tool schemas. Phase P02 does not implement MCP.
 - **Existing Upstream Capability Checked**: YES (Generic MCP servers exist, but none provide Supervisor Control Plane lifecycle and contract tooling).
 - **Why We Own This**: Domain-specific cognitive and audit surface for ChatGPT supervision.
 - **Forbidden Responsibility**: Does NOT expose arbitrary command execution, raw disk access, or external network egress.

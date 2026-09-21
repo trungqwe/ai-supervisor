@@ -68,14 +68,18 @@
     "allowed_scope": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
       },
       "minItems": 1
     },
     "forbidden_scope": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
       }
     },
     "constraints": {
