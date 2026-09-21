@@ -1,12 +1,12 @@
-﻿# P01-D3C â€” TARGET PERSONAL CHATGPT PLUS PRIVATE MCP TRANSPORT PROOF
+# P01-D3C — TARGET PERSONAL CHATGPT PLUS PRIVATE MCP TRANSPORT PROOF
 
-> **Authority**: Phase 1 Upstream Proof Dossier â€” Track P01-D3C
+> **Authority**: Phase 1 Upstream Proof Dossier — Track P01-D3C
 > **Date**: 2026-09-21
 > **Architecture Status**: `ARCHITECTURE_V2_CANDIDATE` (Strictly Candidate; Not Frozen)
 > **D3B External Audit**: `APPROVED` (commit `d7ddd67b60abba1497fbf2dc550c2d0abaddd96f`)
-> **D3B Portal Empirical Preflight**: `PASS` (MCP tab, Testing tab, Submit tab â€” empirically documented 2026-09-21)
+> **D3B Portal Empirical Preflight**: `PASS` (MCP tab, Testing tab, Submit tab — empirically documented 2026-09-21)
 > **Target Account**: Personal ChatGPT Plus
-> **Plus Developer Mode**: `EMPIRICALLY_PROVEN` on target account (Settings â†’ Security and login â†’ Developer mode: VISIBLE and ENABLED)
+> **Plus Developer Mode**: `EMPIRICALLY_PROVEN` on target account (Settings → Security and login → Developer mode: VISIBLE and ENABLED)
 > **P01-D3C Status**: `IN_PROGRESS`
 > **P01-D3A-SEC-001**: `HISTORICAL_PROCESS_RECORD` (`ACTIVE_P01_GATE_FROM_SEC001 = NONE`)
 > **P01-D3A Security Status**: `PASS` (Functional PASS; SEC-001 Historical Record)
@@ -82,7 +82,7 @@ The caller must be the actual ChatGPT Plus browser UI, not the Responses API.
 - **Evidence Classification**: `TARGET_ACCOUNT_EMPIRICAL_CAPABILITY`
 - **Verdict**: `PLUS_DEVELOPER_MODE_ON_TARGET_ACCOUNT = EMPIRICALLY_PROVEN`
 
-> NOTE â€” Account-specific evidence. Do NOT generalize:
+> NOTE — Account-specific evidence. Do NOT generalize:
 > "All ChatGPT Plus accounts have full MCP write access."
 > Official docs state: "Developer mode availability can depend on account and workspace policy."
 > (Source: https://developers.openai.com/plugins/deploy/connect-chatgpt, accessed 2026-09-21)
@@ -93,7 +93,7 @@ The caller must be the actual ChatGPT Plus browser UI, not the Responses API.
 
 Empirical evidence supplied for all three previously-unverified tabs:
 
-#### MCP Tab â€” D3B-MCP-TAB-EMPIRICAL = PASS
+#### MCP Tab — D3B-MCP-TAB-EMPIRICAL = PASS
 
 Observed real portal fields:
 - MCP Server URL: text input field
@@ -107,7 +107,7 @@ Observed real portal fields:
 SUPERSEDED prior ASSUMPTION: "Universal URL mode, Template URL mode, SSE-only selection"
 Actual: Single MCP Server URL text field with No Auth default.
 
-#### Testing Tab â€” D3B-TESTING-TAB-EMPIRICAL = PASS
+#### Testing Tab — D3B-TESTING-TAB-EMPIRICAL = PASS
 
 Observed portal requirements:
 - Exactly 5 positive test cases required
@@ -116,7 +116,7 @@ Observed portal requirements:
 
 tools/list remains: PROTOCOL_EVIDENCE_ONLY (not a user-facing test case). Previously documented corrections valid.
 
-#### Submit Tab â€” D3B-SUBMIT-TAB-EMPIRICAL = PASS
+#### Submit Tab — D3B-SUBMIT-TAB-EMPIRICAL = PASS
 
 Observed fields and compliance attestations:
 - Release Notes field
@@ -185,7 +185,7 @@ Key confirmed facts:
   - Production artifact exposure: `NOT FOUND`
   - Canonical documentation exposure: `NOT FOUND`
 
-### 4.2 P01-D3A-SEC-001 â€” Historical Status
+### 4.2 P01-D3A-SEC-001 — Historical Status
 
 - **Classification**: `HISTORICAL_PROCESS_RECORD` (Pre-dates user-authorized disposable test credential policy).
 - **Platform Key Revocation**: `OLD_D3A_PLATFORM_KEY_REVOCATION = NOT_ASSERTED / INFORMATIONAL_ONLY`.
@@ -251,12 +251,12 @@ All D3B research preserved as: FALLBACK_PUBLIC_DISTRIBUTION_PATH
 
 ### Preparation
 
-#### Step P1 â€” Local MCP Server Health
+#### Step P1 — Local MCP Server Health
 - **Status**: `PASS`
 - **Probe**: `GET http://127.0.0.1:3182/healthz` -> HTTP 200 `{"status":"ok","service":"supervisor-proof-mcp","port":3182}`
 - **Security Boundary**: Loopback bind confirmed strictly to `127.0.0.1:3182` (PID 26608).
 
-#### Step P2 â€” Tunnel Doctor
+#### Step P2 — Tunnel Doctor
 - **Status**: `PASS`
 - **Command**: `tunnel-client.exe doctor --control-plane.api-key "env:CONTROL_PLANE_API_KEY" --control-plane.tunnel-id tunnel_6ab0ae480cec81919b3db157c622eb53 --mcp.server-url "url=http://127.0.0.1:3182/mcp" --log.format struct-text --explain`
 - **Checks Verified**:
@@ -276,7 +276,7 @@ All D3B research preserved as: FALLBACK_PUBLIC_DISTRIBUTION_PATH
   - `CHECK codex_plugin`: `SKIP` (Codex detected; Tunnel MCP plugin not installed)
 - **Doctor Verdict**: `RESULT ok` -> `NEXT tunnel-client run`.
 
-#### Step P3 â€” Tunnel Start
+#### Step P3 — Tunnel Start
 - **Status**: `PASS`
 - **Tunnel Binary**: `bin\tunnel-client.exe` v0.0.14 (checksum verified `fcc85a69ec...`)
 - **Tunnel ID**: `tunnel_6ab0ae480cec81919b3db157c622eb53` (`ai-supervisor-p01d`)
@@ -288,7 +288,7 @@ All D3B research preserved as: FALLBACK_PUBLIC_DISTRIBUTION_PATH
 - **Log Verification**:
   - `level=INFO msg="mcp session initialized" server_name=ai-supervisor-p01d-proof-server`
   - `level=INFO msg="tunnel metadata fetched" name=ai-supervisor-p01d`
-  - `level=INFO msg="ðŸŸ¢ tunnel-client started" tunnel_url=https://api.openai.com/v1/tunnel/tunnel_6ab0ae480cec81919b3db157c622eb53`
+  - `level=INFO msg="🟢 tunnel-client started" tunnel_url=https://api.openai.com/v1/tunnel/tunnel_6ab0ae480cec81919b3db157c622eb53`
 - **Live Readiness**: `HEALTHY / READY / CONNECTED`.
 
 #### Runtime Revalidation (2026-09-21 13:19)
@@ -299,9 +299,9 @@ All D3B research preserved as: FALLBACK_PUBLIC_DISTRIBUTION_PATH
 - **Control Plane Poll**: `ok: true` (timestamp `1789971547`).
 - **Runtime Verdict**: `P1_LOCAL_MCP = PASS`, `P2_TUNNEL_DOCTOR = PASS`, `P3_TUNNEL_READY = PASS`.
 
-HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP â€” issued after Steps P1/P2/P3 pass
+HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP — issued after Steps P1/P2/P3 pass
 
-### D3C-01 â€” App Creation / Connection
+### D3C-01 — App Creation / Connection
 
 - **Expected**: Target Plus account connects developer app via Connection = Tunnel.
 - **Caller Surface**: `Personal ChatGPT Plus Web` (empirically confirmed via UI screenshots).
@@ -319,7 +319,7 @@ HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP â€” issued after Steps P1/P2/P3 pass
 - **Public Publication Status**: `NOT_PROVEN` (Action metadata reports `Visibility: public`, but app review status is explicitly `development` and version is `dev mode`).
 - **Verdict**: `D3C-01_APP_CONNECTION = PASS`
 
-### D3C-02 â€” Tool Discovery
+### D3C-02 — Tool Discovery
 
 - **Expected Tools**: `supervisor_probe_read`, `supervisor_probe_write` (exactly 2, no others).
 - **Discovered Tool Count**: `2`
@@ -345,7 +345,7 @@ HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP â€” issued after Steps P1/P2/P3 pass
 - **Verdict**: `D3C-02_TOOL_DISCOVERY = PASS`
 - **Checkpoint Verdict**: `D3C_CHECKPOINT_A = PASS`
 
-### D3C-03 â€” Real ChatGPT Read
+### D3C-03 — Real ChatGPT Read
 
 - **Caller**: Target Personal ChatGPT Plus Web UI (NOT Responses API, NOT MCP Inspector).
 - **Tool Invoked**: `supervisor_probe_read`
@@ -385,7 +385,7 @@ HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP â€” issued after Steps P1/P2/P3 pass
 - **Verdict**: `D3C-03 = PASS`
 - **Checkpoint Verdict**: `D3C_CHECKPOINT_B = PASS` (`D3C_READ_TRANSPORT = EMPIRICALLY_PROVEN_ON_TARGET_PLUS`)
 
-### D3C-04 â€” Write Classification & Runtime Approval Behavior
+### D3C-04 — Write Classification & Runtime Approval Behavior
 
 - **Tool Called**: `supervisor_probe_write`
 - **Metadata Classification**: `PASS` (Visibly labeled `WRITE` and `DESTRUCTIVE` in app actions UI).
@@ -400,7 +400,7 @@ HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP â€” issued after Steps P1/P2/P3 pass
   - Command was only polled by `tunnel-client` at `14:10:15.268+07:00` and executed on local MCP at `14:10:15.269+07:00` after User clicked `Allow once`.
 - **Verdict**: `D3C-04 = PASS`
 
-### D3C-05 â€” Approved Write
+### D3C-05 — Approved Write
 
 - **Target Write Value**: `D3C_PLUS_WRITE_1789974395862`
 - **Correlation ID**: `d3c-write-1789974395862`
@@ -424,7 +424,7 @@ HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP â€” issued after Steps P1/P2/P3 pass
   ```
 - **Evaluation Criteria**:
   - `WRITE_VALUE_MATCH`: `PASS` (Local `current_value` equals target `D3C_PLUS_WRITE_1789974395862`).
-  - `MUTATION_COUNT_0_TO_1`: `PASS` (Changed exactly 0 â†’ 1).
+  - `MUTATION_COUNT_0_TO_1`: `PASS` (Changed exactly 0 → 1).
   - `APPROVED_WRITE_EXACTLY_ONCE`: `PASS` (Single mutation recorded).
   - `CORRELATION_RECORDED`: `PASS` (Recorded `d3c-write-1789974395862`).
   - `CHATGPT_WRITE_RESULT_MATCH`: `PASS` (ChatGPT returned `APPLIED`, exact write value, and exact correlation ID).
@@ -436,7 +436,7 @@ HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP â€” issued after Steps P1/P2/P3 pass
 - **Verdict**: `D3C-05 = PASS`
 - **Checkpoint Verdict**: `D3C_CHECKPOINT_C = PASS` (`D3C_WRITE_TRANSPORT = EMPIRICALLY_PROVEN_ON_TARGET_PLUS`)
 
-### D3C-06 â€” Real ChatGPT Read-Back Persistence
+### D3C-06 — Real ChatGPT Read-Back Persistence
 
 - **Caller**: Target Personal ChatGPT Plus Web UI over Secure MCP Tunnel.
 - **Tool Invoked**: `supervisor_probe_read`.
@@ -479,7 +479,7 @@ HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP â€” issued after Steps P1/P2/P3 pass
 - **Verdict**: `D3C-06 = PASS`
 - **Checkpoint Verdict**: `D3C_CHECKPOINT_D = PASS` (`WRITE_PERSISTENCE_READBACK = PASS`)
 
-### D3C-07 â€” Denied Write
+### D3C-07 — Denied Write
 
 - **Target Denial Value**: `D3C_DENIED_WRITE_1789974938621`
 - **Denial Correlation ID**: `d3c-deny-1789974938621`
@@ -526,7 +526,7 @@ HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP â€” issued after Steps P1/P2/P3 pass
 - **Sub-Gate Verdict**: `D3C_DENIAL_SAFETY = EMPIRICALLY_PROVEN_ON_TARGET_PLUS`
 - **Checkpoint Verdict**: `D3C_CHECKPOINT_E = PASS`
 
-### D3C-08 â€” Replay Protection
+### D3C-08 — Replay Protection
 
 - **Target Replay Value**: `D3C_PLUS_WRITE_1789974395862` (repeating D3C-05 value)
 - **Replay Correlation ID**: `d3c-write-1789974395862` (repeating D3C-05 correlation ID)
@@ -538,11 +538,11 @@ HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP â€” issued after Steps P1/P2/P3 pass
 - **User Prompt Executed**:
   `"@AI Supervisor P01-D3C Proof Use AI Supervisor P01-D3C Proof to update the disposable supervisor proof state to 'D3C_PLUS_WRITE_1789974395862' using correlation ID 'd3c-write-1789974395862'. This intentionally repeats the previously applied correlation ID to test replay protection. Do not perform any other action."`
 - **Approval Behavior**:
-  - `REPLAY_APPROVAL_UI`: `SHOWN` (ChatGPT presented confirmation dialog `Allow ChatGPT to use AI Supervisor P01-D3C Proof?` with `[Always allow]`, `[Deny]`, `[Allow once Ë…]`).
+  - `REPLAY_APPROVAL_UI`: `SHOWN` (ChatGPT presented confirmation dialog `Allow ChatGPT to use AI Supervisor P01-D3C Proof?` with `[Always allow]`, `[Deny]`, `[Allow once ˅]`).
   - **User Action**: Clicked `Allow once`.
   - **Note**: Approval card reflects ChatGPT's destructive tool confirmation policy. Server idempotency independently protects state against duplication.
 - **Tool Invocation**:
-  - `D3C08_TOOL_INVOCATION`: `PASS` (Tool card `{} Called tool Ë…` appeared in ChatGPT UI).
+  - `D3C08_TOOL_INVOCATION`: `PASS` (Tool card `{} Called tool ˅` appeared in ChatGPT UI).
 - **ChatGPT Output Received Post-Replay**:
   `"Replay protection worked: the repeated correlation ID was detected as DUPLICATE_REPLAY , and no additional mutation occurred."`
   - `REPLAY_STATUS`: `DUPLICATE_REPLAY`
@@ -577,7 +577,7 @@ HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP â€” issued after Steps P1/P2/P3 pass
   - `D3C_EXACTLY_ONCE = EMPIRICALLY_PROVEN_ON_TARGET_PLUS`
 - **Checkpoint Verdict**: `D3C_CHECKPOINT_F = PASS`
 
-### D3C-09 â€” Tunnel Reconnect
+### D3C-09 — Tunnel Reconnect
 
 - **Objective**: Prove the same ChatGPT developer app and same tunnel ID reconnect and operate after restarting `tunnel-client`, without recreating the tunnel, without recreating the ChatGPT app, and without state drift.
 - **Existing Tunnel Identity**:
@@ -615,14 +615,90 @@ HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP â€” issued after Steps P1/P2/P3 pass
 - **Status**: COMPLETE
 - **Verdict**: `PASS`
 
-### D3C-10 â€” Chat Continuity
+### D3C-10 — Chat Continuity & Multi-Conversation Access
 
-Same conversation: read -> write -> natural discussion -> read again -> app callable
-New conversation: Same developer app invoked; same local state verified
-Note: Do not depend on undocumented ChatGPT conversation IDs
-Verdict: [PENDING — HUMAN_REQUIRED_D3C_CHAT_CONTINUITY issued; awaiting User same-conversation and new-conversation reads]
+- **Objective**: Empirically verify that the Personal ChatGPT Plus developer app remains reliably callable across multiple conversational turns within the same chat session (including after non-plugin conversational turns), and across separate, newly initialized chat conversations, with zero app recreation, zero connection reconfiguration, distinct tunnel tool calls, and complete preservation of local persisted state.
+- **Environment**:
+  - Web UI: Personal ChatGPT Plus (`https://chatgpt.com`).
+  - Active App: `AI Supervisor P01-D3C Proof` (reused continuously from Checkpoint A without modification).
+  - Tunnel Daemon: `tunnel-client.exe` v0.0.14 (PID 38624, restarted in Checkpoint G, tunnel `tunnel_6ab0ae480cec81919b3db157c622eb53`).
+  - Local MCP Server: `node server.js` (PID 26608, loopback `127.0.0.1:3182`).
+  - State Baseline: `current_value = "D3C_PLUS_WRITE_1789974395862"`, `mutation_count = 1`.
 
-### D3C-11 â€” Local MCP Offline / Recovery
+#### D3C-10A — Same-Conversation Continuity (Part A)
+1. **Unrelated Non-Plugin Conversational Turn**:
+   - **User Message**: `"Explain in one sentence what idempotency means."`
+   - **ChatGPT Response**: `"Idempotency means performing the same operation multiple times has the same intended effect as performing it once."`
+   - **Turn Duration / Tool Status**: `Worked for 5s`, tool menu card `Called tool ˅`.
+   - **Verdict**: `D3C10A_UNRELATED_TURN = PASS`
+2. **Same-Conversation Read Probe**:
+   - **User Message**: `"Use AI Supervisor P01-D3C Proof to read the current local supervisor proof state using correlation ID 'd3c-continuity-same-01'. Return the disposable state and mutation count. Do not modify anything"`
+   - **Execution Time**: `Worked for 4s`
+   - **Tool Invocation Card**: `Called tool ˅` (`supervisor_probe_read`)
+   - **ChatGPT Output**:
+     - `Disposable state: D3C_PLUS_WRITE_1789974395862`
+     - `Mutation count: 1`
+     - `"No state was modified."`
+   - **Verdict**:
+     - `D3C10A_TOOL_INVOCATION = PASS`
+     - `D3C10A_VALUE_MATCH = PASS`
+     - `D3C10A_MUTATION_COUNT_MATCH = PASS`
+     - `D3C10A_ZERO_SIDE_EFFECT = PASS`
+3. **Tunnel & MCP Correlation (Part A)**:
+   - **Poll Timestamp**: `2026-09-21T15:23:46.881+07:00`
+   - **Polled Command**: `request_id=cmd_277d30ca_08d3_4ef2_884b_91cfed19647c`
+   - **RPC Method**: `tools/call`
+   - **Command Request ID**: `ca8c19ec-bf88-4c72-b499-7af07b642d7d/w1sc`
+   - **Local MCP Dispatch**: `15:23:46.881+07:00` -> Local MCP response received at `15:23:46.883+07:00` (latency: 2ms)
+   - **Control-Plane Delivery**: `15:23:47.165+07:00` (`tunnel_request_id=req_72970a599f0b4c159398c82604f071ed`, `status_code=200`, `channel=main`, `has_error=false`)
+   - **Verdict**: `D3C10A_TUNNEL_CORRELATION = PASS`
+
+#### D3C-10B — New-Conversation Access (Part B)
+1. **Fresh Conversation Window**:
+   - Genuinely new ChatGPT conversation opened without deleting, recreating, reconfiguring, or editing the `AI Supervisor P01-D3C Proof` app or tunnel connection.
+   - **Verdict**: `D3C10B_NEW_CONVERSATION = USER_EMPIRICALLY_CONFIRMED`
+2. **New-Conversation Read Probe**:
+   - **User Message**: `"Use AI Supervisor P01-D3C Proof to read the current local supervisor proof state from this new conversation using correlation ID 'd3c-continuity-new-01'. Return the disposable state and mutation count. Do not modify anything."`
+   - **Execution Time**: `Worked for 8s`
+   - **Tool Invocation Card**: `Called tool ˅` (`supervisor_probe_read`)
+   - **ChatGPT Output**:
+     - `Disposable state: D3C_PLUS_WRITE_1789974395862`
+     - `Mutation count: 1`
+     - `"No state was modified."`
+   - **Verdict**:
+     - `D3C10B_TOOL_INVOCATION = PASS`
+     - `D3C10B_VALUE_MATCH = PASS`
+     - `D3C10B_MUTATION_COUNT_MATCH = PASS`
+     - `D3C10B_ZERO_SIDE_EFFECT = PASS`
+3. **Tunnel & MCP Correlation (Part B)**:
+   - **Poll Timestamp**: `2026-09-21T15:24:34.921+07:00`
+   - **Polled Command**: `request_id=cmd_d8c549af_d37e_47f0_92f4_e38f7a04a59d`
+   - **RPC Method**: `tools/call`
+   - **Command Request ID**: `f0d7fc50-398a-40f3-9335-ad9946201f7a/9zxp`
+   - **Local MCP Dispatch**: `15:24:34.921+07:00` -> Local MCP response received at `15:24:34.923+07:00` (latency: 2ms)
+   - **Control-Plane Delivery**: `15:24:35.184+07:00` (`tunnel_request_id=req_6aa265bf23b24e2d96f9eead0c8fd09a`, `status_code=200`, `channel=main`, `has_error=false`)
+   - **Verdict**: `D3C10B_TUNNEL_CORRELATION = PASS`
+
+#### Distinct Tool Call & State Integrity Verification
+- **Distinct Tool Calls**:
+  - Part A Request ID: `cmd_277d30ca_08d3_4ef2_884b_91cfed19647c`
+  - Part B Request ID: `cmd_d8c549af_d37e_47f0_92f4_e38f7a04a59d`
+  - Verification: `cmd_277d30ca` != `cmd_d8c549af` (independent tunnel dispatches).
+  - **Verdict**: `D3C10_DISTINCT_TOOL_CALLS = PASS`
+- **Local State Integrity (`data/state.json`)**:
+  - `current_value`: `"D3C_PLUS_WRITE_1789974395862"` (unchanged)
+  - `mutation_count`: `1` (unchanged)
+  - `last_updated`: `"2026-09-21T07:10:15.269Z"` (unchanged)
+  - `applied_correlations`: `["d3c-write-1789974395862"]` (unchanged)
+  - Filesystem `LastWriteTime`: `2026-09-21 14:10:15` (strictly unchanged across all reads)
+  - **Verdict**: `D3C10_STATE_INTEGRITY = PASS`
+- **Overall Verdict**:
+  - `D3C-10`: `PASS`
+  - `D3C_CHAT_CONTINUITY`: `EMPIRICALLY_PROVEN_ON_TARGET_PLUS`
+  - `D3C_NEW_CONVERSATION_ACCESS`: `EMPIRICALLY_PROVEN_ON_TARGET_PLUS`
+  - `D3C_CHECKPOINT_H`: `PASS`
+
+### D3C-11 — Local MCP Offline / Recovery
 
 Action: Stop local MCP; tunnel-client remains running
 ChatGPT read behavior: [TO BE RECORDED - actual failure behavior]
@@ -630,7 +706,7 @@ MCP restarted: YES
 Recovery: [TO BE RECORDED - ChatGPT app not recreated]
 Verdict: [TO BE RECORDED]
 
-### D3C-12 â€” No Inbound Exposure
+### D3C-12 — No Inbound Exposure
 
 - **Local MCP Bind**: `127.0.0.1:3182` only (loopback confirmed).
 - **Tunnel Admin Bind**: `127.0.0.1:8080` only (loopback confirmed).
@@ -643,7 +719,7 @@ Verdict: [TO BE RECORDED]
 
 ---
 
-## 8. Human Checkpoint â€” Tunnel Reconnect Test (Checkpoint G)
+## 8. Human Checkpoint — Tunnel Reconnect Test (Checkpoint G)
 
 ```text
 HUMAN_REQUIRED_D3C_TUNNEL_RECONNECT: CLOSED
@@ -693,41 +769,73 @@ PROHIBITED:
 
 ---
 
-## 8a. Human Checkpoint â€” Chat Continuity Test (Checkpoint H)
+## 8a. Human Checkpoint — Chat Continuity Test (Checkpoint H)
 
 ```text
-HUMAN_REQUIRED_D3C_CHAT_CONTINUITY
-Status: ACTIVE_WAITING_FOR_USER_ACTION
-Checkpoint: D3C_CHECKPOINT_H (D3C-10 Chat Continuity)
+| D3C Checkpoint H | `PASS` | Chat continuity & multi-conversation access empirically proven |
+| HUMAN_REQUIRED_D3C_CHAT_CONTINUITY | `CLOSED` | Completed by User |
+| HUMAN_REQUIRED_D3C_MCP_OFFLINE_RECOVERY | `ISSUED` | Awaiting User authorization to stop local MCP |
+Checkpoint: D3C_CHECKPOINT_H (D3C-10 Chat Continuity & Multi-Conversation Access)
 TUNNEL_NAME: ai-supervisor-p01d
 TUNNEL_ID: tunnel_6ab0ae480cec81919b3db157c622eb53
 TUNNEL_PID: 38624
+APP: AI Supervisor P01-D3C Proof (preserved without recreation/editing)
+PRESERVED_VALUE: D3C_PLUS_WRITE_1789974395862
+PRESERVED_MUTATION_COUNT: 1
+```
+
+**Execution & Findings Summary**:
+- **Part A (Same-Conversation Continuity)**:
+  - User executed unrelated prompt: `"Explain in one sentence what idempotency means."` -> model answered normally.
+  - User then sent probe with correlation `d3c-continuity-same-01`.
+  - Tool card appeared; returned `D3C_PLUS_WRITE_1789974395862` with `mutation_count: 1`. No state modified.
+  - Tunnel correlation confirmed: `cmd_277d30ca_08d3_4ef2_884b_91cfed19647c` (`tools/call`, status 200).
+- **Part B (New-Conversation Access)**:
+  - User opened a fresh ChatGPT conversation window with same developer app.
+  - Sent probe with correlation `d3c-continuity-new-01`.
+  - Tool card appeared; returned `D3C_PLUS_WRITE_1789974395862` with `mutation_count: 1`. No state modified.
+  - Tunnel correlation confirmed: `cmd_d8c549af_d37e_47f0_92f4_e38f7a04a59d` (`tools/call`, status 200).
+- **State Integrity**: Confirmed strictly unchanged in `data/state.json`.
+- **Verdict**: `D3C_CHECKPOINT_H = PASS`.
+
+---
+
+## 8b. Human Checkpoint — Local MCP Offline / Recovery Test (Checkpoint I)
+
+```text
+HUMAN_REQUIRED_D3C_MCP_OFFLINE_RECOVERY
+Status: ACTIVE_WAITING_FOR_USER_ACTION
+Checkpoint: D3C_CHECKPOINT_I (D3C-11 Local MCP Offline / Recovery)
+TUNNEL_NAME: ai-supervisor-p01d
+TUNNEL_ID: tunnel_6ab0ae480cec81919b3db157c622eb53
+TUNNEL_PID: 38624 (KEEP RUNNING)
+MCP_PID: 26608 (TARGET FOR STOP/START)
 APP: AI Supervisor P01-D3C Proof (do NOT recreate or edit)
 PRESERVED_VALUE: D3C_PLUS_WRITE_1789974395862
 PRESERVED_MUTATION_COUNT: 1
 ```
 
-**Part A â€” Same-conversation continuity:**
+**Objective**:
+Empirically verify that when the local Node MCP server is terminated while the tunnel-client remains running, the Personal ChatGPT Plus developer app receives a graceful transport error, and when the local MCP server is restarted on the same port, the same developer app immediately recovers and can read persisted state without recreation.
 
-1. In the SAME existing ChatGPT conversation, send an unrelated message (no plugin invocation):
-   > `Explain in one sentence what idempotency means.`
-2. Then in the SAME conversation send:
-   > `Use AI Supervisor P01-D3C Proof to read the current local supervisor proof state. Return the disposable state and mutation count. Do not modify anything.`
-3. Expected: `D3C_PLUS_WRITE_1789974395862`, `mutation_count: 1`.
-
-**Part B â€” New-conversation continuity:**
-
-1. Open a NEW ChatGPT conversation.
-2. Do NOT recreate or edit the app.
-3. Send:
-   > `Use AI Supervisor P01-D3C Proof to read the current local supervisor proof state from this new conversation. Return the disposable state and mutation count. Do not modify anything.`
-4. Expected: `D3C_PLUS_WRITE_1789974395862`, `mutation_count: 1`.
+**Preliminary Procedure (AWAITING USER AUTHORIZATION)**:
+1. Capture local MCP server process PID (`26608`).
+2. Keep tunnel-client running (`PID 38624`).
+3. Stop local MCP server only.
+4. Verify port `127.0.0.1:3182` is closed.
+5. In Personal ChatGPT Plus Web, without recreating or editing the app, invoke `supervisor_probe_read`.
+6. Capture and document the exact failure behavior and error presentation in ChatGPT UI.
+7. Verify zero state corruption in sandbox.
+8. Restart local MCP server on `127.0.0.1:3182/mcp`.
+9. Verify `GET http://127.0.0.1:3182/healthz` returns HTTP 200.
+10. In Personal ChatGPT Plus Web, without recreating the app, invoke `supervisor_probe_read` again.
+11. Require returned state to match `D3C_PLUS_WRITE_1789974395862` with `mutation_count: 1`.
 
 PROHIBITED:
-- Do NOT automate the ChatGPT UI
-- Do NOT use browser DOM automation
-- Do NOT use internal ChatGPT APIs
-- Do NOT substitute the Responses API for this test
+- Do NOT stop the tunnel-client process
+- Do NOT recreate or edit the ChatGPT developer app
+- Do NOT reconfigure the tunnel connection
+- Do NOT modify the state file
 
 ---
 
@@ -776,37 +884,37 @@ No workarounds. No browser automation. No silent architecture switch.
 
 | Sub-Gate | Verdict | Notes |
 |---|---|---|
-| P1 â€” Local MCP Health | `PASS` | HTTP 200 loopback 127.0.0.1:3182 |
-| P2 â€” Tunnel Doctor | `PASS` | All required checks PASS; RESULT ok |
-| P3 â€” Tunnel Ready | `PASS` | PID 43288; live/ready/poll ok; outbound connected |
+| P1 — Local MCP Health | `PASS` | HTTP 200 loopback 127.0.0.1:3182 |
+| P2 — Tunnel Doctor | `PASS` | All required checks PASS; RESULT ok |
+| P3 — Tunnel Ready | `PASS` | PID 43288; live/ready/poll ok; outbound connected |
 | HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP | `CLOSED` | Completed by User |
-| D3C-01 â€” App Connection | `PASS` | Personal Plus Web, dev mode, tunnel connection confirmed |
-| D3C-02 â€” Tool Discovery | `PASS` | Exactly 2 tools: probe_read (READ), probe_write (WRITE, DESTRUCTIVE) |
+| D3C-01 — App Connection | `PASS` | Personal Plus Web, dev mode, tunnel connection confirmed |
+| D3C-02 — Tool Discovery | `PASS` | Exactly 2 tools: probe_read (READ), probe_write (WRITE, DESTRUCTIVE) |
 | D3C Checkpoint A | `PASS` | App connection and tool discovery empirically verified |
 | HUMAN_REQUIRED_D3C_CHATGPT_READ | `CLOSED` | Completed by User |
-| D3C-03 â€” ChatGPT Read | `PASS` | Returned exact out-of-band marker, 0 mutations, log aligned |
+| D3C-03 — ChatGPT Read | `PASS` | Returned exact out-of-band marker, 0 mutations, log aligned |
 | D3C Checkpoint B | `PASS` | Real ChatGPT Plus read transport empirically proven |
 | HUMAN_REQUIRED_D3C_APPROVED_WRITE | `CLOSED` | Completed by User |
-| D3C-04 â€” Write Classification | `PASS` | Interactive approval card shown; approved via "Allow once" |
-| D3C-05 â€” Approved Write | `PASS` | Mutated exactly 0 -> 1; current_value and correlation verified |
+| D3C-04 — Write Classification | `PASS` | Interactive approval card shown; approved via "Allow once" |
+| D3C-05 — Approved Write | `PASS` | Mutated exactly 0 -> 1; current_value and correlation verified |
 | D3C Checkpoint C | `PASS` | Real ChatGPT Plus write transport empirically proven |
 | HUMAN_REQUIRED_D3C_READ_BACK | `CLOSED` | Completed by User |
-| D3C-06 â€” Read-Back | `PASS` | Returned exact post-write value D3C_PLUS_WRITE_1789974395862, count 1, zero side effects |
+| D3C-06 — Read-Back | `PASS` | Returned exact post-write value D3C_PLUS_WRITE_1789974395862, count 1, zero side effects |
 | D3C Checkpoint D | `PASS` | Real ChatGPT Plus write persistence read-back proven |
 | HUMAN_REQUIRED_D3C_DENIED_WRITE | `CLOSED` | Completed by User |
-| D3C-07 â€” Denied Write | `PASS` | Interactive denial verified; zero local mutation; correlation absent |
+| D3C-07 — Denied Write | `PASS` | Interactive denial verified; zero local mutation; correlation absent |
 | D3C Checkpoint E | `PASS` | Real ChatGPT Plus denial safety empirically proven |
 | HUMAN_REQUIRED_D3C_REPLAY | `CLOSED` | Completed by User |
-| D3C-08 â€” Replay | `PASS` | Replay rejected as DUPLICATE_REPLAY; count remained 1; singleton correlation |
+| D3C-08 — Replay | `PASS` | Replay rejected as DUPLICATE_REPLAY; count remained 1; singleton correlation |
 | D3C Checkpoint F | `PASS` | Real ChatGPT Plus replay protection & exactly-once proven |
 | HUMAN_REQUIRED_D3C_TUNNEL_RECONNECT | `ISSUED` | Awaiting authorized tunnel restart and reconnect verification |
-| D3C-09 â€” Tunnel Reconnect | `PASS` | Old PID 43288 â†’ New PID 38624; same tunnel_id; MCP survived; post-restart invocation via new process; value D3C_PLUS_WRITE_1789974395862 confirmed; zero side effects |
+| D3C-09 — Tunnel Reconnect | `PASS` | Old PID 43288 → New PID 38624; same tunnel_id; MCP survived; post-restart invocation via new process; value D3C_PLUS_WRITE_1789974395862 confirmed; zero side effects |
 | D3C Checkpoint G | `PASS` | Tunnel reconnect empirically proven on Personal ChatGPT Plus |
 | HUMAN_REQUIRED_D3C_TUNNEL_RECONNECT | `CLOSED` | Completed by User |
-| D3C-10 â€” Chat Continuity | `PENDING` | Active Gate: HUMAN_REQUIRED_D3C_CHAT_CONTINUITY (Checkpoint H) |
+| D3C-10 — Chat Continuity | `PASS` | Same-conversation read + new-conversation read verified; distinct tools/call correlated; zero mutation |
 | HUMAN_REQUIRED_D3C_CHAT_CONTINUITY | `ISSUED` | Awaiting User same-conversation and new-conversation reads |
-| D3C-11 â€” MCP Offline/Recovery | `PENDING` | Awaiting External Supervisor approval after D3C-05 |
-| D3C-12 â€” No Inbound Exposure | `PASS` | Pre-verified loopback-only 127.0.0.1; zero public ingress |
+| D3C-11 — MCP Offline/Recovery | `PENDING` | Active Gate: HUMAN_REQUIRED_D3C_MCP_OFFLINE_RECOVERY (Checkpoint I) |
+| D3C-12 — No Inbound Exposure | `PASS` | Pre-verified loopback-only 127.0.0.1; zero public ingress |
 
 ---
 
@@ -815,29 +923,21 @@ No workarounds. No browser automation. No silent architecture switch.
 ```
 ================================================================================
 P01-D3C VERDICT:
-IN_PROGRESS (CHECKPOINT A, B, C, D, E, F, G: PASS; ACTIVE GATE: HUMAN_REQUIRED_D3C_CHAT_CONTINUITY)
+IN_PROGRESS (CHECKPOINT A, B, C, D, E, F, G, H: PASS; ACTIVE GATE: HUMAN_REQUIRED_D3C_MCP_OFFLINE_RECOVERY)
 
-D3C_TUNNEL_RECONNECT = EMPIRICALLY_PROVEN_ON_TARGET_PLUS
-D3C09_TUNNEL_PROCESS_RESTART = PASS
+D3C_CHAT_CONTINUITY = EMPIRICALLY_PROVEN_ON_TARGET_PLUS
+D3C_NEW_CONVERSATION_ACCESS = EMPIRICALLY_PROVEN_ON_TARGET_PLUS
+D3C10_STATE_INTEGRITY = PASS
+D3C_CHECKPOINT_H = PASS
 
 REASON:
-D3C-09 (Tunnel Reconnect) successfully verified on Personal ChatGPT Plus Web over Secure MCP Tunnel:
-- Old tunnel-client (PID 43288) terminated; local MCP (PID 26608) survived uninterrupted.
-- New tunnel-client (PID 38624) restarted with same tunnel_id=tunnel_6ab0ae480cec81919b3db157c622eb53.
-- Control-plane polling recovered (poller recovered; polling operational at 14:54:21).
-- Personal ChatGPT Plus invoked supervisor_probe_read at 14:56:19+07:00 via new process (cmd_b2635cce_71a7_49d2_95d3_42fb3d67df20; HTTP 200).
-- Returned: D3C_PLUS_WRITE_1789974395862, mutation_count=1, proof identifier P01-D3A-OPENAI-MCP-RUNTIME-PROOF. No state modified.
-- Same ChatGPT app AI Supervisor P01-D3C Proof; not recreated.
-Checkpoint G complete (PASS). Checkpoint H issued: HUMAN_REQUIRED_D3C_CHAT_CONTINUITY.
-- Reused correlation d3c-write-1789974395862 [HISTORICAL - D3C-08 record follows above] with identical value D3C_PLUS_WRITE_1789974395862
-- ChatGPT requested confirmation card; User selected "Allow once"
-- Local MCP returned DUPLICATE_REPLAY status
-- ChatGPT returned: "Replay protection worked: the repeated correlation ID was detected as DUPLICATE_REPLAY , and no additional mutation occurred."
-- Local state verified strictly unchanged: mutation_count remained 1, current_value unchanged, correlation list remained singleton
-- End-to-end exactly-once property proven on target Plus transport
-Checkpoint F is complete (PASS).
-Checkpoint G prepared for tunnel reconnect verification.
-Awaiting user authorization for tunnel reconnect test.
+D3C-10 (Chat Continuity / Multi-Conversation Access) successfully verified on Personal ChatGPT Plus Web over Secure MCP Tunnel:
+- Same-conversation continuity (Part A): User sent non-plugin query ("Explain in one sentence what idempotency means"); model answered; then user invoked supervisor_probe_read with correlation d3c-continuity-same-01. Tunnel polled cmd_277d30ca_08d3_4ef2_884b_91cfed19647c (tools/call) at 15:23:46.881+07:00; local MCP responded in 2ms; control plane posted HTTP 200. Returned D3C_PLUS_WRITE_1789974395862, mutation_count=1, "No state was modified."
+- New-conversation access (Part B): User opened genuinely new ChatGPT conversation window without recreating or reconfiguring the developer app. Invoked supervisor_probe_read with correlation d3c-continuity-new-01. Tunnel polled cmd_d8c549af_d37e_47f0_92f4_e38f7a04a59d (tools/call) at 15:24:34.921+07:00; local MCP responded in 2ms; control plane posted HTTP 200. Returned D3C_PLUS_WRITE_1789974395862, mutation_count=1, "No state was modified."
+- Distinct tools/call: cmd_277d30ca vs cmd_d8c549af verified distinct.
+- State integrity strictly preserved: mutation_count remained 1, current_value unchanged, LastWriteTime unchanged.
+- Zero UI automation, zero manual relay, zero proxy.
+Checkpoint H complete (PASS). Checkpoint I issued: HUMAN_REQUIRED_D3C_MCP_OFFLINE_RECOVERY.
 
 P01-D STATUS:
 PARTIALLY_PROVEN / D3C_IN_PROGRESS
@@ -846,7 +946,7 @@ P01-D3A_FUNCTIONAL = PASS
 P01-D3A-SEC-001 = HISTORICAL_PROCESS_RECORD (ACTIVE_P01_GATE_FROM_SEC001 = NONE)
 
 ARCHITECTURE V2 STATUS:
-CANDIDATE (NOT FROZEN â€” pending External Transport Audit)
+CANDIDATE (NOT FROZEN — pending External Transport Audit)
 ================================================================================
 ```
 
