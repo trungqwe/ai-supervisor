@@ -1,12 +1,13 @@
 # P01-B -- EXTERNAL SUPERVISOR AUDIT DOSSIER
 
 > **Authority**: External Supervisor Independent Audit Authority
-> **Status**: SUBMITTED_FOR_FINAL_AUDIT
-> **Verdict**: P01_B_EXTERNAL_AUDIT = SUBMITTED_FOR_FINAL_AUDIT
+> **Status**: APPROVED
+> **Verdict**: P01_B_EXTERNAL_AUDIT = APPROVED
 > **Date**: 2026-09-21
 > **Repository**: `D:\TU_CODE\ai-supervisor`
-> **Audited Baseline Commit**: `daf1266b2e9cf2b150ae804711ba1c26a082cdcc`
-> **Remediation & Continuation Commit**: `b1f3204eaa8f828f6d62cec7e6f627ac85bd4575`
+> **Audited Initial Proof**: `daf1266b2e9cf2b150ae804711ba1c26a082cdcc`
+> **Remediation / Quota Consistency**: `b1f3204eaa8f828f6d62cec7e6f627ac85bd4575`
+> **Continuation Completion / Final Audited Commit**: `4bb3cb0a33f70aafd23f5e4bf0007cafd39c9d85`
 > **Prior Approved Milestone (P01-A)**: `a0b4c42de6bb11093cfac86e206e04819afacfdd`
 > **Historical Frozen Baseline**: `phase0-architecture-v1` (`6f72eaca30be3fc3ac00f25829dd4283ed98c3f5`)
 > **Pinned Agy**: `google-antigravity/antigravity-cli` `1.2.7` (`7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`)
@@ -23,12 +24,12 @@
 
 ```text
 P01_A = EXTERNAL_AUDIT_APPROVED
-P01_B_EXTERNAL_AUDIT = SUBMITTED_FOR_FINAL_AUDIT
-P01-B = PASS_PENDING_EXTERNAL_AUDIT
-P01-C = HELD_PENDING_EXTERNAL_P01_B_AUDIT
+P01_B_EXTERNAL_AUDIT = APPROVED
+P01-B = EXTERNAL_AUDIT_APPROVED
+P01-C = READY
 P01-D = TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED
 ARCHITECTURE_V2 = CANDIDATE_TRANSPORT_APPROVED_NOT_FROZEN
-ACTIVE_GATE = EXTERNAL_SUPERVISOR_P01_B_FINAL_AUDIT
+ACTIVE_GATE = P01_C_RUNTIME_EXECUTION_AUTHORIZED
 ```
 
 ---
@@ -229,9 +230,10 @@ All 16 capabilities have reached verified accepted state:
 
 ### Arithmetic Recount:
 ```text
-15 PASS
+14 PLAIN PASS
++ 1 PASS_WITH_CALLER_VALIDATION_CONSTRAINT
 + 1 PASS_WITH_QUOTA_ERROR_OBSERVED
-= 16/16 capabilities accepted
+= 16 / 16 ACCEPTED
 ```
 
 **Outstanding Empirical Blockers**: **NONE**.
@@ -254,17 +256,17 @@ All 16 capabilities have reached verified accepted state:
 
 ```text
 P01_A = EXTERNAL_AUDIT_APPROVED
-P01_B_EXTERNAL_AUDIT = SUBMITTED_FOR_FINAL_AUDIT
-P01-B = PASS_PENDING_EXTERNAL_AUDIT
-P01-C = HELD_PENDING_EXTERNAL_P01_B_AUDIT
+P01_B_EXTERNAL_AUDIT = APPROVED
+P01-B = EXTERNAL_AUDIT_APPROVED
+P01-C = READY
 P01-D = TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED
 ARCHITECTURE_V2 = CANDIDATE_TRANSPORT_APPROVED_NOT_FROZEN
-ACTIVE_GATE = EXTERNAL_SUPERVISOR_P01_B_FINAL_AUDIT
+ACTIVE_GATE = P01_C_RUNTIME_EXECUTION_AUTHORIZED
 ```
 
 **Directives**:
-1. Track P01-B runtime proof is complete and submitted for final External Supervisor audit.
-2. Track P01-C is released to `HELD_PENDING_EXTERNAL_P01_B_AUDIT` (ready to unlock upon final audit approval).
-3. Do NOT execute P01-C in this task.
+1. Track P01-B runtime proof is APPROVED by the External Supervisor.
+2. Track P01-C is released to **`READY`** and authorized for runtime execution.
+3. Proceed to Track P01-C execution.
 4. Do NOT proceed to Phase P02.
 5. Do NOT freeze Architecture V2.

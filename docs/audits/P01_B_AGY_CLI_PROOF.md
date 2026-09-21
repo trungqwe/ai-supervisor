@@ -521,7 +521,7 @@ All 16 required capabilities for direct Antigravity CLI v1.2.7 autonomous execut
 - Failure contract characterized with `SUPERVISOR_MUST_VALIDATE_AGY_INVOCATION_INPUTS_BEFORE_EXECUTION`: **ESTABLISHED**
 - Process cleanliness and evidence persistence: **AUDITED & CLEAN**
 
-**Track State:** Track P01-C is released to **`HELD_PENDING_EXTERNAL_P01_B_AUDIT`**.
+**Track State:** Track P01-B is **`EXTERNAL_AUDIT_APPROVED`**; Track P01-C is released to **`READY`**.
 
 ---
 
@@ -548,9 +548,10 @@ All 16 required capabilities for direct Antigravity CLI v1.2.7 autonomous execut
 
 ### Arithmetic Recount:
 ```text
-15 PASS
+14 PLAIN PASS
++ 1 PASS_WITH_CALLER_VALIDATION_CONSTRAINT
 + 1 PASS_WITH_QUOTA_ERROR_OBSERVED
-= 16/16 capabilities accepted
+= 16 / 16 ACCEPTED
 ```
 
 **Outstanding empirical items blocking track PASS:** **NONE** (All 16 items accepted).

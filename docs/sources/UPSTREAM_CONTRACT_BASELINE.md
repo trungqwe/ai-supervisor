@@ -38,7 +38,7 @@
 # 2. AO ↔ Agy Integration Breakdown & Gap Analysis
 
 ### A. Official Antigravity CLI Capability
-Official Agy `1.2.7` independently supports (partially runtime-tested — see P01-B dossier):
+Official Agy `1.2.7` independently supports (fully P01-B runtime-tested on the target Windows host — see P01-B dossier):
 - Headless non-interactive execution (`-p "<prompt>"`, `--output-format json|stream-json`). **PROVEN.**
 - Structured completion schema validation (`--json-schema <schema>`). **PROVEN.**
 - Persistent streaming input/output protocol (`--input-format stream-json --output-format stream-json` via stdin). **PROVEN** (same-process multi-turn context).

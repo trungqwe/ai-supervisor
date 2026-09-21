@@ -1,7 +1,7 @@
 # SOURCE DOSSIER: 02 — OFFICIAL ANTIGRAVITY CLI
 
 > **Authority**: Upstream Source Evidence Dossier
-> **Status**: Verified Documentation Baseline (P01-B Direct Runtime Proof COMPLETE — PASS_PENDING_EXTERNAL_AUDIT)
+> **Status**: Verified Documentation Baseline (P01-B EXTERNAL_AUDIT_APPROVED — Direct Runtime Proof COMPLETE)
 
 ---
 
