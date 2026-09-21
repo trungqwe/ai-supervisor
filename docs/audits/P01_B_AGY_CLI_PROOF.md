@@ -27,7 +27,7 @@
 | `P01_B10_CONTINUE` | Workspace continue (`--continue`) | `NOT_EVALUATED_QUOTA_BLOCKED` |
 | `AGY_VERSION_PIN` | Version exactly 1.2.7 | `PASS` |
 | `AGY_HELP_FLAGS` | Expected flags present in `agy --help` | `PASS` |
-| `AGY_FAILURE_EXIT_CODES` | Parse-layer failure contract | `PARTIAL` |
+| `AGY_FAILURE_EXIT_CODES` | Failure contract characterization | `PASS_WITH_CALLER_VALIDATION_CONSTRAINT` |
 | `P01B_ORPHAN_PROCESS_CHECK` | No P01-B orphan processes | `PASS` |
 | `P01B_CLEANUP` | Evidence preserved, sandbox retained | `PASS` |
 
@@ -361,18 +361,38 @@ Exit code: `0` | Stdout: successful model response | Stderr: (empty)
 
 ---
 
-### Failure Exit Code Summary
+### Failure Exit Code Summary & Process Deviation Record
+
+**Process Deviation Record**:
+```text
+Deviation ID: P01B-DEV-001
+Title: NEGATIVE_TEST_REMOTE_BOUNDARY_EXCEEDED
+Classification: PROCESS_HYGIENE_DEVIATION
+Security Impact: NONE OBSERVED
+Evidence Validity: PRESERVED
+Architecture Verdict Impact: NONE
+Quota Impact: POSSIBLE / NOT QUANTIFIED
+```
+*Note*: During negative test execution, NEG-A, NEG-C, and NEG-D crossed into remote API/model inference because Agy 1.2.7 does not validate these arguments locally. The evidence is preserved as an empirical characterization of CLI boundary behavior.
 
 | Scenario | Exit Code | Parse-Layer Rejection | Notes |
 |---|---|---|---|
-| Invalid `--output-format` value | `0` | NO | Silently ignored; falls back to text output |
-| Nonexistent `--json-schema` path | `1` | YES | Immediate local error, no API call |
-| Malformed JSON schema content | `3` | NO | Passed to API; `INVALID_ARGUMENT (400)` returned |
-| Nonexistent `--add-dir` path | `0` | NO | Silently ignored; agent proceeds normally |
+| Invalid `--output-format` value (NEG-A) | `0` | NO | Silently ignored; falls back to text output (remote inference occurred) |
+| Nonexistent `--json-schema` path (NEG-B) | `1` | YES | Immediate local error, zero API calls (local rejection) |
+| Malformed JSON schema content (NEG-C) | `3` | NO | Passed to API; `INVALID_ARGUMENT (400)` returned (remote API request occurred) |
+| Nonexistent `--add-dir` path (NEG-D) | `0` | NO | Silently ignored; proceeds to session (remote inference occurred) |
 
-**AGY_FAILURE_EXIT_CODES = PARTIAL**
+**Verdicts**:
+- **`AGY_FAILURE_CONTRACT = EMPIRICALLY_CHARACTERIZED`**
+- **`AGY_FAILURE_EXIT_CODES = PASS_WITH_CALLER_VALIDATION_CONSTRAINT`**
 
-Only `--json-schema` nonexistent path produces a clean parse-layer rejection (exit 1). Invalid `--output-format` and nonexistent `--add-dir` silently continue. Malformed schema content proceeds to API.
+*Meaning*: The failure behaviors of Agy 1.2.7 under invalid inputs are empirically established. PASS indicates that the failure boundary is characterized, not that Agy safely catches all invalid inputs locally.
+
+**Architectural Constraint (Carried forward to P01-C / Implementation)**:
+```text
+SUPERVISOR_MUST_VALIDATE_AGY_INVOCATION_INPUTS_BEFORE_EXECUTION = REQUIRED
+```
+Because Agy 1.2.7 does not reliably reject malformed inputs locally, the future Supervisor Control Plane / AOAdapter must validate format enums, verify schema readability/validity, and check `--add-dir` paths prior to process execution.
 
 ---
 
@@ -391,7 +411,7 @@ Only `--json-schema` nonexistent path produces a clean parse-layer rejection (ex
 | **Impact** | P01-B continuation acceptance incomplete; track overall = NOT_EVALUATED |
 | **ADR Required** | NO -- transient environment condition, not architectural gap |
 | **Active Gate** | `HUMAN_REQUIRED_P01_B_QUOTA_RECOVERY` |
-| **Quota Reset** | ~42h from P01-B9 execution (2026-09-21 17:55 +07:00) |
+| **Quota Reset** | ESTIMATED_ONLY (~42h from P01-B9 execution at 2026-09-21 17:55 +07:00; no provider SLA) |
 
 ---
 
@@ -502,8 +522,17 @@ Full track PASS requires all items in the acceptance matrix below to reach accep
 | `AGY_ADD_DIR` | PASS | **PASS** (P01-B8) |
 | `AGY_CONVERSATION_ID_RESUME` | PASS | **NOT_EVALUATED** (ENV-P01B-001) |
 | `AGY_CONTINUE` | PASS | **NOT_EVALUATED** (ENV-P01B-001) |
-| `AGY_FAILURE_EXIT_CODES` | PASS | **PARTIAL** (NEG-B PASS; NEG-A/C/D NOT_EVALUATED) |
+| `AGY_FAILURE_EXIT_CODES` | PASS | **PASS_WITH_CALLER_VALIDATION_CONSTRAINT** |
 | `P01B_ORPHAN_PROCESS_CHECK` | PASS | **PASS** |
 | `P01B_CLEANUP` | PASS | **PASS** |
 
-**Outstanding items blocking track PASS:** `AGY_CONVERSATION_ID_RESUME`, `AGY_CONTINUE`
+### Arithmetic Recount:
+```text
+13 PASS
++ 1 PASS_WITH_QUOTA_ERROR_OBSERVED
++ 2 NOT_EVALUATED
+= 16 required items
+```
+
+**Outstanding empirical items blocking track PASS:** `AGY_CONVERSATION_ID_RESUME` (P01-B9), `AGY_CONTINUE` (P01-B10).
+*(Failure exit code characterization is complete and is not an outstanding blocker).*

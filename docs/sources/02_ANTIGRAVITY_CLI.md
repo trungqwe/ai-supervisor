@@ -1,4 +1,4 @@
-# SOURCE DOSSIER: 02 -- OFFICIAL ANTIGRAVITY CLI
+# SOURCE DOSSIER: 02 — OFFICIAL ANTIGRAVITY CLI
 
 > **Authority**: Upstream Source Evidence Dossier
 > **Status**: Partially Runtime Tested (P01-B accepted empirical subset B1-B8 PASS; B9/B10 NOT EVALUATED)
@@ -17,7 +17,7 @@
 | **Commit Committer Date (UTC)** | `2026-09-19T01:01:48Z` | GitHub Commit Metadata |
 | **Repository SPDX License** | `NOT DECLARED` | GitHub Repository Metadata |
 | **Usage Terms** | Subject to applicable Google / Antigravity Terms of Service | Official Distribution Terms |
-| **Local Runtime Status** | `PARTIALLY_RUNTIME_TESTED` (Agy 1.2.7; P01-B empirical subset B1-B8 PASS; B9/B10 NOT EVALUATED pending quota recovery) | P01-B dossier: `docs/audits/P01_B_AGY_CLI_PROOF.md` |
+| **Local Runtime Status** | `PARTIALLY_RUNTIME_TESTED` (Agy 1.2.7; P01-B empirical subset B1-B8 PASS; failure contract characterized with `CALLER_VALIDATION_REQUIRED`; B9/B10 RUNTIME_NOT_EVALUATED pending quota recovery) | P01-B dossier: `docs/audits/P01_B_AGY_CLI_PROOF.md` |
 
 ---
 
@@ -94,6 +94,17 @@ Notes: P01-B7 confirmed file write without permission prompt. P01-B8 confirmed o
 ### Not Yet Proven (pending quota recovery -- ENV-P01B-001):
 - Cross-process conversation resume (`--conversation <id>`) -- P01-B9
 - Workspace continue (`--continue`, `-c`) -- P01-B10
+
+### Empirical Failure Contract & Integration Constraint:
+Empirical negative testing (P01-B safe negative suite) established that Agy 1.2.7:
+- Does not strictly validate every caller flag or path locally before remote execution.
+- Invalid `--output-format` values silently fall back to default text output.
+- Nonexistent `--add-dir` directories silently proceed without local rejection.
+- Malformed JSON schema content is passed to the remote API endpoint, triggering API-level errors (`INVALID_ARGUMENT`, code 400).
+- Only missing schema file paths reject locally with a clean exit code (`1`).
+
+**Operational Constraint:** `CALLER_VALIDATION_REQUIRED` / `SUPERVISOR_MUST_VALIDATE_AGY_INVOCATION_INPUTS_BEFORE_EXECUTION`
+The Supervisor Control Plane / AOAdapter must validate all CLI parameters (format enums, path accessibility, schema readability and parseability) prior to invoking Agy.
 
 ### Remaining Questions for P01-C (HELD):
 - Does AO's interactive harness (`--prompt-interactive`) interact cleanly with Agy's structured output flags?

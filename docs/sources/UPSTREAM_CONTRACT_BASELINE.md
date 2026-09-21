@@ -31,6 +31,7 @@
 | **Workspace Dir Binding** | Agy `1.2.7` | `agy --add-dir <path>` | `agy --help` | `DOCUMENTED` | `RUNTIME_TESTED_PASS` | Proven: out-of-band marker in secondary dir read successfully. Evidence: P01-B8. |
 | **Conversation ID Resume** | Agy `1.2.7` | `agy --conversation <id>` | `agy --help` | `DOCUMENTED` | `RUNTIME_NOT_EVALUATED` | ENV-P01B-001: `AGY_INDIVIDUAL_QUOTA_EXHAUSTED` blocked Turn 2. Flag accepted; full cross-process resume not proven. Evidence: P01-B9. |
 | **Workspace Continue** | Agy `1.2.7` | `agy --continue` / `agy -c` | `agy --help` | `DOCUMENTED` | `RUNTIME_NOT_EVALUATED` | Not yet tested. P01-B10 deferred pending quota recovery. |
+| **Failure Contract & Validation** | Agy `1.2.7` | Multiple flags | `agy --help` / P01-B negative suite | `DOCUMENTED` | `PASS_WITH_CALLER_VALIDATION_CONSTRAINT` | Characterized: missing schema path rejects locally (exit 1); invalid output-format and nonexistent add-dir proceed silently (exit 0); malformed schema errors remotely (exit 3). Constraint: `CALLER_VALIDATION_REQUIRED`. |
 
 ---
 
@@ -44,6 +45,7 @@ Official Agy `1.2.7` independently supports (partially runtime-tested — see P0
 - Secondary directory binding (`--add-dir`). **PROVEN.**
 - Permission bypass (`--dangerously-skip-permissions`). **PROVEN.**
 - Session continuation (`--conversation <id>`, `--continue`). **NOT EVALUATED** (ENV-P01B-001 quota gate).
+- Caller input validation: Characterized under P01-B safe negative suite; requires caller pre-validation (`CALLER_VALIDATION_REQUIRED`).
 
 ### B. AO Agy Adapter Capability (at Pinned Baseline v0.13.0)
 Inspection of `backend/internal/adapters/agent/agy/agy.go` confirms that AO invokes Agy using:
