@@ -11,6 +11,7 @@
 |---|---|
 | **Project Stage** | **Phase 1 — Upstream Proof Execution** |
 | **Current State** | **`ARCHITECTURE_V2_CANDIDATE_TRANSPORT_APPROVED_NOT_FROZEN`** |
+| **Architecture Status** | **`ARCHITECTURE_V2_CANDIDATE_TRANSPORT_APPROVED_NOT_FROZEN`** (P01-D transport proof complete; P01-A/B/C runtime/integration proofs remain; architecture freeze not authorized) |
 | **Phase 0 Status** | `COMPLETE` (Frozen Baseline: `phase0-architecture-v1` / `6f72eaca30be3fc3ac00f25829dd4283ed98c3f5`) |
 | **Current Phase** | `P01` (Phase 1: Upstream Proof & Transport Feasibility) |
 | **P01-D Status** | **`TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`** (`P01-D3A = PASS`; `P01-D3B = PARTIAL / PRESERVED_FALLBACK_RESEARCH`; `P01-D3C = PASS`) |

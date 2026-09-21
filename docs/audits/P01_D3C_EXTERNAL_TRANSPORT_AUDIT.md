@@ -58,27 +58,27 @@ The evidence base supporting this audit consists of the following verified artif
 
 | Sub-Gate / Checkpoint | Target Capability | Verification Type | Verdict | Notes / Empirical Evidence |
 |---|---|---|---|---|
-| **D3C-01** | Developer App Registration | Cloud UI / Tunnel Handshake | **`PASS`** | Developer app registered; tunnel recognized; tools discovered. |
-| **D3C-02** | Tool Metadata & Discovery | ChatGPT Web Interface | **`PASS`** | Exact tool schema registered (`supervisor_probe_read`, `supervisor_probe_write`). |
-| **D3C-03** | Tunnel Outbound Ingress Relay | Local Loopback Access Log | **`PASS`** | JSON-RPC 2.0 frames forwarded over loopback HTTP 127.0.0.1:3182/mcp. |
-| **D3C-04** | Live Non-Mutating Read | UI + Server State | **`PASS`** | Initial probe read returned default value; mutation count remained 0. |
-| **D3C-05** | Write Tool Approval UI Prompt | UI Human Interaction | **`PASS`** | Interactive modal presented with `[Allow once]`, `[Always allow]`, `[Deny]`. |
-| **D3C-06** | Approved Write & Persistence Read-Back | Server Log + Disk State | **`PASS`** | User confirmed `[Allow once]`; mutated state persisted to `D3C_PLUS_WRITE_1789974395862` (`mutation_count = 1`); read-back verified. |
-| **D3C-07** | Denied Write Safety | UI + Disk State | **`PASS`** | User clicked `[Deny]`; zero frames forwarded to local MCP; mutation count remained 1; zero side effects. |
-| **D3C-08** | Replay Protection & Exactly-Once | Server Log + State | **`PASS`** | Replay of write correlation ID returned `DUPLICATE_REPLAY`; mutation count unchanged at 1. |
-| **D3C-09** | Tunnel Reconnect Resilience | Process Kill + Restart | **`PASS`** | Tunnel-client terminated and restarted with identical tunnel ID; ChatGPT continued invocation without app recreation. |
-| **D3C-10** | Chat Continuity & New Conversation | Multi-Session Verification | **`PASS`** | Tool invoked seamlessly after unrelated turns in same conversation, and in a brand-new ChatGPT conversation. |
+| **D3C-01** | App Creation / Connection | Cloud UI / Tunnel Handshake | **`PASS`** | Developer app registered; tunnel recognized; tools discovered. |
+| **D3C-02** | Tool Discovery | ChatGPT Web Interface | **`PASS`** | Exact tool schema registered (`supervisor_probe_read`, `supervisor_probe_write`). |
+| **D3C-03** | Real ChatGPT Read | UI + Server State | **`PASS`** | Initial probe read executed; returned default value; mutation count remained 0; zero read side effects. |
+| **D3C-04** | Write Classification & Runtime Approval Behavior | UI Human Interaction | **`PASS`** | Interactive confirmation modal presented with options `[Allow once]`, `[Always allow]`, `[Deny]`. |
+| **D3C-05** | Approved Write | Server Log + Disk State | **`PASS`** | User confirmed `[Allow once]`; mutated state persisted to `D3C_PLUS_WRITE_1789974395862` (`mutation_count = 1`). |
+| **D3C-06** | Real ChatGPT Read-Back Persistence | UI + Server State | **`PASS`** | Read-back returned persisted state `D3C_PLUS_WRITE_1789974395862`; mutation count remained 1; zero side effects. |
+| **D3C-07** | Denied Write | UI + Disk State | **`PASS`** | User clicked `[Deny]`; zero frames forwarded to local MCP; mutation count remained 1; zero side effects. |
+| **D3C-08** | Replay / Idempotency | Server Log + State | **`PASS`** | Replay of write correlation ID returned `DUPLICATE_REPLAY`; mutation count unchanged at 1. |
+| **D3C-09** | Tunnel Reconnect | Process Kill + Restart | **`PASS`** | Tunnel-client terminated and restarted with identical tunnel ID; ChatGPT continued invocation without app recreation. |
+| **D3C-10** | Chat Continuity / New Conversation | Multi-Session Verification | **`PASS`** | Tool invoked seamlessly after unrelated turns in same conversation, and in a brand-new ChatGPT conversation. |
 | **D3C-11** | Local MCP Offline / Recovery | Process Kill + Restart | **`PASS`** | Local server terminated: ChatGPT returned truthful error ("The tool failed internally"); local server restarted: instant recovery without tunnel restart. |
-| **D3C-12** | Zero Public Inbound Exposure | Loopback Audit | **`PASS`** | Local MCP bound strictly to 127.0.0.1; zero inbound public IP or open firewall port required. |
-| **Checkpoint A** | App Connection & Tool Discovery | End-to-End Handshake | **`PASS`** | D3C-01, D3C-02, D3C-03 verified live. |
-| **Checkpoint B** | Read Transport Verification | Read-Only Round-Trip | **`PASS`** | D3C-04 verified live. |
-| **Checkpoint C** | Write Transport Approval | Approval Interception | **`PASS`** | D3C-05 verified live. |
-| **Checkpoint D** | State Read-Back Persistence | State Mutation Round-Trip | **`PASS`** | D3C-06 verified live. |
-| **Checkpoint E** | Interactive Denial Safety | Ingress Interception | **`PASS`** | D3C-07 verified live. |
-| **Checkpoint F** | Replay Protection & Idempotency | Duplicate Detection | **`PASS`** | D3C-08 verified live. |
-| **Checkpoint G** | Same-Tunnel Reconnection | Tunnel Daemon Cycling | **`PASS`** | D3C-09 verified live. |
-| **Checkpoint H** | Chat Continuity & Multi-Conversation | Conversational Scope | **`PASS`** | D3C-10 verified live. |
-| **Checkpoint I** | Backend Offline & Live Recovery | Failure Mode Verification | **`PASS`** | D3C-11 verified live. |
+| **D3C-12** | No Public Inbound Exposure | Loopback Audit | **`PASS`** | Local MCP bound strictly to 127.0.0.1; zero inbound public IP or open firewall port required. |
+| **Checkpoint A** | App Creation & Tool Discovery (D3C-01 + D3C-02) | End-to-End Handshake | **`PASS`** | D3C-01 and D3C-02 verified live. |
+| **Checkpoint B** | Real ChatGPT Read (D3C-03) | Read-Only Round-Trip | **`PASS`** | D3C-03 verified live. |
+| **Checkpoint C** | Write Classification & Approved Write (D3C-04 + D3C-05) | Approval & Mutation | **`PASS`** | D3C-04 and D3C-05 verified live. |
+| **Checkpoint D** | Real ChatGPT Read-Back Persistence (D3C-06) | State Persistence Verification | **`PASS`** | D3C-06 verified live. |
+| **Checkpoint E** | Denied Write Safety (D3C-07) | Ingress Interception | **`PASS`** | D3C-07 verified live. |
+| **Checkpoint F** | Replay / Idempotency (D3C-08) | Duplicate Detection | **`PASS`** | D3C-08 verified live. |
+| **Checkpoint G** | Tunnel Reconnect (D3C-09) | Tunnel Daemon Cycling | **`PASS`** | D3C-09 verified live. |
+| **Checkpoint H** | Chat Continuity / New Conversation (D3C-10) | Conversational Scope | **`PASS`** | D3C-10 verified live. |
+| **Checkpoint I** | Local MCP Offline / Recovery (D3C-11) | Failure Mode Verification | **`PASS`** | D3C-11 verified live. |
 
 ---
 
@@ -107,7 +107,7 @@ Phase P01-D3C empirically proved:
 
 ## 6. Write / Approval Finding
 
-1. Tools marked with destructive annotations (`annotations.destructive = true`) trigger the native ChatGPT interactive approval modal.
+1. Tools configured with the canonical MCP hint `destructiveHint: true` (alongside `readOnlyHint` and `openWorldHint`) trigger the native ChatGPT interactive approval modal.
 2. The interface presents explicit user controls: `[Allow once]`, `[Always allow]`, and `[Deny]`.
 3. Upon user approval (`[Allow once]`), the command executes on the local MCP server, mutates server-side state (`D3C_PLUS_WRITE_1789974395862`), increments `mutation_count` from 0 to 1, and records execution timestamps.
 
@@ -143,7 +143,7 @@ Phase P01-D3C empirically proved:
 
 1. **Same-Conversation Continuity**: Following arbitrary, unrelated conversational turns ("Explain in one sentence what idempotency means"), the tool remained fully functional and invokable with distinct command IDs.
 2. **New-Conversation Access**: Opening a brand-new, independent ChatGPT conversation session allowed immediate tool invocation without re-adding the app or configuring new tokens.
-3. Developer Mode app registrations attach to the user account, not to transient chat conversation sessions (`D3C_CHAT_CONTINUITY = EMPIRICALLY_PROVEN_ON_TARGET_PLUS`).
+3. The same existing Developer Mode app remained available and callable across separate ChatGPT conversations on the tested target account (`D3C_CHAT_CONTINUITY = EMPIRICALLY_PROVEN_ON_TARGET_PLUS`).
 
 ---
 
