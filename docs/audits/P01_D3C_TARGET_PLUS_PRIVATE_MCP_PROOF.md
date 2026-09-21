@@ -189,7 +189,7 @@ Key confirmed facts:
 
 - **Classification**: `HISTORICAL_PROCESS_RECORD` (Pre-dates user-authorized disposable test credential policy).
 - **Platform Key Revocation**: `OLD_D3A_PLATFORM_KEY_REVOCATION = NOT_ASSERTED / INFORMATIONAL_ONLY`.
-- **Status in P01**: Informational record only; not a blocking gate for P01 under `TEST_CREDENTIAL_POLICY = USER_AUTHORIZED`.
+- **Status in P01**: Informational record only; not a blocking gate for P01 under `TEST_CREDENTIAL_POLICY = USER_AUTHORIZED` (`ACTIVE_P01_GATE_FROM_SEC001 = NONE`).
 - **D3A Transport Proof**: Remains `PASS` (empirical evidence intact).
 
 ---
@@ -385,29 +385,64 @@ HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP — issued after Steps P1/P2/P3 pass
 - **Verdict**: `D3C-03 = PASS`
 - **Checkpoint Verdict**: `D3C_CHECKPOINT_B = PASS` (`D3C_READ_TRANSPORT = EMPIRICALLY_PROVEN_ON_TARGET_PLUS`)
 
-### D3C-04 — Write Classification
+### D3C-04 — Write Classification & Runtime Approval Behavior
 
 - **Tool Called**: `supervisor_probe_write`
-- **Metadata Classification**: `PASS` (Visibly classified by ChatGPT as `WRITE` and `DESTRUCTIVE`).
-- **Runtime Confirmation Behavior**: [AWAITING USER EXECUTION IN CHECKPOINT C]
+- **Metadata Classification**: `PASS` (Visibly labeled `WRITE` and `DESTRUCTIVE` in app actions UI).
+- **Runtime Approval UI Behavior**: `APPROVAL_PROMPT_SHOWN` (`PASS`)
+  - **Empirical Evidence**: Screenshot provided by User showing interactive ChatGPT confirmation card:
+    - Title: `Allow ChatGPT to use AI Supervisor P01-D3C Proof?`
+    - Subtext: `ChatGPT will call AI Supervisor P01-D3C Proof's Supervisor Probe Write tool. See details`
+    - Options Presented: `[Always allow]` | `[Deny]` | `[Allow once]`
+  - **User Action**: Clicked `Allow once`.
+- **Approval Ordering**: `APPROVAL_BEFORE_MUTATION = PASS`
+  - Client presented approval dialog before dispatching tool call.
+  - Command was only polled by `tunnel-client` at `14:10:15.268+07:00` and executed on local MCP at `14:10:15.269+07:00` after User clicked `Allow once`.
+- **Verdict**: `D3C-04 = PASS`
 
 ### D3C-05 — Approved Write
 
 - **Target Write Value**: `D3C_PLUS_WRITE_1789974395862`
 - **Correlation ID**: `d3c-write-1789974395862`
+- **User Prompt Executed**:
+  `"@AI Supervisor P01-D3C Proof Use AI Supervisor P01-D3C Proof to update the disposable supervisor proof state to 'D3C_PLUS_WRITE_1789974395862' using correlation ID 'd3c-write-1789974395862'. This is a test mutation. Do not perform any other action."`
+- **ChatGPT Output Received**:
+  `"Updated successfully. Status: APPLIED ; current proof state is D3C_PLUS_WRITE_1789974395862 with correlation ID d3c-write-1789974395862 ."`
 - **Pre-Write Baseline**:
   - `PRE_WRITE_CURRENT_VALUE`: `D3C_READ_ORIGIN_1789973668329`
   - `PRE_WRITE_MUTATION_COUNT`: `0`
-- **Status**: [AWAITING USER EXECUTION IN CHECKPOINT C]
-- **Verdict**: `PENDING_USER_INVOCATION`
+- **Post-Write Local State Audit (`data/state.json`)**:
+  ```json
+  {
+    "mutation_count": 1,
+    "current_value": "D3C_PLUS_WRITE_1789974395862",
+    "last_updated": "2026-09-21T07:10:15.269Z",
+    "applied_correlations": [
+      "d3c-write-1789974395862"
+    ]
+  }
+  ```
+- **Evaluation Criteria**:
+  - `WRITE_VALUE_MATCH`: `PASS` (Local `current_value` equals target `D3C_PLUS_WRITE_1789974395862`).
+  - `MUTATION_COUNT_0_TO_1`: `PASS` (Changed exactly 0 → 1).
+  - `APPROVED_WRITE_EXACTLY_ONCE`: `PASS` (Single mutation recorded).
+  - `CORRELATION_RECORDED`: `PASS` (Recorded `d3c-write-1789974395862`).
+  - `CHATGPT_WRITE_RESULT_MATCH`: `PASS` (ChatGPT returned `APPLIED`, exact write value, and exact correlation ID).
+  - `WRITE_TUNNEL_CORRELATION`: `PASS`
+    - Tunnel log `14:10:15.268+07:00`: polled command `cmd_c25565e1_53a5_41d9_97bf_20b7b311f7de` (`rpc_method=tools/call`).
+    - Local server state write timestamp: `2026-09-21T07:10:15.269Z` (`14:10:15.269+07:00`).
+    - Tunnel log `14:10:15.271+07:00`: dispatcher received response from MCP server.
+    - Tunnel log `14:10:15.557+07:00`: posted response to OpenAI control plane (`status_code=200`, `channel=main`).
+- **Verdict**: `D3C-05 = PASS`
+- **Checkpoint Verdict**: `D3C_CHECKPOINT_C = PASS` (`D3C_WRITE_TRANSPORT = EMPIRICALLY_PROVEN_ON_TARGET_PLUS`)
 
 ### D3C-06 — ChatGPT Read-Back
 
-Tool called: supervisor_probe_read
-Expected value: exact value written in D3C-05
-Actual value: [TO BE RECORDED]
-Mutation count: [TO BE RECORDED]
-Verdict: [TO BE RECORDED]
+- **Target State for Read-Back**: Untouched post-write state (`current_value = D3C_PLUS_WRITE_1789974395862`, `mutation_count = 1`).
+- **Active Gate**: `HUMAN_REQUIRED_D3C_READ_BACK`
+- **Prompt Isolation Rule**: The user prompt must NOT disclose `D3C_PLUS_WRITE_1789974395862`. ChatGPT must retrieve and report it out-of-band.
+- **Actual response**: [AWAITING USER EXECUTION]
+- **Verdict**: `PENDING_USER_INVOCATION`
 
 ### D3C-07 — Denied Write
 
@@ -464,47 +499,46 @@ Verdict: [TO BE RECORDED]
 
 ---
 
-## 8. Human Checkpoint — ChatGPT Write Test (Checkpoint C)
+## 8. Human Checkpoint — ChatGPT Read-Back Test (Checkpoint D)
 
 ```text
-HUMAN_REQUIRED_D3C_APPROVED_WRITE
+HUMAN_REQUIRED_D3C_READ_BACK
 Status: ACTIVE_WAITING_FOR_USER_ACTION
-Checkpoint: D3C_CHECKPOINT_C (D3C-04 Write Classification & D3C-05 Approved Write)
+Checkpoint: D3C_CHECKPOINT_D (D3C-06 Real ChatGPT Read-Back Persistence)
 D3C-01_APP_CONNECTION: PASS
 D3C-02_TOOL_DISCOVERY: PASS
 D3C-03_CHATGPT_READ: PASS
+D3C-04_WRITE_CLASSIFICATION: PASS
+D3C-05_APPROVED_WRITE: PASS
 D3C_CHECKPOINT_A: PASS
 D3C_CHECKPOINT_B: PASS
+D3C_CHECKPOINT_C: PASS
 REQUIRED_PERMISSION: ALLOW_READ_ACTIONS (Confirmed by User)
-WRITE_VALUE: D3C_PLUS_WRITE_1789974395862
-CORRELATION_ID: d3c-write-1789974395862
+EXPECTED_PERSISTED_VALUE: D3C_PLUS_WRITE_1789974395862 (Out-of-band target)
+EXPECTED_MUTATION_COUNT: 1
 ```
 
 Pre-conditions confirmed before issuing this checkpoint:
-- D3C-01 App Connection: PASS (`AI Supervisor P01-D3C Proof` in `dev mode`)
-- D3C-02 Tool Discovery: PASS (`supervisor_probe_read` [READ] & `supervisor_probe_write` [WRITE, DESTRUCTIVE])
-- D3C-03 Real Read: PASS (Returned exact out-of-band marker `D3C_READ_ORIGIN_1789973668329`, 0 mutations)
-- App Permission: `Allow read actions` confirmed configured by User
-- Pre-write local state captured: `current_value: D3C_READ_ORIGIN_1789973668329`, `mutation_count: 0`
+- D3C-01 App Connection: PASS
+- D3C-02 Tool Discovery: PASS
+- D3C-03 Read Transport: PASS
+- D3C-04 Write Approval UI: PASS (Interactive confirmation card displayed and approved via "Allow once")
+- D3C-05 Approved Write: PASS (State mutated 0 -> 1, current_value: D3C_PLUS_WRITE_1789974395862)
+- Local state remains untouched since write (mutation_count: 1)
 - Tunnel and MCP server running, healthy, and polling OpenAI control plane
 
 User Instructions:
 
-1. Confirm app Permissions in ChatGPT Plugins settings remains:
-   `Allow read actions`
-2. In the same or a new ChatGPT conversation, select / mention:
+1. In the same or a new ChatGPT conversation, select / mention:
    `AI Supervisor P01-D3C Proof`
-3. Send the following prompt:
-   "Use AI Supervisor P01-D3C Proof to update the disposable supervisor proof state to 'D3C_PLUS_WRITE_1789974395862' using correlation ID 'd3c-write-1789974395862'. This is a test mutation. Do not perform any other action."
-4. Observe ChatGPT behavior:
-   - Does ChatGPT present an approval/confirmation dialog before executing `supervisor_probe_write`?
-   - If prompted, click **Allow / Approve**.
-5. Capture and send back screenshots/text showing:
-   - The confirmation prompt/dialog (if displayed);
-   - The tool execution card;
-   - The full response from ChatGPT after execution.
+2. Send the following prompt:
+   "Use AI Supervisor P01-D3C Proof to read the current local supervisor proof state after the test write. Return the current disposable state, mutation count, timestamp, proof identifier, and correlation ID. Do not modify anything."
+3. **Do NOT mention or include `D3C_PLUS_WRITE_1789974395862` in your prompt.**
+4. Capture and send back screenshots/text showing:
+   - The full ChatGPT response;
+   - Any visible app/tool execution card or progress indicator.
 
-STOP after receiving the write response. Do NOT execute read-back or denial tests yet.
+STOP after receiving the read-back response. Do NOT execute denied write or replay tests yet.
 
 PROHIBITED:
 - Do NOT automate the ChatGPT UI
@@ -569,10 +603,12 @@ No workarounds. No browser automation. No silent architecture switch.
 | HUMAN_REQUIRED_D3C_CHATGPT_READ | `CLOSED` | Completed by User |
 | D3C-03 — ChatGPT Read | `PASS` | Returned exact out-of-band marker, 0 mutations, log aligned |
 | D3C Checkpoint B | `PASS` | Real ChatGPT Plus read transport empirically proven |
-| HUMAN_REQUIRED_D3C_APPROVED_WRITE | `ISSUED` | Awaiting user execution of approved write in ChatGPT |
-| D3C-04 — Write Classification | `PENDING` | Active Gate (Checkpoint C) |
-| D3C-05 — Approved Write | `PENDING` | Active Gate (Checkpoint C) |
-| D3C-06 — Read-Back | `PENDING` | Awaiting External Supervisor approval after D3C-05 |
+| HUMAN_REQUIRED_D3C_APPROVED_WRITE | `CLOSED` | Completed by User |
+| D3C-04 — Write Classification | `PASS` | Interactive approval card shown; approved via "Allow once" |
+| D3C-05 — Approved Write | `PASS` | Mutated exactly 0 -> 1; current_value and correlation verified |
+| D3C Checkpoint C | `PASS` | Real ChatGPT Plus write transport empirically proven |
+| HUMAN_REQUIRED_D3C_READ_BACK | `ISSUED` | Awaiting user execution of read-back probe in ChatGPT |
+| D3C-06 — Read-Back | `PENDING` | Active Gate (Checkpoint D) |
 | D3C-07 — Denied Write | `PENDING` | Awaiting External Supervisor approval after D3C-05 |
 | D3C-08 — Replay | `PENDING` | Awaiting External Supervisor approval after D3C-05 |
 | D3C-09 — Tunnel Reconnect | `PENDING` | Awaiting External Supervisor approval after D3C-05 |
@@ -587,24 +623,24 @@ No workarounds. No browser automation. No silent architecture switch.
 ```
 ================================================================================
 P01-D3C VERDICT:
-IN_PROGRESS (CHECKPOINT A: PASS; CHECKPOINT B: PASS; ACTIVE GATE: HUMAN_REQUIRED_D3C_APPROVED_WRITE)
+IN_PROGRESS (CHECKPOINT A, B, C: PASS; ACTIVE GATE: HUMAN_REQUIRED_D3C_READ_BACK)
 
 REASON:
-D3C-03 (Real ChatGPT Read) successfully verified:
-- Caller: Personal ChatGPT Plus Web UI over Secure MCP Tunnel
-- Tool: supervisor_probe_read
-- Returned value exactly matches local pre-read marker D3C_READ_ORIGIN_1789973668329
-- Zero side effects / zero mutation confirmed
-- Tunnel dispatcher logs correlate with execution timestamp (14:04:12+07:00)
-Checkpoint B is complete (PASS).
-Checkpoint C prepared with unique write target D3C_PLUS_WRITE_1789974395862.
-Awaiting user execution of approved write.
+D3C-04 (Write Classification & Approval Behavior) and D3C-05 (Approved Write)
+successfully verified on Personal ChatGPT Plus Web over Secure MCP Tunnel:
+- Confirmation prompt displayed: "Allow ChatGPT to use AI Supervisor P01-D3C Proof? ... [Allow once]"
+- State mutated exactly once: mutation_count 0 -> 1
+- Local current_value updated to D3C_PLUS_WRITE_1789974395862
+- Correlation d3c-write-1789974395862 recorded
+- Dispatcher logs aligned with state timestamp (14:10:15+07:00)
+Checkpoint C is complete (PASS).
+Checkpoint D prepared for out-of-band read-back persistence verification.
 
 P01-D STATUS:
 PARTIALLY_PROVEN / D3C_IN_PROGRESS
 
 P01-D3A_FUNCTIONAL = PASS
-P01-D3A_SECURITY = PASS_WITH_REMEDIATED_SECURITY_INCIDENT (Historical)
+P01-D3A-SEC-001 = HISTORICAL_PROCESS_RECORD (ACTIVE_P01_GATE_FROM_SEC001 = NONE)
 
 ARCHITECTURE V2 STATUS:
 CANDIDATE (NOT FROZEN — pending External Transport Audit)
