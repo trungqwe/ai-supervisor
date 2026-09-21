@@ -1,12 +1,12 @@
-# P01-D3B — REAL PUBLIC PLUGIN SUBMISSION PIPELINE PROOF DOSSIER
+﻿# P01-D3B — REAL PUBLIC PLUGIN SUBMISSION PIPELINE PROOF DOSSIER
 
 > **Authority**: Phase 1 Upstream Proof Dossier — Track P01-D3B  
-> **Date**: 2026-09-21  
+> **Date**: 2026-09-21 (Corrected: 2026-09-21 — External Audit Corrections Applied)  
 > **Architecture Status**: `ARCHITECTURE_V2_CANDIDATE` (Strictly Candidate; Not Frozen)  
 > **Identity Verification**: `VERIFIED` (Individual identity verified on OpenAI Platform)  
 > **Plugin Draft Creation**: `PASS` (Real draft created in submission portal)  
 > **Submission Mode**: `WITH_MCP`  
-> **P01-D3B Pre-Submit Pipeline**: `PARTIAL` (`PRE_SUBMIT_READINESS_COMPLETED`)  
+> **P01-D3B Pre-Submit Pipeline**: `PARTIAL` (`PRE_SUBMIT_READINESS_COMPLETED`; External Audit Corrections Applied)  
 > **Overall P01-D Transport Gate**: `PARTIALLY_PROVEN / FINAL_PLUGIN_GATE_PENDING`  
 > **P01-D Phase Verdict**: `GAP_REQUIRES_ADR`  
 > **P01-A / P01-B / P01-C Status**: `HELD`  
@@ -26,7 +26,7 @@ A real plugin draft was created in the official portal. The portal wizard tabs w
 `Info` → `MCP` → `Skills` → `Prompts` → `Testing` → `Global` → `Submit`.
 
 Observed fields in the real `Info` tab include:
-- Directory icon (512x512) & ChatGPT composer icon (32x32)
+- Directory icon (256x256 min, PNG) & ChatGPT composer icon (48x48 min, PNG)
 - Name, Version, Subtitle, Description, Category
 - Developer Identity & Plugin Author
 - Website URL, Customer Support URL, Privacy Policy URL, Terms of Service URL
@@ -70,7 +70,11 @@ Re-read authoritative OpenAI documentation on 2026-09-21:
 1. **Public MCP URL Requirement**: Must be public HTTPS, valid TLS certificate, reachable by OpenAI review bots and users.
 2. **Domain Verification**: Requires serving a plain-text challenge at `https://<domain>/.well-known/openai-apps-challenge`.
 3. **Scan Tools**: Automated portal parser queries `tools/list` over Streamable HTTP (`/mcp`), validating tool schemas and safety annotations (`readOnlyHint`, `destructiveHint`, `openWorldHint`).
-4. **Demo Recording**: Requires a public video URL demonstrating test cases in action via Developer Mode.
+4. **Developer Mode (Official Fact)**: Per current official OpenAI documentation, full MCP access including write/modify operations via Developer Mode is documented for **Business, Enterprise, and Edu workspaces**. Developer Mode for **Personal ChatGPT Plus** is subject to phased rollout and is NOT currently confirmed as generally available. Do NOT assume published-plugin submission bypasses the demo/developer-mode requirement until the actual portal proves it empirically.
+
+> [!CAUTION]
+> **ASSUMPTION**: Statements 1-4 above are ingested from official documentation pages but have not been independently verified by executing the actual portal submission workflow. Mark as `ASSUMPTION_FROM_OFFICIAL_DOCS` until portal preflight produces empirical evidence.
+
 
 ---
 
@@ -91,10 +95,17 @@ OpenAI specifies that the public MCP endpoint can act as a public proxy/gateway 
 | **Outbound Local-Node Relay Support** | Persistent WebSocket relay initiated by local node | Persistent WebSocket / SSH / gRPC relay | Native outbound-only tunnel daemon |
 | **Operational Complexity** | Low to Medium | Medium (Linux updates, firewall, DNS) | Low (if domain already on Cloudflare) |
 
-### Architecture Recommendations:
-- **For P01-D3B Proof / Rapid Verification**: **Candidate 3 (Cloudflare Named Tunnel with Custom Domain)** or **Candidate 1 (Fly.io Container)**. Enables immediate domain verification and Streamable HTTP `/mcp` scanning with zero inbound ports.
-- **For Eventual Production V1**: **Candidate 2 (VPS with Caddy)** or **Candidate 1 (Dedicated Cloud Gateway Container)**. Establishes a clean architectural boundary between public internet traffic and developer workstations, supporting OpenAI-managed mTLS termination and user OAuth 2.1 authentication.
-- **ADR Governance**: Selection of the final production gateway requires an approved Architecture Decision Record: `ADR-004-PUBLIC-MCP-GATEWAY-ARCHITECTURE.md`.
+### Architecture Candidates (Not Selected / Not Approved):
+
+> [!IMPORTANT]
+> All three candidates remain **`CANDIDATE_ONLY`**. No transport has been approved, deployed, or made canonical.
+> No ADR-004 decision has been made. No deployment shall occur until: (1) `D3B-PORTAL-EMPIRICAL-PREFLIGHT` completes with User screenshot evidence, and (2) the External Supervisor approves the ADR.
+
+- **Candidate 3 (Cloudflare Named Tunnel + Custom Domain)**: Evaluated for P01-D3B proof feasibility. Zero inbound ports. Domain challenge trivially routed. Cold-start: 0ms. SSE support bounded by edge proxy timeouts.
+- **Candidate 1 (Managed Container — Fly.io / CF Workers)**: Evaluated for P01-D3B proof feasibility. Rapid deploy. Scale-to-zero cold start risk for long-lived SSE.
+- **Candidate 2 (Dedicated Cloud VPS + Caddy)**: Evaluated for production V1 shape. Clean boundary. Higher operational complexity.
+
+**Status**: `ADR_REQUIRED` before any deployment decision. Do NOT create ADR-004 yet.
 
 ---
 
@@ -112,6 +123,12 @@ Staged in disposable sandbox: `D:\TU_CODE\_ai_supervisor_p01d_public_mcp_proof\g
     - `tools/list`: Discovered `supervisor_probe_read` and `supervisor_probe_write`.
     - `tools/call supervisor_probe_read`: Succeeded, returned node identity.
     - `tools/call supervisor_probe_write`: Succeeded, applied mutation #1.
+
+> [!CAUTION]
+> **Relay Evidence Correction**:
+> `PUBLIC_GATEWAY_TO_LOCAL_NODE_RELAY = NOT_PROVEN`
+>
+> The current D3B prototype stores disposable state **locally within the sandbox process** on the same machine running the gateway server. It has **NOT** empirically demonstrated an independently hosted public gateway (running on a separate remote host) relaying MCP requests to the private Windows Supervisor node over an outbound tunnel. The relay architecture in Section 7 is a **target diagram** — it represents the intended production shape, not a proven empirical result.
 
 ---
 
@@ -162,8 +179,8 @@ Draft values prepared for the 16 observed fields in the `Info` tab:
 
 | Field | Truthful Draft Value | Deployment / Governance Status |
 |---|---|---|
-| **Directory Icon** | 512x512 PNG candidate | Asset drafted; pending deployment |
-| **Composer Icon** | 32x32 transparent PNG | Asset drafted; pending deployment |
+| **Directory Icon** | 256x256 min PNG (User-observed UI minimum) | Asset drafted; pending deployment |
+| **Composer Icon** | 48x48 min PNG (User-observed UI minimum) | Asset drafted; pending deployment |
 | **Plugin Name** | `AI Engineering Supervisor` | Compliant (Functional, non-deceptive) |
 | **Version** | `0.1.0` | Initial release candidate slice |
 | **Subtitle** | Supervised software engineering control plane for autonomous coding agents. | Compliant (< 100 chars, accurate) |
@@ -191,10 +208,18 @@ Draft values prepared for the 16 observed fields in the `Info` tab:
 
 ## 12. Prompts Tab Draft
 
-Prepared starter prompts:
-1. *"Inspect the operational status of the local supervisor node."*
-2. *"Display the active Task Contract and worker status for task-001."*
-3. *"Record a supervisory audit marker for the completed test execution."*
+Prepared starter prompts (constrained to currently exposed proof tools only):
+1. *"Inspect the operational status of the AI Engineering Supervisor proof endpoint."*
+2. *"Record a supervisory probe marker 'TEST_CHECKPOINT' for correlation id 'probe-001'."*
+3. *"Verify what tools are available in the AI Engineering Supervisor proof endpoint."*
+
+> [!WARNING]
+> **FUTURE_TARGET_CAPABILITY** (NOT for current submission slice):
+> - "Display the active Task Contract and worker status" — requires Task Contract system implementation.
+> - "Inspect Git diff for worker report" — requires Git diff tool exposure.
+> - "Coordinate worker-pair assignment" — requires AO/Agy runtime integration.
+> - "Review and approve/deny a worker report" — requires Approval Gate implementation.
+> These must NOT appear in the current proof submission listing until implemented in a legitimate product slice.
 
 ---
 
@@ -231,13 +256,24 @@ Prepared in exact accordance with portal review guidelines:
    - Expected State Effect: Zero mutation.
    - Expected Response: Confirms value `"PROPOSAL_ACCEPTED"` persists in local state.
    - Forbidden Side Effects: None.
-5. **Case 5 (Connectivity & Health Check)**:
-   - Input: *"Verify gateway and node connectivity."*
+5. **Case 5 (Proof State Round-Trip)**:
+   - Input: *"Confirm the last recorded audit marker for correlation probe-001."*
    - Expected Tool: `supervisor_probe_read`
-   - Expected Arguments: `{"correlation_id": "health-001"}`
+   - Expected Arguments: `{"correlation_id": "verify-probe-001"}`
    - Expected State Effect: Zero mutation.
-   - Expected Response: Confirms active connection between public gateway and local node.
+   - Expected Response: Returns current stored value and mutation timestamp from disposable local state.
    - Forbidden Side Effects: None.
+
+> [!IMPORTANT]
+> **Protocol Evidence Only (NOT a user-facing test case)**:
+> `tools/list` is a protocol-level MCP initialization step, not a submission test case. It is recorded as protocol evidence from `@modelcontextprotocol/inspector` v2.7.0 CLI execution:
+> `tools/list → supervisor_probe_read, supervisor_probe_write (PASS)`
+> It must NOT appear as a positive user-facing submission test case.
+
+> [!WARNING]
+> **Evidence Scope Correction**:
+> Case 5 expected response "Confirms active connection between public gateway and local node" was incorrect — the D3B prototype stores state locally within the same gateway process (no independently hosted relay proven). Corrected to reflect actual local-store behavior.
+> `PUBLIC_GATEWAY_TO_LOCAL_NODE_RELAY = NOT_PROVEN`
 
 ### Negative Test Cases (3):
 1. **Case 1 (Arbitrary Command Execution Refusal)**:
@@ -258,13 +294,21 @@ Prepared in exact accordance with portal review guidelines:
 ## 14. Developer Mode & Demo Recording Gate
 
 - **Portal Observation**: The portal UI explicitly requests a `Demo Recording URL` to validate plugin functionality and references Developer Mode.
+
+> [!CAUTION]
+> **Official OpenAI Fact (as of 2026-09-21)**:
+> Full MCP Developer Mode (allowing write/modify operations and live MCP app testing in ChatGPT) is officially documented for **Business, Enterprise, and Edu workspaces**. It is **NOT** confirmed as generally available for **Personal ChatGPT Plus** accounts at this time.
+> Do NOT assume published-plugin submission bypasses the demo/developer-mode requirement until the actual portal submission flow proves it empirically.
+> `D3B-DEVELOPER-MODE-FOR-PLUS = ASSUMPTION_UNVERIFIED`
+
 - **Account Surface Evaluation**:
-  - **Personal ChatGPT Plus**: Availability of Developer Mode under `Settings → Security & login` is subject to ongoing OpenAI feature rollouts.
+  - **Personal ChatGPT Plus**: Developer Mode availability is `NOT_CONFIRMED`. Pending empirical check under `Settings → Security & login` on the User's actual Plus account.
   - **Edu K12 Member Workspace**: Availability is governed by workspace administrator policies.
 - **Gate Classification**:
-  - If Developer Mode is unavailable on the user's account: **`D3B-DEVELOPER-MODE = BLOCKED_BY_ACCOUNT_OR_WORKSPACE_POLICY`**.
-  - This is an external platform dependency; it does NOT block independent public endpoint construction, domain verification, or tool scanning.
-- **Mandatory vs Optional Status**: The portal draft will be tested empirically to determine if Demo Recording URL is strictly required before final submission.
+  - **`D3B-DEVELOPER-MODE = BLOCKED_PENDING_EMPIRICAL_PORTAL_CHECK`**
+  - This is a hard external dependency gate. It blocks Demo Recording and may affect reviewer testing workflow.
+  - Does NOT block public endpoint construction, domain verification, or tool scanning.
+- **Mandatory vs Optional Status**: **`UNVERIFIED`** — to be determined empirically during `D3B-PORTAL-EMPIRICAL-PREFLIGHT` (Section 18). Do not assume optional until the portal explicitly confirms it.
 
 ---
 
@@ -275,6 +319,49 @@ Prepared in exact accordance with portal review guidelines:
 
 ---
 
+## 18. New Hard Gate: D3B-PORTAL-EMPIRICAL-PREFLIGHT
+
+> [!IMPORTANT]
+> **Status: `HARD_GATE_OPEN` — Awaiting User Portal Screenshots / Empirical Evidence**
+>
+> This gate must be completed before any further submission-pipeline decisions are made.
+> The portal wizard tabs have been visually inspected (Info confirmed); the following tabs have **NOT** been empirically documented with screenshots or structured evidence:
+> `MCP`, `Testing`, `Submit`.
+
+### Required User Actions
+
+The User must navigate the real OpenAI Plugin Submission Portal for the existing draft and provide:
+
+1. **MCP Tab screenshot & answers**:
+   - What URL entry modes does the MCP tab offer? (URL field, auto-detection, SSE-only vs. Streamable HTTP, etc.)
+   - Are authentication fields (OAuth 2.1, Bearer token, mTLS) exposed at this tab?
+   - What is the exact domain verification workflow? Does the tab show a challenge token to copy?
+   - What does "Scan Tools" button state / progress look like before and after scanning?
+
+2. **Testing Tab screenshot & answers**:
+   - What is the exact structure of a test case entry in the portal? (input/output fields, tool selection, etc.)
+   - Is a Demo Recording URL field present in the Testing tab or only in the Info tab?
+
+3. **Submit Tab screenshot & answers**:
+   - Is a Demo Recording URL strictly mandatory before the Submit button becomes active?
+   - Does the Submit tab show a reviewer checklist or pre-flight validation output?
+   - Is there a supported workflow for submitting without Developer Mode access on Personal Plus?
+
+4. **Developer Mode check on Plus account**:
+   - Navigate to `ChatGPT Settings → Security & login` (or equivalent) on the User's Personal ChatGPT Plus account.
+   - Is a Developer Mode toggle present and enabled?
+   - If absent: confirm `D3B-DEVELOPER-MODE-FOR-PLUS = BLOCKED_BY_PLATFORM`.
+
+### Gate Verdict
+
+```text
+D3B-PORTAL-EMPIRICAL-PREFLIGHT: OPEN
+Status: AWAITING_USER_SCREENSHOT_EVIDENCE
+Blocking: MCP tab, Testing tab, Submit tab, Developer Mode on Plus
+Do NOT proceed to final submission or public deployment until this gate provides empirical answers.
+```
+
+---
 ## 16. Pre-Submit Readiness Report (`P01-D3B_PRE_SUBMIT_READINESS_REPORT`)
 
 | Sub-Gate / Requirement | Status | Evidence / Blocker |
@@ -286,9 +373,10 @@ Prepared in exact accordance with portal review guidelines:
 | **Domain Verification** | **`BLOCKED`** | Pending public domain & challenge token |
 | **Scan Tools** | **`BLOCKED`** | Requires active public HTTPS endpoint |
 | **Info Tab Assets & Legal URLs** | **`BLOCKED`** | Policy URLs (`privacy`, `terms`) not yet published |
-| **Testing Tab Test Cases** | **`PASS`** | 5 positive + 3 negative cases formulated |
-| **Developer Mode Availability** | **`BLOCKED`** | Pending confirmation on Plus/Edu account |
-| **Demo Recording** | **`BLOCKED`** | Pending Developer Mode & video recording |
+| **Testing Tab Test Cases** | **`PASS`** | 5 positive + 3 negative cases formulated; corrected to remove `tools/list` as user-facing case and future-capability claims |
+| **Developer Mode Availability** | **`BLOCKED_PENDING_EMPIRICAL_PORTAL_CHECK`** | Official docs confirm for Business/Enterprise/Edu; Plus availability unverified. Awaits `D3B-PORTAL-EMPIRICAL-PREFLIGHT` |
+| **Demo Recording** | **`BLOCKED`** | Pending Developer Mode empirical verification; mandatory vs optional status unverified |
+| **D3B-PORTAL-EMPIRICAL-PREFLIGHT** | **`OPEN`** | MCP tab, Testing tab, Submit tab, Developer Mode on Plus — awaiting User screenshot evidence (Section 18) |
 | **Submit Tab Action** | **`STOPPED`** | Final Submit strictly prohibited without User + External approval |
 
 ---
@@ -300,16 +388,35 @@ Prepared in exact accordance with portal review guidelines:
 P01-D3B VERDICT:
 PARTIAL
 
+CORRECTIONS APPLIED (External Audit 2026-09-21):
+- Icon dimensions corrected: 256x256 min (directory), 48x48 min (composer)
+- Plugin Author: [VERIFIED_LEGAL_PUBLISHER_NAME] (legal name not stored in repo)
+- Future capabilities marked FUTURE_TARGET_CAPABILITY:
+  Task Contract inspection, Git diff, Worker status, Worker-pair coordination, AO/Agy control
+- Starter prompts corrected to current proof tools only
+- tools/list removed from user-facing test cases (remains protocol evidence only)
+- Test case 5 corrected: PUBLIC_GATEWAY_TO_LOCAL_NODE_RELAY = NOT_PROVEN
+- Hosting candidates remain CANDIDATE_ONLY; ADR-004 not yet created
+- D3B-PORTAL-EMPIRICAL-PREFLIGHT: OPEN (new hard gate added)
+- Developer Mode official fact: documented for Business/Enterprise/Edu; Plus = ASSUMPTION_UNVERIFIED
+- P01-D3A-SEC-001: REMEDIATION_PENDING (unchanged; awaits User platform key revocation confirmation)
+
 REASON:
 - Identity Verification: PASS (VERIFIED)
 - Plugin Portal Draft: PASS (With MCP mode)
-- Gateway Prototype: PASS (Local Streamable HTTP, challenge route, inspector verified)
+- Gateway Prototype: PASS (Local Streamable HTTP only, co-located; PUBLIC_GATEWAY_TO_LOCAL_NODE_RELAY = NOT_PROVEN)
 - Public HTTPS Endpoint: BLOCKED (Pending public deployment)
 - Domain Verification: BLOCKED (Pending domain challenge)
 - Scan Tools: BLOCKED (Pending public endpoint)
 - Legal URLs & Policy Pages: BLOCKED (Drafted honestly; pending public hosting)
-- Demo Recording / Developer Mode: BLOCKED (Pending account availability check)
-- Final Submit: STOPPED (Pre-submit readiness documented; submission blocked pending product slice)
+- Developer Mode: BLOCKED_PENDING_EMPIRICAL_PORTAL_CHECK (Plus availability unverified)
+- Demo Recording: BLOCKED (mandatory vs optional status unverified)
+- D3B-PORTAL-EMPIRICAL-PREFLIGHT: OPEN (MCP/Testing/Submit tabs + Developer Mode on Plus)
+- P01-D3A-SEC-001: REMEDIATION_PENDING (awaiting User platform key revocation confirmation)
+- Final Submit: STOPPED
+
+P01-D3A_FUNCTIONAL = PASS
+P01-D3A_SECURITY = REMEDIATION_PENDING
 
 OVERALL P01-D TRANSPORT GATE:
 PARTIALLY_PROVEN / FINAL_PLUGIN_GATE_PENDING
