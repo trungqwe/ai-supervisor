@@ -1,7 +1,7 @@
-﻿# SOURCE DOSSIER: 02 — OFFICIAL ANTIGRAVITY CLI
+# SOURCE DOSSIER: 02 -- OFFICIAL ANTIGRAVITY CLI
 
-> **Authority**: Upstream Source Evidence Dossier  
-> **Status**: Verified Documentation Baseline (Post-Re-Audit #2 Hygiene)
+> **Authority**: Upstream Source Evidence Dossier
+> **Status**: Partially Runtime Tested (P01-B accepted empirical subset B1-B8 PASS; B9/B10 NOT EVALUATED)
 
 ---
 
@@ -17,7 +17,7 @@
 | **Commit Committer Date (UTC)** | `2026-09-19T01:01:48Z` | GitHub Commit Metadata |
 | **Repository SPDX License** | `NOT DECLARED` | GitHub Repository Metadata |
 | **Usage Terms** | Subject to applicable Google / Antigravity Terms of Service | Official Distribution Terms |
-| **Local Runtime Status** | `1.2.7` Installed; Empirical Headless Proof Pending P01 | Local binary smoke test |
+| **Local Runtime Status** | `PARTIALLY_RUNTIME_TESTED` (Agy 1.2.7; P01-B empirical subset B1-B8 PASS; B9/B10 NOT EVALUATED pending quota recovery) | P01-B dossier: `docs/audits/P01_B_AGY_CLI_PROOF.md` |
 
 ---
 
@@ -29,59 +29,72 @@ Claim: Antigravity CLI v1.2.7 supports non-interactive single-prompt execution a
 Repository: google-antigravity/antigravity-cli
 Pinned tag: 1.2.7
 Pinned commit: 7bb195acaec9e7788df5210d0dc3e15f3cefc6b3
-Evidence type: OFFICIAL_REPO_DOC
-Exact evidence: README.md & agy --help
+Evidence type: OFFICIAL_REPO_DOC + RUNTIME_PROOF
+Exact evidence: README.md & agy --help & P01-B1 (marker echo, exit 0)
 Section / symbol: -p, --print, --prompt <prompt>
 Verification: VERIFIED
-Confidence: HIGH
-Notes: In official documentation and binary help, -p, --print, and --prompt are aliases. Canonical non-interactive invocation syntax is agy -p "<prompt>".
+Runtime status: RUNTIME_TESTED_PASS
+Notes: In official documentation and binary help, -p, --print, and --prompt are aliases. Canonical
+       non-interactive invocation syntax is agy -p "<prompt>". P01-B1 confirmed marker echo with exit 0.
 
 Claim ID: AGY-CLAIM-002
 Claim: Antigravity CLI v1.2.7 supports structured JSON schema enforcement on output.
 Repository: google-antigravity/antigravity-cli
 Pinned tag: 1.2.7
 Pinned commit: 7bb195acaec9e7788df5210d0dc3e15f3cefc6b3
-Evidence type: OFFICIAL_REPO_DOC
-Exact evidence: README.md & agy --help
+Evidence type: OFFICIAL_REPO_DOC + RUNTIME_PROOF
+Exact evidence: README.md & agy --help & P01-B5 (structured_output field confirmed) & P01-B6 (file + schema)
 Section / symbol: --json-schema <schema>
 Verification: VERIFIED
-Confidence: HIGH
-Notes: Flag exists and specifies output JSON schema validation. Verification of exact behavior when writing files vs emitting JSON is subject to P01 Track P01-B.
+Runtime status: RUNTIME_TESTED_PASS
+Notes: P01-B5 confirmed structured_output field in JSON envelope. P01-B6 confirmed simultaneous file
+       creation and structured output emission. Flag requires --output-format json or stream-json.
 
 Claim ID: AGY-CLAIM-003
 Claim: Antigravity CLI v1.2.7 supports streaming JSON input and output format negotiation.
 Repository: google-antigravity/antigravity-cli
 Pinned tag: 1.2.7
 Pinned commit: 7bb195acaec9e7788df5210d0dc3e15f3cefc6b3
-Evidence type: OFFICIAL_REPO_DOC
-Exact evidence: README.md & agy --help
+Evidence type: OFFICIAL_REPO_DOC + RUNTIME_PROOF
+Exact evidence: README.md & agy --help & P01-B3 (stream-json output) & P01-B4 (stream-json input multi-turn)
 Section / symbol: --output-format text|json|stream-json / --input-format text|stream-json
 Verification: VERIFIED
-Confidence: HIGH
-Notes: When --input-format stream-json is specified, input prompts are piped via stdin stream rather than supplied via -p.
+Runtime status: RUNTIME_TESTED_PASS
+Notes: P01-B3 confirmed NDJSON event sequence (init/step_update/result). P01-B4 confirmed stdin NDJSON
+       accepted and in-process multi-turn context retained. Cross-process conversation resume NOT proven
+       (P01-B9 ENV-P01B-001 quota blocked).
 
 Claim ID: AGY-CLAIM-004
 Claim: Antigravity CLI supports unattended autonomous execution via permission bypass and multi-directory workspace binding.
 Repository: google-antigravity/antigravity-cli
 Pinned tag: 1.2.7
 Pinned commit: 7bb195acaec9e7788df5210d0dc3e15f3cefc6b3
-Evidence type: OFFICIAL_REPO_DOC
-Exact evidence: README.md & agy --help
+Evidence type: OFFICIAL_REPO_DOC + RUNTIME_PROOF
+Exact evidence: README.md & agy --help & P01-B7 (skip-permissions) & P01-B8 (add-dir)
 Section / symbol: --dangerously-skip-permissions / --add-dir <path>
 Verification: VERIFIED
-Confidence: HIGH
-Notes: Flags allow headless runs to access secondary roots and execute file edits and commands without interactive confirmation.
+Runtime status: RUNTIME_TESTED_PASS
+Notes: P01-B7 confirmed file write without permission prompt. P01-B8 confirmed out-of-band marker in
+       secondary directory was read successfully by the agent.
 ```
 
 ---
 
 # 3. Adopted Concepts vs. Upstream Gaps
 
-### Adopted Concepts:
-- Official headless execution flags (`-p`, `--output-format`, `--input-format`, `--json-schema`).
-- Unattended execution (`--dangerously-skip-permissions`).
-- Worktree root mounting via `--add-dir`.
+### Proven (P01-B empirical subset B1-B8):
+- Headless text execution (`-p`, `-p --output-format json`, `-p --output-format stream-json`)
+- Stream-JSON stdin input protocol (`--input-format stream-json`)
+- Same-process multi-turn context retention
+- JSON Schema structured output (`--json-schema`)
+- Real filesystem side effects combined with structured output
+- Permission bypass (`--dangerously-skip-permissions`)
+- Multi-directory workspace binding (`--add-dir`)
 
-### Empirical Gaps to Prove in Phase P01 (Track P01-B & P01-C):
-- Does Agy write files to disk while simultaneously emitting `--json-schema` completion payloads?
-- How does AO's interactive harness (`--prompt-interactive`) interact with Agy's structured output flags?
+### Not Yet Proven (pending quota recovery -- ENV-P01B-001):
+- Cross-process conversation resume (`--conversation <id>`) -- P01-B9
+- Workspace continue (`--continue`, `-c`) -- P01-B10
+
+### Remaining Questions for P01-C (HELD):
+- Does AO's interactive harness (`--prompt-interactive`) interact cleanly with Agy's structured output flags?
+- Can the existing AO-Agy integration satisfy the WorkerReport contract without custom adapter code?
