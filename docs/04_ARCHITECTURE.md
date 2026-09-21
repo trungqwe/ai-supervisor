@@ -117,7 +117,7 @@ sequenceDiagram
             SCP->>Git: git diff --stat base_sha..head_sha
             SCP->>Git: git diff base_sha..head_sha
             SCP->>SCP: Check touched files against allowed_scope / forbidden_scope
-            SCP->>Runner: Execute approved verification commands (required_tests)
+            SCP->>Runner: Execute host-owned verification profiles (verification_requests per ADR-013)
             Runner-->>SCP: Capture exit code, stdout/stderr, test artifacts
         end
         SCP->>DB: Store Evidence (Transition state to EVIDENCE_READY)
@@ -172,4 +172,4 @@ Detailed HTTP mappings reside exclusively in `docs/sources/UPSTREAM_CONTRACT_BAS
 > 2. **No Automatic Merge on Approval**: `approve_task` formally records review approval and updates task state to `APPROVED`. It does **NOT** automatically merge branches, commit to main, or push to remotes. Source promotion remains a human/explicit workflow.
 > 3. **AO internal database is NOT an integration API**: We never read or write directly to AO SQLite stores.
 > 4. **Code truth belongs exclusively to Git**: Commit SHAs, diffs, and worktree states are authoritative.
-5. **Trusted Verification Runner Boundary**: ChatGPT is never granted arbitrary shell or command execution primitives. Supervisor independent test verification runs exclusively through a constrained, allowlisted verification runner executing approved `required_tests` with discrete argument passing, capturing exit codes and outputs as independent evidence.
+5. **Trusted Verification Runner Boundary**: ChatGPT is never granted arbitrary shell or command execution primitives. Supervisor independent test verification runs exclusively through a constrained, allowlisted verification runner executing host-owned verification profiles (`verification_requests` per ADR-013) within execution isolation boundaries, capturing exit codes and outputs as independent evidence.

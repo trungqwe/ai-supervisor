@@ -15,7 +15,7 @@
     "forbidden_scope",
     "constraints",
     "acceptance_criteria",
-    "required_tests",
+    "verification_requests",
     "required_evidence",
     "worker_profile",
     "report_contract",
@@ -91,13 +91,6 @@
       },
       "minItems": 1
     },
-    "required_tests": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "minItems": 1
-    },
     "required_evidence": {
       "type": "array",
       "items": {
@@ -115,6 +108,40 @@
       "type": "array",
       "items": {
         "type": "string"
+      }
+    },
+    "verification_requests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "profile_id",
+          "parameters"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_.-]+$"
+          },
+          "profile_id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_.-]+$"
+          },
+          "parameters": {
+            "type": "object"
+          },
+          "cwd": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_./-]+$"
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600
+          }
+        },
+        "additionalProperties": false
       }
     }
   },

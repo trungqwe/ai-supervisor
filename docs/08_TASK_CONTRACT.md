@@ -39,7 +39,7 @@ A **Task Contract** is the authoritative specification dispatched to an AI codin
 | `forbidden_scope` | array of globs | YES | Blacklist of paths the worker is forbidden from touching (e.g., `docs/adr/*`). |
 | `constraints` | array of strings | YES | Architectural rules (e.g., "No new external dependencies"). |
 | `acceptance_criteria` | array of strings | YES | Objective conditions required for task completion. |
-| `required_tests` | array of strings | YES | Exact CLI test commands that must be executed and pass. |
+| `verification_requests` | array of objects | YES | Structured verification requests referencing host-owned profiles with typed parameters (ADR-013). |
 | `required_evidence` | array of strings | YES | Expected artifacts (e.g., `["git_diff", "test_exit_code_zero", "coverage_report"]`). |
 | `worker_profile` | string | YES | Target worker harness profile (e.g., `antigravity-standard`). |
 | `report_contract` | string | YES | Reference to expected worker report format (`worker-report.schema.json`). |

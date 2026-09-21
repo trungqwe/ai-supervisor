@@ -59,7 +59,7 @@ classDiagram
         +string[] requirements
         +string[] allowed_scope
         +string[] forbidden_scope
-        +string[] required_tests
+        +VerificationRequest[] verification_requests
         +string base_sha
         +boolean is_immutable
     }

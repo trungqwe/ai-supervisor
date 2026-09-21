@@ -1,84 +1,87 @@
-# P02 Phase Ownership Research & Reconciliation Dossier
+# P02 Phase Ownership Research & Scope Reconciliation Dossier
 
-> **Authority**: P02 Pre-Code Implementation Decision Gate (Reaudit Remediation)
+> **Authority**: P02 Final Implementation Decision Canonicalization
 > **Date**: 2026-09-22
-> **Status**: RESEARCH_COMPLETE_PENDING_EXTERNAL_DECISION
+> **Status**: DECISION_ACCEPTED
+> **Scope Verdict**: `APPROVED_WITH_SCOPE_CORRECTIONS`
 > **Reference Document**: `docs/21_TRACEABILITY_MATRIX.md`
 
 ---
 
-## 1. Architectural Scope Principles & Governance Rules
+## 1. Final Approved Canonical Phase Boundaries
 
-The canonical roadmap establishes an upper-level phase progression:
-- **P02 — Supervisor Domain Core**: Headless domain entities, finite state machine, task contract schema validation, local durable state store, crash recovery reconciler, and append-only audit event emission.
-- **P03 — Agent Orchestrator Integration**: `AOAdapter`, external worker session lifecycle, process supervision, event stream observation, and workspace report retrieval.
-- **P04 — Evidence & Review Engine**: Independent `EvidenceCollector`, Git base/head diff analysis, `VerificationRunner` (host-owned profile execution), `ReviewBundleBuilder`, and scope policy enforcement.
-- **P05 — ChatGPT Tool Interface & Transport**: High-level tool surface (`ToolSurface`), Fastify/MCP server, loopback transport, and end-to-end autonomous supervision loop.
-- **P06 — Production Packaging & Observability**: Standalone CLI distribution, operator controls, and web UI.
+Governance has formally finalized the phase ownership boundaries across the six roadmap phases:
 
-### Architectural Invariants:
-1. **No Premature Upstream Integration in P02**: P02 must not absorb `AOAdapter` implementation (owned by P03).
-2. **No Evidence or Bundle Assembly in P02**: P02 must not absorb `EvidenceCollector`, `VerificationRunner`, or `ReviewBundleBuilder` (owned by P04).
-3. **No Transport or Model Surface in P02**: P02 must not absorb `ToolSurface`, Fastify daemon server, or MCP transport layers (owned by P05).
-4. **Structural Distinction**: We distinguish:
-   - **Domain Types & Entities**: Immutable data definitions required by StateStore schemas and StateMachine transitions (owned in P02).
-   - **Domain Services**: Business logic operating strictly within the core domain (owned in P02).
-   - **Infrastructure Adapters**: External I/O implementations (Git, AO REST API, child-process runners) (owned in P03/P04).
-   - **Transport Exposure**: Exposing operations over HTTP/MCP tools (owned in P05).
+### 1.1 Phase P02 — Supervisor Domain Core (Scope Boundary)
+P02 is strictly headless and self-contained, owning the following core modules and domain responsibilities:
+- **Domain Entities & Value Types**:
+  - `Project`, `Pair`, `Task`, `TaskContract`, `TaskAttempt`, `WorkerClaim`.
+  - Core `Evidence` value definitions and persistence schemas required by the internal model.
+  - `ReviewDecision` and associated state transition payload types.
+- **Domain Services**:
+  - `StateMachine`: 13 canonical states, 25 allowed transitions.
+  - `TaskContractValidator`: Schema validation (`task-contract.schema.json`), immutability enforcement, revision number monotonic increments, baseline `base_sha` immutability.
+  - Pre-dispatch validation: Pre-dispatch `allowed_scope` / `forbidden_scope` path containment checks (SEC-002).
+  - Pre-dispatch allocation: `TaskAttempt` allocation and atomic commit of `READY → DISPATCHED` before external AO calls.
+- **Local StateStore (SQLite)**:
+  - DDL schemas, migration engine (`PRAGMA user_version`), foreign key constraints (`foreign_keys = ON`).
+  - ACID transactions with `PRAGMA journal_mode = WAL;` and `PRAGMA synchronous = FULL;`.
+  - `TaskContract` and `TaskAttempt` relational lineage graph.
+  - Restart recovery classification: Detect dangling `DISPATCHED` attempts upon startup and classify them as `EXTERNAL_RECONCILIATION_REQUIRED`.
+  - Component shutdown API: Deterministic StateStore close, active transaction rollback, and connection cleanup (OPS-002).
+- **Audit Core**:
+  - `AuditEvent` model, append-only persistence in SQLite.
+  - Secret sanitization: Automated token and credential scrubbing on persisted audit records, domain events, and error payloads (SEC-004).
 
----
-
-## 2. Comprehensive P02 Requirement Traceability Audit
-
-The following table evaluates every requirement mapped to Phase P02 in canonical `docs/21_TRACEABILITY_MATRIX.md`:
-
-| Requirement ID | Canonical Name | Canonical Target Module | Current Phase in Matrix | Required for P02 Core? | Recommended Owning Phase | Architectural Rationale & Scope Boundaries | Dependencies |
-|---|---|---|:---:|:---:|:---:|---|---|
-| **FR-001** | Project Registration | `ProjectRegistry` | P02 | **PARTIAL** | **P02** (Entity/Schema) / **P05** (Service/CLI) | The `Project` domain entity and StateStore table are required in P02 to associate tasks with workspaces. Dynamic project registration via MCP/CLI belongs to P05/P06. | Local StateStore |
-| **FR-002** | Pair Binding | `PairRegistry` | P02 | **PARTIAL** | **P02** (Entity/Schema) / **P05** (Service) | The `PairBinding` domain entity and 1:1 active constraint must be modeled in P02 StateStore. The interactive binding handshake and session token binding occur in P05. | `ProjectRegistry`, StateStore |
-| **FR-003** | Context Access | `ContextEngine` | P02 | **NO** | **P05** | Read-only workspace indexing (code outlines/symbols) is not required for core task state transitions. It serves as an advisory tool for ChatGPT in P05. | Host filesystem / Tree-sitter |
-| **FR-004** | Task Contract | `TaskContractManager` | P02 | **YES** | **P02** | Task contract schema validation (draft-07 / 2020-12), immutability enforcement, revision number progression, and pre-dispatch validation are fundamental to P02. | JSON Schema Validator |
-| **FR-011** | Supervisor Decision | `StateMachine` | P02 | **YES** | **P02** | The 13-state machine, transition guards, attempt lifecycle binding, and state change persistence must be implemented and verified in P02. | `StateStore` |
-| **FR-013** | Audit Trail | `AuditLogger` | P02 | **PARTIAL** | **P02** (Core Store) / **P04** (CLI/Export) | Emitting append-only, tamper-evident audit records on every state transition and contract revision is core to P02. Formatting and CLI log export tools belong to P04/P05. | `StateStore`, JSON serializer |
-| **FR-014** | Multi-Project Domain | `DomainModel` | P02 | **YES** | **P02** | Multi-project schema partitioning and foreign key isolation in SQLite ensure tasks cannot cross project boundaries. | `StateStore` |
-| **NFR-003** | Recoverability | `StateStore` | P02 | **YES** | **P02** | Reconciling interrupted or uncommitted states upon daemon restart (e.g. recovering inflight attempts) is a mandatory P02 core capability. | SQLite WAL mode |
-| **NFR-004** | Auditability | `AuditLogger` | P02 | **YES** | **P02** | Verifying cryptographic or append-only integrity of state history across attempts must be validated in P02. | `AuditLogger` |
-| **SEC-002** | Path Containment | `PolicyEngine` | P02 | **PARTIAL** | **P02** (Contract Scope) / **P04** (Evidence Check) | Pre-dispatch validation of `allowed_scope` and `forbidden_scope` paths against project root belongs to P02. Post-execution diff violation checking belongs to P04. | Path normalization library |
-| **SEC-004** | Secret Sanitization | `AuditLogger` | P02 | **YES** | **P02** | Regex and heuristic token scrubbing for audit records and persisted error payloads must be active in P02 to prevent secret leakage. | Regular expression engine |
-| **OPS-002** | Clean Termination | `SupervisorCore` | P02 | **YES** | **P02** | Graceful daemon shutdown, releasing file locks, completing active transactions, and closing SQLite cleanly upon SIGTERM/Ctrl+C. | Process signal handling |
-| **OPS-003** | Self-Contained Store | `StateStore` | P02 | **YES** | **P02** | Local SQLite engine requiring zero external cloud services, daemons, or network round-trips. | SQLite runtime driver |
-
----
-
-## 3. Detailed Component Decomposition & Boundary Analysis
-
-### 3.1 `ProjectRegistry` & `PairRegistry`
-- **P02 Scope**: Define `Project` and `PairBinding` domain models; implement SQL schema (`projects`, `pair_bindings`); enforce relational foreign keys and uniqueness constraints (`workspace_path` unique, active pair binding 1:1).
-- **Deferred to P05**: HTTP/MCP tool surface for registering projects dynamically, listing projects, and managing session pairings.
-
-### 3.2 `ContextEngine`
-- **Audit Finding**: Currently mapped to P02 in `docs/21_TRACEABILITY_MATRIX.md`.
-- **Recommendation**: Defer full implementation to **P05**.
-- **Rationale**: `ContextEngine` generates structural code outlines and repository summaries to assist ChatGPT during task formulation. It has zero interaction with the Task Attempt State Machine or StateStore invariants. Pulling it into P02 expands scope with AST parsing / symbol extraction before core domain persistence is proven.
-
-### 3.3 `TaskContractManager` & `PolicyEngine` (Pre-Dispatch Scope)
-- **P02 Scope**: Validate incoming `TaskContract` revision JSON against schema; enforce immutability; ensure `base_sha` matches revision 1 baseline; validate that all paths in `allowed_scope` and `forbidden_scope` resolve strictly within the project boundary without traversal (`..` or symlink escapes).
-- **Deferred to P04**: `PolicyEngine` post-execution evaluation (comparing Git diff touch list against `allowed_scope` / `forbidden_scope`).
-
-### 3.4 `StateMachine` & `SupervisorCore`
-- **P02 Scope**:
-  - Implement the 13 canonical states and 25 transitions.
-  - Enforce the atomic pre-dispatch persistence invariant: allocate `TaskAttempt` and commit `READY → DISPATCHED` in SQLite before any external side effects occur.
-  - Implement restart reconciliation: upon startup, detect dangling `DISPATCHED` attempts and transition them or flag them for reconciliation.
-  - Implement graceful termination on OS interrupt (`SIGINT`, `SIGTERM`), closing SQLite connections cleanly.
-
-### 3.5 `AuditLogger` & `SEC-004`
-- **P02 Scope**: Append-only event logging with timestamp, correlation ID (`task_id`, `contract_id`, `attempt_id`), and sanitization of sensitive environment variables or tokens.
+### 1.2 Subsystems Explicitly Excluded from P02
+- **Phase P03 (AO Integration)**:
+  - `AOAdapter` implementation and REST API client.
+  - External worker session lifecycle management and process spawning.
+  - AO liveness monitoring and event stream consumption.
+  - AO-backed restart reconciliation (querying AO for live session status to resolve `EXTERNAL_RECONCILIATION_REQUIRED`).
+- **Phase P04 (Evidence & Review Engine)**:
+  - `EvidenceCollector` implementation (Git diff calculation, tree inspection).
+  - `VerificationRunner` implementation (Layer A command construction and Layer B execution isolation with Windows Job Objects).
+  - Post-execution scope violation checking (comparing Git diff against `allowed_scope` / `forbidden_scope`).
+  - `ReviewBundleBuilder` assembly and review policy engine.
+- **Phase P05 (ChatGPT Tool Interface & Transport)**:
+  - Model Context Protocol (MCP) server over Streamable HTTP and loopback tunnel transport.
+  - `ToolSurface` high-level tool definitions and parameter mapping.
+  - Interactive project/pair registration and binding tools (`register_project`, `bind_pair`, `list_projects`).
+  - `ContextEngine` workspace AST indexing and outline extraction (FR-003).
+  - Process-level lifecycle management: Host daemon process control, Windows console handling, OS signals (`SIGINT`, `SIGTERM`), and HTTP/MCP server shutdown (OPS-002).
+  - Bounded audit record querying for ChatGPT tools.
+- **Phase P06 (Packaging & Observability)**:
+  - Operator UI / CLI packaging and distribution (`supervisor.exe`).
+  - Human-facing dashboards, audit log export utilities, and metrics visualization.
 
 ---
 
-## 4. Reconciliation Status & Matrix Alignment
+## 2. Traceability Matrix Audit & Multi-Phase Responsibility Split
 
-- **Action Taken**: Analysis complete.
-- **Traceability Matrix Status**: `docs/21_TRACEABILITY_MATRIX.md` remains strictly unmodified in this task.
-- **External Approval Required**: Following External Supervisor approval of this research dossier, a targeted update to `docs/21_TRACEABILITY_MATRIX.md` will formally split `FR-001`, `FR-002`, `FR-003`, `FR-013`, and `SEC-002` across their respective domain and integration phases.
+The 13 requirements mapped to Phase P02 in `docs/21_TRACEABILITY_MATRIX.md` are reconciled as follows:
+
+| Requirement ID | Canonical Name | Canonical Target Module | Final Owning Phase(s) | Phase Split & Scope Delineation | Dependencies |
+|---|---|---|:---:|---|---|
+| **FR-001** | Project Registration | `ProjectRegistry` | **P02 / P05** | **P02**: `Project` entity, SQLite schema, workspace path uniqueness.<br/>**P05**: Interactive registration CLI/MCP tools. | Local StateStore |
+| **FR-002** | Pair Binding | `PairRegistry` | **P02 / P05** | **P02**: `PairBinding` entity, relational foreign keys, 1:1 active constraint.<br/>**P05**: Interactive binding handshake & token validation. | `ProjectRegistry`, StateStore |
+| **FR-003** | Context Access | `ContextEngine` | **P05** | **Moved to P05**: Read-only workspace AST/outline extraction serves as an advisory tool for ChatGPT. Zero P02 domain dependency. | Host filesystem / Tree-sitter |
+| **FR-004** | Task Contract | `TaskContractManager` | **P02** | **P02 Core**: JSON Schema validation, immutability, revision lineage, baseline `base_sha` immutability, and `verification_requests` structure (ADR-013). | JSON Schema Validator |
+| **FR-011** | Supervisor Decision | `StateMachine` | **P02** | **P02 Core**: 13-state machine, 25 canonical transitions, attempt lifecycle binding, atomic pre-dispatch commitment. | `StateStore` |
+| **FR-013** | Audit Trail | `AuditLogger` | **P02 / P05 / P06** | **P02**: Append-only `AuditEvent` persistence & correlation.<br/>**P05**: Bounded audit read tool for ChatGPT.<br/>**P06**: Operator export tooling & log visualization. | `StateStore`, JSON serializer |
+| **FR-014** | Multi-Project Domain | `DomainModel` | **P02** | **P02 Core**: Multi-project schema partitioning and foreign key isolation in SQLite. | `StateStore` |
+| **NFR-003** | Recoverability | `StateStore` | **P02 / P03** | **P02**: Detects dangling `DISPATCHED` attempts on restart, classifies `EXTERNAL_RECONCILIATION_REQUIRED` in StateStore.<br/>**P03**: Queries AO REST API to reconcile session state. | SQLite WAL mode |
+| **NFR-004** | Auditability | `AuditLogger` | **P02** | **P02 Core**: Append-only tamper-evident event log integrity. | `AuditLogger` |
+| **SEC-002** | Path Containment | `PolicyEngine` | **P02 / P04** | **P02**: Pre-dispatch validation that `allowed_scope` / `forbidden_scope` paths reside within project boundaries.<br/>**P04**: Post-execution Git diff scope checking. | Path normalization library |
+| **SEC-003** | No Arbitrary Shell | `ToolSurface` / `VerificationRunner` | **P04 / P05** | **P04**: VerificationRunner executing host-owned profiles with Layer B execution isolation (ADR-013).<br/>**P05**: Zero shell tools exposed to ChatGPT. | ADR-013 |
+| **SEC-004** | Secret Sanitization | `AuditLogger` | **P02** | **P02 Core**: Automated token and credential scrubbing regex for all persisted audit, domain, and error payloads. | Regex engine |
+| **OPS-002** | Clean Termination | `SupervisorCore` | **P02 / P05** | **P02**: Deterministic StateStore close, active transaction abort, and component shutdown API.<br/>**P05**: OS process lifecycle, Windows console handling, SIGINT/SIGTERM daemon termination. | Process signal handling |
+| **OPS-003** | Self-Contained Store | `StateStore` | **P02** | **P02 Core**: Zero-cloud local SQLite engine with WAL mode, `synchronous = FULL`, and Online Backup API. | SQLite runtime driver |
+
+---
+
+## 3. Implementation Release Verdict
+
+- **Phase P02 Scope**: Strictly bounded to domain entities, state machine, contract validation, SQLite store, and audit core.
+- **Traceability Matrix**: Reconciled in `docs/21_TRACEABILITY_MATRIX.md`.
+- **Status**: **`APPROVED_WITH_SCOPE_CORRECTIONS`**.

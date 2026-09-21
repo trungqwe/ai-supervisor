@@ -1,6 +1,6 @@
 # ADR-014: Selection of Implementation Language for Supervisor Core
 
-> **Status**: PROPOSED (PENDING_EXTERNAL_SUPERVISOR_APPROVAL)
+> **Status**: ACCEPTED
 > **Date**: 2026-09-22
 > **Authority**: Architecture Decision Record
 > **Deciders**: External Supervisor, Engineering Team
@@ -10,61 +10,55 @@
 
 ## 1. Context and Problem Statement
 
-The AI Engineering Supervisor Control Plane core requires a robust, long-running local daemon capable of:
-1. Serving an HTTP/SSE Model Context Protocol (MCP) tool surface to ChatGPT over a loopback tunnel;
+The AI Engineering Supervisor Control Plane core requires a robust, long-running local background daemon on Windows 10/11 x64 capable of:
+1. Serving a Model Context Protocol (MCP) tool surface over Streamable HTTP;
 2. Enforcing a strict 13-state finite state machine with immutable `TaskContract` revisions and `TaskAttempt` lineage;
-3. Safely supervising and terminating Windows child processes (verification commands, test runners) without process leaks (OPS-002, SEC-003);
-4. Providing self-contained local SQLite persistence with zero cloud dependencies (OPS-003).
-
-A prior draft of this ADR assumed Go lacked an official MCP SDK. That premise has been refuted: `github.com/modelcontextprotocol/go-sdk` is an official Tier 1 SDK co-maintained with Google. This ADR re-evaluates the language selection based on primary evidence.
+3. Managing local SQLite state persistence with zero cloud dependencies (OPS-003);
+4. Providing deterministic Windows process creation and cleanup APIs (OPS-002, SEC-003).
 
 ---
 
-## 2. Decision Candidates
+## 2. Decision: Go (SUPERVISOR_CORE_LANGUAGE = GO)
 
-- **Option 1: Go (v1.22+)** — Standalone compiled binary, native Windows process/job-object management, official Tier 1 Go MCP SDK, built-in `log/slog`, pure Go SQLite (`modernc.org/sqlite`).
-- **Option 2: TypeScript on Node.js (Node 24 LTS)** — MCP reference SDK (`@modelcontextprotocol/sdk`), `Ajv` schema engine, `better-sqlite3` addon, rich JSON/type ecosystem.
-- **Option 3: Python (v3.11+)** — Official `mcp` Python SDK, built-in `sqlite3`.
+The implementation language for the Supervisor Core daemon is **Go**.
 
----
-
-## 3. Evaluation Summary
-
-| Criterion | Go | TypeScript (Node 24 LTS) | Python |
-|---|:---:|:---:|:---:|
-| Official MCP Tier 1 SDK (2026-07-28 protocol) | YES (`go-sdk`) | YES (`@modelcontextprotocol/sdk`) | YES (`mcp`) |
-| Native Windows Process Tree & Job Objects | First-class (`SysProcAttr`) | Limited (requires external tools) | Limited |
-| Single Static Binary Distribution (OPS-001) | YES (`supervisor.exe`) | NO (requires runtime/complex SEA) | NO |
-| SQLite WAL Durability & CGo-free option | YES (`modernc.org/sqlite`) | Native C++ addon (`better-sqlite3`) | Built-in |
-| Weighted Score (from Research Dossier) | **9.30 / 10** | 8.35 / 10 | 7.25 / 10 |
+### Toolchain Baseline and Support Policy:
+- **Development Toolchain Baseline**: **`Go 1.27.x`** (Current supported major as of 2026-09-22).
+- **Minimum Supported Go Line**: **`Go 1.26.x`** (Previous supported major).
+- *Release Policy Rationale*: Go maintains official release support for each major release until two newer major releases exist. Basing the development toolchain on Go 1.27.x with Go 1.26.x as the compatibility floor adheres strictly to official upstream lifecycle standards. Stale baselines (`Go 1.22+`, `Go 1.23+`, `Go 1.24+`) are retired.
+- *Dependency Versioning*: Exact patch releases and module dependency versions will be pinned during Phase P02 implementation bootstrap, rather than frozen as immutable architectural constants.
 
 ---
 
-## 4. Proposed Recommendation
+## 3. Upstream Technology Alignment
 
-**Recommend Option 1: Go (v1.22+)** as the primary implementation language for the Supervisor Core daemon, with **Option 2: TypeScript (Node 24 LTS)** as the formally accepted runner-up.
+### 3.1 Official MCP Go SDK & Streamable HTTP
+- The official Go SDK for the Model Context Protocol is **`github.com/modelcontextprotocol/go-sdk`**, co-maintained with Google as an official Tier 1 SDK.
+- Protocol coverage fully implements the MCP 2026-07-28 specification.
+- Modern HTTP transport uses **Streamable HTTP** (the current standard for HTTP-based MCP transport). Legacy standalone SSE transport is categorized as legacy.
+- *Verification Scope Note*: Track P01-D3C empirically proved loopback HTTP MCP transport using a test client and OpenAI tunnel. It did not evaluate the future Go implementation. Full end-to-end validation of the Go MCP server implementation is a Phase **P05** deliverable.
 
-### Rationale:
-1. **Daemon Operational Excellence**: As a local daemon on Windows, the Supervisor requires deterministic process tree termination, resilient signal handling, and crash safety. Go's standard library provides direct OS-level control.
-2. **Deployment Simplicity**: Distributing a single self-contained executable (`supervisor.exe`) fulfills the zero-dependency requirements of OPS-001 and OPS-003.
-3. **Official MCP Parity**: The official Google-co-maintained `github.com/modelcontextprotocol/go-sdk` provides Tier 1 protocol coverage matching the TypeScript SDK.
+### 3.2 Windows Process Control & Job Objects
+- Go standard library `os/exec` and `syscall.SysProcAttr` provide native Windows process-creation controls (`CREATE_NEW_PROCESS_GROUP`, console window suppression).
+- Complete process-tree lifecycle management (preventing leaked child processes from test runners) requires explicit Win32 Job Object integration via **`golang.org/x/sys/windows`** (`CreateJobObject`, `AssignProcessToJobObject`, `TerminateJobObject`).
+- *Architecture Note*: `syscall.SysProcAttr` alone does not manage Job Objects; explicit Win32 API calls are required. Full verification runner execution isolation is an implementation deliverable for Phase **P04**.
+
+### 3.3 State Store Integration
+- `modernc.org/sqlite` is selected as the preferred Go SQLite implementation:
+  - 100% pure Go transpiled from SQLite C source via `ccgo`.
+  - Zero CGo compiler requirement on Windows.
+  - Compiles cleanly into a single standalone static binary (`supervisor.exe`), fully satisfying OPS-001 and OPS-003.
 
 ---
 
-## 5. Consequences
+## 4. Consequences
 
 ### Positive:
-- Single executable distribution with zero runtime prerequisites on user machines.
-- Guaranteed Windows child process containment via Job Objects.
-- Minimal memory footprint (15–25 MB RSS) and high daemon uptime stability.
-- Zero CGo compiler dependency when using `modernc.org/sqlite`.
+- **Single Static Binary Distribution**: Compiles to a self-contained executable (`supervisor.exe`) with zero runtime prerequisites (no Node.js runtime or npm dependencies on the user's system).
+- **Direct OS-Level Control**: Native Win32 API access through `golang.org/x/sys/windows` for robust child process supervision and Job Object binding.
+- **Official MCP Compliance**: First-class Tier 1 SDK support implementing the latest 2026-07-28 protocol via Streamable HTTP.
+- **Clean Architecture Separation**: The headless domain core runs independently of web runtimes or external browser dependencies.
 
 ### Negative / Tradeoffs:
-- Slightly more verbose boilerplate compared to TypeScript for JSON manipulation.
-- Schema definitions (`task-contract.schema.json`) are validated via Go schema libraries rather than shared TypeScript types.
-
----
-
-## 6. Status
-
-This ADR remains **PROPOSED** pending External Supervisor audit and formal authorization.
+- Slightly more verbose boilerplate for JSON handling compared to dynamic languages.
+- Contract JSON schemas (`task-contract.schema.json`) are compiled and validated using Go schema libraries (`santhosh-tekuri/jsonschema/v6`) rather than direct in-memory TypeScript type sharing.

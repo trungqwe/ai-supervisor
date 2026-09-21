@@ -28,9 +28,6 @@
     "AO daemon responds with HTTP 200",
     "Worker session launches cleanly"
   ],
-  "required_tests": [
-    "powershell -Command './tests/smoke.ps1'"
-  ],
   "required_evidence": [
     "git_diff",
     "test_exit_code_zero"
@@ -40,5 +37,21 @@
   "stop_conditions": [
     "Daemon unresponsive",
     "ConPTY allocation failure"
+  ],
+  "verification_requests": [
+    {
+      "id": "smoke-test",
+      "profile_id": "go-test",
+      "parameters": {
+        "package": "./tests/upstream/...",
+        "run_pattern": "TestDaemonConnectivity",
+        "flags": [
+          "-v",
+          "-count=1"
+        ]
+      },
+      "cwd": ".",
+      "timeout_seconds": 60
+    }
   ]
 }

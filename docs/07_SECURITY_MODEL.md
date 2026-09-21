@@ -25,7 +25,7 @@
    - ChatGPT is provided with zero shell or terminal command execution primitives.
 4. **Constrained Verification Runner for Supervisor Evidence**:
    - Independent test verification by the Supervisor Evidence subsystem executes exclusively through a constrained, allowlisted verification runner.
-   - The runner executes only approved `required_tests` / build-verification specifications.
+   - The runner executes only approved host-owned verification profiles (`verification_requests` per ADR-013) within an execution isolation boundary.
    - Arguments are passed as discrete parameter arrays without uncontrolled shell string interpolation.
    - Captures process exit codes, stdout, stderr, and test artifact hashes as objective ground truth.
 5. **Sanitized Audit Trail**:

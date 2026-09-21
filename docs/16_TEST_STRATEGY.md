@@ -37,7 +37,7 @@ flowchart TD
 6. **Level 6 — Evidence Collection & Review Integration Tests**:
    - Preconditioned on verified report handoff (Stop hook -> IDLE -> bounded fetch -> schema & identity validation -> `REPORT_READY`).
    - Independent Git diff extraction from worktree.
-   - Process exit code and test artifact verification via constrained verification runner.
+   - Process exit code and test artifact verification via constrained verification runner executing host-owned verification profiles (`verification_requests` per ADR-013).
    - Scope compliance verification against `allowed_scope`.
    - Independent evidence collection transitions state to `EVIDENCE_READY`.
    - ReviewBundle compilation transitions state to `REVIEWING`.

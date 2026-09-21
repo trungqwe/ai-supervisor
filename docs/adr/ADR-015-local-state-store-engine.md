@@ -1,11 +1,10 @@
 # ADR-015: Local State Store Engine and Durability Specification
 
-> **Status**: PROPOSED (PENDING_EXTERNAL_SUPERVISOR_APPROVAL)
+> **Status**: ACCEPTED
 > **Date**: 2026-09-22
 > **Authority**: Architecture Decision Record
 > **Deciders**: External Supervisor, Engineering Team
 > **Consulted**: `docs/decisions/P02_Q4_STATE_STORE_RESEARCH.md`
-> **Replaces**: Initial draft of ADR-015 (Corrected durability policy from `NORMAL` to `FULL`)
 
 ---
 
@@ -17,47 +16,72 @@ The Supervisor Control Plane requires a local, zero-cloud data store (OPS-003) t
 3. The 13-state attempt workflow (FR-011);
 4. Append-only audit events (FR-013, NFR-004).
 
-Crucially, the pre-dispatch invariant dictates that the transition `READY → DISPATCHED` and `TaskAttempt` allocation must be durably committed before any external Agent Orchestrator invocation occurs.
+Crucially, the pre-dispatch invariant dictates that the state transition `READY → DISPATCHED` and `TaskAttempt` allocation must be durably committed before initiating any external Agent Orchestrator invocation.
 
 ---
 
-## 2. Engine Selection
+## 2. Decision: SQLite (STATE_STORE_ENGINE = SQLITE)
 
-The storage engine direction is confirmed:
-```
-STATE_STORE_ENGINE = SQLITE
-```
-SQLite provides relational integrity, foreign key cascading/enforcement, zero-configuration local execution, and crash-resilient ACID transactions.
+The canonical storage engine for the Supervisor Control Plane is **SQLite**.
+
+### Implementation Driver Direction:
+- For the Go implementation core (ADR-014), the preferred driver is **`modernc.org/sqlite`**:
+  - 100% pure Go implementation transpiled from official SQLite C code via `ccgo`.
+  - Zero CGo compiler requirement on Windows.
+  - Compiles directly into the standalone `supervisor.exe` binary, satisfying OPS-001 and OPS-003.
+  - *Note*: Exact driver dependency versioning will be pinned during Phase P02 implementation bootstrap rather than frozen as an immutable architecture constant.
 
 ---
 
-## 3. Canonical V1 Durability & Concurrency Policy
+## 3. Durability Baseline & Concurrency Policies
 
-To guarantee durability across hard OS crashes and power interruptions, all database connections must be initialized with the following pragmas:
-
+### 3.1 Durability Configuration
+All SQLite database connections must be initialized with the following pragma configuration:
 ```sql
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = FULL;
 PRAGMA foreign_keys = ON;
-PRAGMA busy_timeout = 5000;
 ```
 
-### Rationale:
-- **WAL Mode**: Enables concurrent read operations without blocking or being blocked by the single active writer.
-- **`synchronous = FULL`**: Guarantees that every transaction commit flushes the write-ahead log to physical media before returning. This prevents the loss of `READY → DISPATCHED` commitments in the event of an OS crash or power failure.
-- **`foreign_keys = ON`**: Enforces relational constraints between contracts, attempts, and claims.
-- **`busy_timeout = 5000`**: Prevents immediate lock errors during brief writer serialization.
+### 3.2 Synchronization Guarantees & Contract Wording
+- Under SQLite's documented VFS and filesystem synchronization contract, Write-Ahead Logging (WAL) combined with `synchronous = FULL` ensures that the WAL file is flushed to physical storage upon every transaction commit.
+- This configuration provides the durability required for the pre-dispatch persistence invariant across daemon restarts and unexpected process terminations.
+- *Note*: As with all database engines, durable persistence relies upon the underlying OS and disk subsystem honoring synchronous flush requests.
+
+### 3.3 Concurrency & Writer Serialization
+- **Concurrency Semantics**: WAL mode enables multiple concurrent read operations without blocking or being blocked by the single active writer.
+- **Serialization Invariant**: SQLite strictly serializes write operations. Concurrent write attempts are handled through a **configurable bounded busy timeout policy** (e.g. an initial default of 5000 ms, configurable via host settings).
+
+### 3.4 Transaction Lifetime Invariant
+- **Rule**: Write transactions must be strictly short-lived.
+- Under no circumstances may external Agent Orchestrator REST calls, network operations, verification command child process executions, repository scans, large file parsing, or long computations take place inside an open database transaction.
 
 ---
 
-## 4. Operational Invariants
+## 4. Multi-File Topology & Active Backup Policy
 
-1. **Short-Lived Transactions**: Database write transactions must be kept strictly below 50ms. No external network I/O, AO REST calls, or process executions may occur within a transaction.
-2. **Runtime Files**: The runtime database comprises `supervisor.db`, `supervisor.db-wal`, and `supervisor.db-shm`.
-3. **Backup Requirement**: Naive copying of `supervisor.db` while WAL is active is strictly prohibited. Backups must be performed via the SQLite Online Backup API or `VACUUM INTO 'backup.db'`.
+### 4.1 Runtime Files
+An active SQLite database in WAL mode comprises up to three files:
+1. `supervisor.db` — The primary database file.
+2. `supervisor.db-wal` — The write-ahead log containing committed pages pending checkpoint.
+3. `supervisor.db-shm` — The shared-memory index coordinating concurrent readers.
+
+### 4.2 Active Database Backup Invariant
+- **Prohibited Procedure**: Copying only `supervisor.db` while WAL is active is strictly prohibited, as it risks capturing an inconsistent or corrupted snapshot missing uncheckpointed transactions.
+- **Approved Procedures**:
+  1. **SQLite Online Backup API** (`sqlite3_backup` API): Streams consistent database pages while the database is live.
+  2. **`VACUUM INTO 'backup_path.db';`**: Atomically writes a clean, fully checkpointed snapshot file.
+  3. Direct multi-file filesystem snapshots require explicit maintenance / quiesced mode; `wal_checkpoint(TRUNCATE)` followed by file copying is not a standard online backup procedure.
 
 ---
 
-## 5. Status
+## 5. Consequences
 
-This ADR is **PROPOSED (PENDING_EXTERNAL_SUPERVISOR_APPROVAL)**.
+### Positive:
+- True ACID transaction guarantees for the pre-dispatch invariant.
+- Relational integrity across projects, pairs, tasks, contracts, attempts, and audit events.
+- Zero external daemon, service, or cloud configuration (OPS-003).
+- Safe concurrent read access for background observation without blocking state transitions.
+
+### Negative / Tradeoffs:
+- Single active writer requires strict transaction discipline and bounded write durations.

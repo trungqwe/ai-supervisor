@@ -40,7 +40,7 @@
 - **Forbidden Responsibility**: Does NOT block OS file access directly; operates as post-execution audit gate.
 
 ### Module: `EvidenceCollector`
-- **Purpose**: Orchestrates independent evidence acquisition (Git base/head SHAs, diffs, changed files, scope compliance, and trusted verification test results). It MAY invoke an internal constrained verification runner to execute approved `required_tests` / build-verification commands with discrete parameter arrays.
+- **Purpose**: Orchestrates independent evidence acquisition (Git base/head SHAs, diffs, changed files, scope compliance, and trusted verification test results). It MAY invoke an internal constrained verification runner to execute approved host-owned verification profiles (`verification_requests` per ADR-013) within an isolated execution boundary.
 - **Origin**: AIWorkHub candidate verification and Codencer evidence model (`docs/sources/05_AIWORKHUB.md`, `docs/sources/07_CODENCER.md`).
 - **Existing Upstream Capability Checked**: YES (AO reports session exit code, but does not correlate Git diffs or build test audit packets).
 - **Reason This Module Exists in Our Code**: Zero-trust verification: worker claims must be corroborated by independent evidence.
