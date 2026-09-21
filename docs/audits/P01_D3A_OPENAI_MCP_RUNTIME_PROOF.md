@@ -1,11 +1,13 @@
-# P01-D3A — OFFICIAL OPENAI MCP RUNTIME PROOF DOSSIER
+﻿# P01-D3A — OFFICIAL OPENAI MCP RUNTIME PROOF DOSSIER
 
 > **Authority**: Phase 1 Upstream Proof Dossier — Track P01-D3A  
 > **Date**: 2026-09-21  
 > **Architecture Status**: `ARCHITECTURE_V2_CANDIDATE` (Strictly Candidate; Not Frozen)  
 > **Dedicated Tunnel**: `tunnel_6ab0ae480cec81919b3db157c622eb53` (Name: `ai-supervisor-p01d`)  
 > **Untouched Existing Tunnel**: `Codex Native2` (`tunnel_6aae67a9abe08191ab9697ef8e2a6687` preserved untouched)  
-> **P01-D3A Verdict**: `PASS`  
+> **P01-D3A Functional Transport**: `PASS`  
+> **P01-D3A Security Hygiene**: `REMEDIATION_PENDING` (P01-D3A-SEC-001)  
+> **P01-D3A Governance**: `PASS_AFTER_KEY_ROTATION_AND_INCIDENT_RECORD`  
 > **Overall P01-D Transport Gate**: `PARTIALLY_PROVEN / FINAL_PLUGIN_GATE_PENDING`  
 > **P01-D Phase Verdict**: `GAP_REQUIRES_ADR`  
 > **P01-A / P01-B / P01-C Status**: `HELD`  
@@ -49,7 +51,7 @@
 
 ---
 
-## 2. Process Hygiene Deviation Note
+## 2. Process Hygiene Deviation & Security Incident Record
 
 ```text
 ================================================================================
@@ -57,6 +59,12 @@ PROCESS_HYGIENE_DEVIATION:
 Previous execution inspected metadata from .codex/auth.json while searching for credentials.
 No secret value was exposed in recorded output.
 Future credential-store inspection is prohibited.
+
+SECURITY INCIDENT P01-D3A-SEC-001:
+Temporary proof API credential was exposed in execution transcript during env assignment.
+Git/Repository exposure: NOT FOUND (verified zero sk-proj- strings committed/pushed).
+Remediation: Environment variables deleted locally; platform revocation pending user action.
+Detailed record: docs/audits/P01_D3A_SECURITY_INCIDENT_001.md
 ================================================================================
 ```
 
@@ -83,19 +91,25 @@ Authoritative OpenAI documentation ingested on 2026-09-21 without fabricated Git
 
 ## 4. Identity Verification Status & Blocker Scope
 
-- **Status**: `EXTERNAL_DEPENDENCY_PENDING` (Submitted, awaiting OpenAI verification review).
-- **Hard Gates Blocked by Identity Verification**:
-  - `PLUGIN_DRAFT_COMPLETION_OR_PUBLICATION_PATH`
-  - `PUBLIC_PLUGIN_SUBMISSION`
-  - `OPENAI_PLUGIN_REVIEW`
-  - `PUBLICATION`
-  - `TARGET_PLUS_INSTALLATION_OF_OUR_PLUGIN`
-- **Gates NOT Blocked by Identity**:
-  - Local MCP server creation and protocol harness validation (PASS)
-  - Official MCP Inspector validation (PASS)
-  - Secure MCP Tunnel creation and `tunnel-client doctor` preflight (PASS)
-  - Responses API MCP tool invocation via `tunnel_id` (PASS)
-- **Governance Classification**: This is recorded as `WAITING_IDENTITY_VERIFICATION`, not as an MCP transport failure.
+- **Status**: `VERIFIED` (Empirically verified by User on 2026-09-21; Vietnamese national ID + selfie approved).
+- **Historical Context**: Previously recorded as `EXTERNAL_DEPENDENCY_PENDING`; now superseded and cleared.
+- **Empirical Evidence Ingested**:
+  - Individual identity verification passed.
+  - Plugin Submission Portal accessible.
+  - Real plugin draft created.
+  - Submission mode: `With MCP` enabled.
+  - Portal wizard tabs observed: `Info`, `MCP`, `Skills`, `Prompts`, `Testing`, `Global`, `Submit`.
+- **Hard Gates Cleared by Identity**:
+  - `IDENTITY_VERIFICATION = VERIFIED`
+  - `PLUGIN_DRAFT_CREATION = PASS`
+  - `SUBMISSION_TYPE_WITH_MCP = PASS`
+  - `PORTAL_WIZARD_ACCESS = PASS`
+- **Remaining Downstream Blocker Scope (Phase P01-D3B)**:
+  - Stable Public HTTPS MCP Endpoint & Gateway architecture.
+  - Domain verification (`/.well-known/openai-apps-challenge`).
+  - Portal Scan Tools & schema validation.
+  - Developer Mode availability on Plus account / Edu workspace for demo recording.
+  - Public review submission & Plus store installation.
 
 ---
 
@@ -303,8 +317,14 @@ Model Selected: `gpt-4o-mini` (labeled `TEST_ONLY_MODEL`).
 
 ```text
 ================================================================================
-P01-D3A VERDICT:
+P01-D3A FUNCTIONAL TRANSPORT:
 PASS
+
+P01-D3A SECURITY HYGIENE:
+REMEDIATION_PENDING (P01-D3A-SEC-001)
+
+P01-D3A GOVERNANCE:
+PASS_AFTER_KEY_ROTATION_AND_INCIDENT_RECORD
 
 REASON:
 - Binary Checksum: PASS (BINARY_CHECKSUM_VERIFIED)

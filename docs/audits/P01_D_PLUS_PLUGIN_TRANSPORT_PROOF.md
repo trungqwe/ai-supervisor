@@ -1,10 +1,10 @@
-# P01-D — CHATGPT PLUS PUBLISHED PLUGIN TRANSPORT PROOF GATE
+﻿# P01-D — CHATGPT PLUS PUBLISHED PLUGIN TRANSPORT PROOF GATE
 
 > **Authority**: Phase 1 Upstream Proof Dossier  
 > **Track**: P01-D Proof Gate (Candidate Architecture V2)  
 > **Date**: 2026-09-20  
 > **Architecture Status**: `ARCHITECTURE_V2_CANDIDATE` (Not Frozen)  
-> **P01-D Transport Gate**: `NOT_CLEARED` (`TRANSPORT_PROOF_INCOMPLETE`)  
+> **P01-D Transport Gate**: `PARTIALLY_PROVEN / FINAL_PLUGIN_GATE_PENDING`  
 > **P01-D Phase Verdict**: `GAP_REQUIRES_ADR`  
 > **Spike Location**: `D:\TU_CODE\_ai_supervisor_p01d_plugin_spike\` (Isolated outside project repo)  
 
@@ -145,13 +145,13 @@ To ensure strict evidentiary hygiene and prevent overclaiming, transport feasibi
 │ 1. LOCAL_SPIKE           │ Local Relay Harness      │ PASS (Proven)     │
 │                          │ (Custom WebSocket relay) │                   │
 ├──────────────────────────┼──────────────────────────┼───────────────────┤
-│ 2. OPENAI_TUNNEL /       │ Official tunnel-client   │ PARTIAL           │
-│    API_PROOF (P01-D3A)   │ + Responses API via      │ (Local MCP: PASS; │
-│                          │ dedicated tunnel_id      │ Tunnel: WAITING)  │
+│ 2. OPENAI_TUNNEL /       │ Official tunnel-client   │ PASS              │
+│    API_PROOF (P01-D3A)   │ + Responses API via      │ (Functional PASS; │
+│                          │ dedicated tunnel_id      │ SEC remediation)  │
 ├──────────────────────────┼──────────────────────────┼───────────────────┤
-│ 3. PUBLIC_PLUGIN_PROOF   │ Stable Public Gateway    │ BLOCKED           │
-│    (P01-D3B)             │ + Domain Verification    │ (Pending Identity │
-│                          │ + OpenAI Plugin Review   │ Verification)     │
+│ 3. PUBLIC_PLUGIN_PROOF   │ Stable Public Gateway    │ IN_PROGRESS       │
+│    (P01-D3B)             │ + Domain Verification    │ (Identity PASSED; │
+│                          │ + OpenAI Plugin Review   │ Pipeline Proof)   │
 ├──────────────────────────┼──────────────────────────┼───────────────────┤
 │ 4. TARGET_PLUS_PROOF     │ Live ChatGPT Plus Web    │ BLOCKED           │
 │    (P01-D4)              │ installation & prompt-   │ (Pending Layer 3  │
