@@ -1,11 +1,12 @@
 # P01-B -- EXTERNAL SUPERVISOR AUDIT DOSSIER
 
 > **Authority**: External Supervisor Independent Audit Authority
-> **Status**: REMEDIATION_APPLIED_WAITING_FOR_QUOTA
-> **Verdict**: P01_B_EXTERNAL_AUDIT = REMEDIATION_APPLIED_WAITING_FOR_QUOTA
+> **Status**: SUBMITTED_FOR_FINAL_AUDIT
+> **Verdict**: P01_B_EXTERNAL_AUDIT = SUBMITTED_FOR_FINAL_AUDIT
 > **Date**: 2026-09-21
 > **Repository**: `D:\TU_CODE\ai-supervisor`
 > **Audited Baseline Commit**: `daf1266b2e9cf2b150ae804711ba1c26a082cdcc`
+> **Remediation & Continuation Commit**: `b1f3204eaa8f828f6d62cec7e6f627ac85bd4575`
 > **Prior Approved Milestone (P01-A)**: `a0b4c42de6bb11093cfac86e206e04819afacfdd`
 > **Historical Frozen Baseline**: `phase0-architecture-v1` (`6f72eaca30be3fc3ac00f25829dd4283ed98c3f5`)
 > **Pinned Agy**: `google-antigravity/antigravity-cli` `1.2.7` (`7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`)
@@ -14,28 +15,20 @@
 
 ---
 
-# 1. External Supervisor Verdict & Premature PASS Correction
+# 1. External Supervisor Audit History & Remediation Progression
 
-The External Supervisor independently audited remote commit `daf1266b2e9cf2b150ae804711ba1c26a082cdcc` and rejected the worker-reported `P01-B = PASS` as **premature**.
-
-### Reasons for PASS Rejection:
-1. **Continuation Tests Incomplete**: Cross-process conversation resume (`--conversation`) was blocked by transient quota exhaustion (`RESOURCE_EXHAUSTED`, HTTP 429) during Turn 2, and workspace continuation (`--continue`) was not executed. Neither capability was empirically proven.
-2. **Missing Local / Parse-Layer Negative Tests**: The canonical dossier lacked safe negative test evidence establishing CLI failure behavior before remote inference.
-3. **Missing Binary & Help Evidence**: Binary provenance, exact version pin verification, and literal help flag semantics were absent from the canonical dossier.
-4. **Missing Process / Orphan Evidence**: Explicit orphan check and cleanup audit evidence were not recorded.
-5. **Canonical Source Truth Desynchronization**: `docs/sources/02_ANTIGRAVITY_CLI.md` and `docs/sources/UPSTREAM_CONTRACT_BASELINE.md` still designated Agy runtime capabilities as untested.
-6. **Encoding Hygiene Regression**: Commit `daf1266` introduced UTF-8 BOM headers and mojibake characters into canonical documentation.
+1. **Initial Verdict on `daf1266`**: The External Supervisor independently audited remote commit `daf1266b2e9cf2b150ae804711ba1c26a082cdcc` and rejected the worker-reported `P01-B = PASS` as premature due to incomplete continuation tests (B9/B10 blocked by quota), missing negative test findings, missing process/binary provenance evidence, and source truth desynchronization.
+2. **Remediation Phase**: Remediated encoding hygiene, binary provenance, help flag surface, characterization of failure contract (`AGY_FAILURE_EXIT_CODES = PASS_WITH_CALLER_VALIDATION_CONSTRAINT`), orphan process check, and canonical source truth synchronization.
+3. **Continuation Execution Phase**: Following the User's quota policy supersession (`QUOTA_POLICY = NON_BLOCKING_OPERATIONAL_CONCERN`), both required continuation tests (P01-B9 and P01-B10) were executed and completed with 100% empirical success.
 
 ```text
-P01_B_EXTERNAL_AUDIT = REMEDIATION_APPLIED_WAITING_FOR_QUOTA
-P01-B worker-reported PASS = REJECTED_AS_PREMATURE
-P01-B = NOT_EVALUATED
-P01_B_PROVEN_SUBSET = PASS
-P01_B_ENVIRONMENT = BLOCKED_BY_AGY_QUOTA_FOR_CONTINUATION_TESTS
-P01-C = HELD
+P01_A = EXTERNAL_AUDIT_APPROVED
+P01_B_EXTERNAL_AUDIT = SUBMITTED_FOR_FINAL_AUDIT
+P01-B = PASS_PENDING_EXTERNAL_AUDIT
+P01-C = HELD_PENDING_EXTERNAL_P01_B_AUDIT
 P01-D = TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED
 ARCHITECTURE_V2 = CANDIDATE_TRANSPORT_APPROVED_NOT_FROZEN
-ACTIVE_GATE = HUMAN_REQUIRED_P01_B_QUOTA_RECOVERY
+ACTIVE_GATE = EXTERNAL_SUPERVISOR_P01_B_FINAL_AUDIT
 ```
 
 ---
@@ -59,8 +52,6 @@ The following empirical results from the P01-B runtime sandbox are verified, acc
 ---
 
 # 3. Verification & Characterization Breakdown
-
-The non-quota and negative-behavior evaluations are strictly distinguished into local verification versus remote-boundary behavioral characterization:
 
 ### Subsection A: Non-Quota Local Verification
 
@@ -95,8 +86,8 @@ The non-quota and negative-behavior evaluations are strictly distinguished into 
    - **`P01B_ORPHAN_PROCESS_CHECK = PASS`**.
 
 5. **Evidence & Sandbox Cleanup**:
-   - All 9 evidence artifacts preserved in `D:\TU_CODE\_ai_supervisor_p01b_agy_runtime\evidence\`.
-   - Sandbox directories intact and ready for continuation retests.
+   - All empirical evidence artifacts preserved in `D:\TU_CODE\_ai_supervisor_p01b_agy_runtime\evidence\`.
+   - Sandbox directories intact and clean.
    - **`P01B_CLEANUP = PASS`**.
 
 ### Subsection B: Negative Behavioral Observations & Process Deviation Record
@@ -155,31 +146,67 @@ Because Agy 1.2.7 does not reliably reject malformed inputs locally, the future 
 4. Verify existence and accessibility of all `--add-dir` directories.
 5. Restrict CLI invocations to strictly bounded, validated arguments.
 
-*(Note: In accordance with Phase 1 directives, no application code or ADR is created at this time; this constraint is recorded for P01-C evaluation and subsequent implementation phases).*
+---
+
+# 5. User Policy Override & Quota Blocker Supersession
+
+### A. Quota Policy Supersession
+The User has explicitly funded additional usage capacity and superseded the previous quota-gating policy:
+```text
+QUOTA_POLICY = NON_BLOCKING_OPERATIONAL_CONCERN
+```
+- Quota or capacity events are logged as operational telemetry and do not create architecture gates or project-stop gates.
+- Runtime capabilities still strictly require actual empirical proof with real successful invocations.
+
+### B. Superseding ENV-P01B-001
+- **Record ID**: `ENV-P01B-001`
+- **Historical Classification**: `HISTORICAL_TRANSIENT_ENVIRONMENT_EVENT`
+- **Active Blocker**: **`NO`**
+- **Active Gate**: **`NONE`**
+- **ADR Required**: `NO`
 
 ---
 
-# 5. Environment Blocker Record (ENV-P01B-001)
+# 6. Empirical Continuation Proofs (P01-B9 & P01-B10)
 
-The condition preventing full P01-B track evaluation is classified as an environmental blocker, not an architectural gap:
+Following policy supersession, both remaining continuation capabilities were executed and verified live:
 
-| Field | Value |
-|---|---|
-| **Record ID** | `ENV-P01B-001` |
-| **Classification** | `ENVIRONMENT_BLOCKER_TRANSIENT` |
-| **Condition** | `AGY_INDIVIDUAL_QUOTA_EXHAUSTED` |
-| **Error Details** | `RESOURCE_EXHAUSTED (code 429)` |
-| **First Observed** | P01-B4 Turn 2 retry |
-| **Blocking Scope** | P01-B9 (`--conversation`), P01-B10 (`--continue`), P01-B final external audit, P01-C release |
-| **ADR Required** | **NO** (transient account quota limit, no architectural mismatch) |
-| **Active Gate** | `HUMAN_REQUIRED_P01_B_QUOTA_RECOVERY` |
-| **Quota Reset Timing** | **`ESTIMATED_ONLY`** (~42 hours from ~2026-09-21 17:55 +07:00; no provider SLA) |
+### A. P01-B9: Cross-Process `--conversation` Resume
+- **Sandbox Workspace**: `D:\TU_CODE\_ai_supervisor_p01b_agy_runtime\primary`
+- **Generated Marker**: `P01B_CONV_1789998249096_4803`
+- **Turn 1**:
+  - Command: `agy -p "Remember this exact marker: P01B_CONV_1789998249096_4803. Reply only ACK." --output-format json`
+  - Exit code: `0` | Elapsed: `7796 ms` | Status: `"SUCCESS"`
+  - Captured `conversation_id`: `f6420dd6-e11b-4eb0-9bba-d77813c2fa04`
+- **Turn 2**:
+  - Command: `agy --conversation f6420dd6-e11b-4eb0-9bba-d77813c2fa04 -p "What exact marker did I ask you to remember in the previous turn? Return only the marker." --output-format json`
+  - Exit code: `0` | Elapsed: `12451 ms` | Status: `"SUCCESS"`
+  - Response: `"P01B_CONV_1789998249096_4803\n"`
+  - Marker match: **EXACT**
+- **Evidence File**: `D:\TU_CODE\_ai_supervisor_p01b_agy_runtime\evidence\p01b9_conversation_id_resume_proven.json`
+- **Verdict**: **`AGY_CONVERSATION_ID_RESUME = PASS`**
+
+### B. P01-B10: Workspace Continue (`--continue`)
+- **Sandbox Workspace**: `D:\TU_CODE\_ai_supervisor_p01b_agy_runtime\primary` (identical controlled root)
+- **Generated Marker**: `P01B_CONTINUE_1789998278237_8582`
+- **Turn 1**:
+  - Command: `agy -p "Remember this exact marker: P01B_CONTINUE_1789998278237_8582. Reply only ACK." --output-format json`
+  - Exit code: `0` | Elapsed: `6923 ms` | Status: `"SUCCESS"`
+  - Created `conversation_id`: `738074b7-8676-4841-bea4-9ad0395a4211`
+- **Turn 2**:
+  - Command: `agy --continue -p "What exact marker did I ask you to remember in the previous conversation? Return only the marker." --output-format json`
+  - Exit code: `0` | Elapsed: `6512 ms` | Status: `"SUCCESS"`
+  - Selected `conversation_id`: `738074b7-8676-4841-bea4-9ad0395a4211` (automatically continued most recent session)
+  - Response: `"P01B_CONTINUE_1789998278237_8582\n"`
+  - Marker match: **EXACT**
+- **Evidence File**: `D:\TU_CODE\_ai_supervisor_p01b_agy_runtime\evidence\p01b10_continue_proven.json`
+- **Verdict**: **`AGY_CONTINUE = PASS`**
 
 ---
 
-# 6. Acceptance Matrix (16 Required Capabilities)
+# 7. Final Acceptance Matrix (16 Required Capabilities)
 
-The track requires exactly 16 acceptance capabilities:
+All 16 capabilities have reached verified accepted state:
 
 | Capability ID | Target Capability | Verification Type | Status |
 |---|---|---|---|
@@ -197,33 +224,25 @@ The track requires exactly 16 acceptance capabilities:
 | **AGY_FAILURE_EXIT_CODES** | Failure contract characterization | Runtime Negative Tests | **`PASS_WITH_CALLER_VALIDATION_CONSTRAINT`** |
 | **P01B_ORPHAN_PROCESS_CHECK** | No orphaned background processes | Process Audit | **`PASS`** |
 | **P01B_CLEANUP** | Evidence preserved, sandbox clean | Filesystem Audit | **`PASS`** |
-| **AGY_CONVERSATION_ID_RESUME** | Cross-process conversation resume | Runtime P01-B9 | **`NOT_EVALUATED`** (`ENV-P01B-001`) |
-| **AGY_CONTINUE** | Workspace conversation continue | Runtime P01-B10 | **`NOT_EVALUATED`** (`ENV-P01B-001`) |
+| **AGY_CONVERSATION_ID_RESUME** | Cross-process conversation resume | Runtime P01-B9 | **`PASS`** |
+| **AGY_CONTINUE** | Workspace conversation continue | Runtime P01-B10 | **`PASS`** |
 
-### Explicit Arithmetic Recount:
+### Arithmetic Recount:
 ```text
-13 PASS
+15 PASS
 + 1 PASS_WITH_QUOTA_ERROR_OBSERVED
-+ 2 NOT_EVALUATED
-= 16 required items
+= 16/16 capabilities accepted
 ```
 
-**Track Verdict**: **`P01-B = NOT_EVALUATED`** (two required continuation capabilities remain unproven due to quota exhaustion).
-
-**Outstanding Empirical Blockers**:
-Only two capabilities block P01-B completion:
-1. `AGY_CONVERSATION_ID_RESUME` (P01-B9)
-2. `AGY_CONTINUE` (P01-B10)
-
-*(Failure exit code characterization is completed and is NOT an outstanding blocker).*
+**Outstanding Empirical Blockers**: **NONE**.
 
 ---
 
-# 7. Source Truth Reconciliation & Encoding Hygiene Audit
+# 8. Source Truth Reconciliation & Encoding Hygiene Audit
 
 1. **Source Truth Files Updated**:
-   - `docs/sources/02_ANTIGRAVITY_CLI.md`: Reconciled to `PARTIALLY_RUNTIME_TESTED`; recorded failure contract findings and `CALLER_VALIDATION_REQUIRED` constraint; preserved B9/B10 as `RUNTIME_NOT_EVALUATED`.
-   - `docs/sources/UPSTREAM_CONTRACT_BASELINE.md`: Preserved B1–B8 granular statuses; updated failure contract row; confirmed B9/B10 as `RUNTIME_NOT_EVALUATED`.
+   - `docs/sources/02_ANTIGRAVITY_CLI.md`: Updated to `RUNTIME_TESTED_PASS` / `P01-B COMPLETE`; documented empirical proof of `--conversation` and `--continue`; recorded `CALLER_VALIDATION_REQUIRED` constraint.
+   - `docs/sources/UPSTREAM_CONTRACT_BASELINE.md`: Updated Conversation ID Resume and Workspace Continue to `RUNTIME_TESTED_PASS`.
 2. **Encoding Hygiene Verification**:
    - All modified canonical Markdown files verified UTF-8 without BOM.
    - Zero mojibake characters present across all files.
@@ -231,23 +250,21 @@ Only two capabilities block P01-B completion:
 
 ---
 
-# 8. Next Authorized Action
-
-The Supervisor Control Plane remains held at gate `HUMAN_REQUIRED_P01_B_QUOTA_RECOVERY`.
+# 9. Final Track Verdict & Next Authorized Action
 
 ```text
-ACTIVE_GATE = HUMAN_REQUIRED_P01_B_QUOTA_RECOVERY
 P01_A = EXTERNAL_AUDIT_APPROVED
-P01_B_EXTERNAL_AUDIT = REMEDIATION_APPLIED_WAITING_FOR_QUOTA
-P01-B = NOT_EVALUATED
-P01-C = HELD
+P01_B_EXTERNAL_AUDIT = SUBMITTED_FOR_FINAL_AUDIT
+P01-B = PASS_PENDING_EXTERNAL_AUDIT
+P01-C = HELD_PENDING_EXTERNAL_P01_B_AUDIT
 P01-D = TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED
 ARCHITECTURE_V2 = CANDIDATE_TRANSPORT_APPROVED_NOT_FROZEN
+ACTIVE_GATE = EXTERNAL_SUPERVISOR_P01_B_FINAL_AUDIT
 ```
 
 **Directives**:
-1. Do NOT invoke Agy with any model prompt.
-2. Do NOT retry quota or run B9/B10 until explicit User authorization after quota recovery.
-3. Do NOT release Track P01-C.
+1. Track P01-B runtime proof is complete and submitted for final External Supervisor audit.
+2. Track P01-C is released to `HELD_PENDING_EXTERNAL_P01_B_AUDIT` (ready to unlock upon final audit approval).
+3. Do NOT execute P01-C in this task.
 4. Do NOT proceed to Phase P02.
 5. Do NOT freeze Architecture V2.

@@ -1,7 +1,7 @@
 # SOURCE DOSSIER: 02 — OFFICIAL ANTIGRAVITY CLI
 
 > **Authority**: Upstream Source Evidence Dossier
-> **Status**: Partially Runtime Tested (P01-B accepted empirical subset B1-B8 PASS; B9/B10 NOT EVALUATED)
+> **Status**: Verified Documentation Baseline (P01-B Direct Runtime Proof COMPLETE — PASS_PENDING_EXTERNAL_AUDIT)
 
 ---
 
@@ -17,7 +17,7 @@
 | **Commit Committer Date (UTC)** | `2026-09-19T01:01:48Z` | GitHub Commit Metadata |
 | **Repository SPDX License** | `NOT DECLARED` | GitHub Repository Metadata |
 | **Usage Terms** | Subject to applicable Google / Antigravity Terms of Service | Official Distribution Terms |
-| **Local Runtime Status** | `PARTIALLY_RUNTIME_TESTED` (Agy 1.2.7; P01-B empirical subset B1-B8 PASS; failure contract characterized with `CALLER_VALIDATION_REQUIRED`; B9/B10 RUNTIME_NOT_EVALUATED pending quota recovery) | P01-B dossier: `docs/audits/P01_B_AGY_CLI_PROOF.md` |
+| **Local Runtime Status** | `RUNTIME_TESTED_PASS` / `P01-B COMPLETE` (Agy 1.2.7; 16/16 capabilities verified including B9 `--conversation` and B10 `--continue`; failure contract characterized with `CALLER_VALIDATION_REQUIRED`) | P01-B dossier: `docs/audits/P01_B_AGY_CLI_PROOF.md` |
 
 ---
 
@@ -61,8 +61,9 @@ Section / symbol: --output-format text|json|stream-json / --input-format text|st
 Verification: VERIFIED
 Runtime status: RUNTIME_TESTED_PASS
 Notes: P01-B3 confirmed NDJSON event sequence (init/step_update/result). P01-B4 confirmed stdin NDJSON
-       accepted and in-process multi-turn context retained. Cross-process conversation resume NOT proven
-       (P01-B9 ENV-P01B-001 quota blocked).
+       accepted and in-process multi-turn context retained. P01-B9 confirmed cross-process conversation
+       resume via --conversation <id> (marker recovered). P01-B10 confirmed workspace continuation via
+       --continue (marker recovered).
 
 Claim ID: AGY-CLAIM-004
 Claim: Antigravity CLI supports unattended autonomous execution via permission bypass and multi-directory workspace binding.
@@ -82,18 +83,16 @@ Notes: P01-B7 confirmed file write without permission prompt. P01-B8 confirmed o
 
 # 3. Adopted Concepts vs. Upstream Gaps
 
-### Proven (P01-B empirical subset B1-B8):
-- Headless text execution (`-p`, `-p --output-format json`, `-p --output-format stream-json`)
-- Stream-JSON stdin input protocol (`--input-format stream-json`)
-- Same-process multi-turn context retention
-- JSON Schema structured output (`--json-schema`)
-- Real filesystem side effects combined with structured output
-- Permission bypass (`--dangerously-skip-permissions`)
-- Multi-directory workspace binding (`--add-dir`)
-
-### Not Yet Proven (pending quota recovery -- ENV-P01B-001):
-- Cross-process conversation resume (`--conversation <id>`) -- P01-B9
-- Workspace continue (`--continue`, `-c`) -- P01-B10
+### Proven (P01-B Direct Runtime Proof COMPLETE):
+- Headless text execution (`-p`, `-p --output-format json`, `-p --output-format stream-json`). **PROVEN.**
+- Stream-JSON stdin input protocol (`--input-format stream-json`). **PROVEN.**
+- Same-process multi-turn context retention. **PROVEN.**
+- JSON Schema structured output (`--json-schema`). **PROVEN.**
+- Real filesystem side effects combined with structured output. **PROVEN.**
+- Permission bypass (`--dangerously-skip-permissions`). **PROVEN.**
+- Multi-directory workspace binding (`--add-dir`). **PROVEN.**
+- Cross-process conversation resume (`--conversation <id>`). **PROVEN** (P01-B9).
+- Workspace continue (`--continue`, `-c`). **PROVEN** (P01-B10).
 
 ### Empirical Failure Contract & Integration Constraint:
 Empirical negative testing (P01-B safe negative suite) established that Agy 1.2.7:

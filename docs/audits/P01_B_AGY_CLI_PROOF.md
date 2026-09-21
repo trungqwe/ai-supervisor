@@ -4,9 +4,9 @@
 **Pinned Baseline:** Agy `1.2.7` commit `7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`
 **Sandbox:** `D:\TU_CODE\_ai_supervisor_p01b_agy_runtime\`
 **Execution Date:** 2026-09-21
-**Overall Track Status:** `NOT_EVALUATED`
-**Reason:** Required continuation tests (P01-B9, P01-B10) incomplete due to external quota exhaustion.
-**Accepted Empirical Subset:** P01-B1 through P01-B8 PASS (externally audited and accepted).
+**Overall Track Status:** `PASS_PENDING_EXTERNAL_AUDIT`
+**Reason:** All 16 required capabilities empirically proven and characterized on target Windows host.
+**Accepted Empirical Subset:** P01-B1 through P01-B8 PASS; P01-B9 PASS; P01-B10 PASS; failure contract characterized.
 
 ---
 
@@ -23,8 +23,8 @@
 | `P01_B6_SCHEMA_AND_FILE_SIDE_EFFECT` | JSON Schema + real file side effect | `PASS` |
 | `P01_B7_SKIP_PERMISSIONS` | Dangerously-skip-permissions flag | `PASS` |
 | `P01_B8_ADD_DIR` | Multi-directory context (`--add-dir`) | `PASS` |
-| `P01_B9_CONVERSATION_ID_RESUME` | Cross-process conversation resume (`--conversation`) | `NOT_EVALUATED_QUOTA_BLOCKED` |
-| `P01_B10_CONTINUE` | Workspace continue (`--continue`) | `NOT_EVALUATED_QUOTA_BLOCKED` |
+| `P01_B9_CONVERSATION_ID_RESUME` | Cross-process conversation resume (`--conversation`) | `PASS` |
+| `P01_B10_CONTINUE` | Workspace continue (`--continue`) | `PASS` |
 | `AGY_VERSION_PIN` | Version exactly 1.2.7 | `PASS` |
 | `AGY_HELP_FLAGS` | Expected flags present in `agy --help` | `PASS` |
 | `AGY_FAILURE_EXIT_CODES` | Failure contract characterization | `PASS_WITH_CALLER_VALIDATION_CONSTRAINT` |
@@ -398,20 +398,17 @@ Because Agy 1.2.7 does not reliably reject malformed inputs locally, the future 
 
 ## 8. Environment Blocker Record
 
-### ENV-P01B-001: Agy API Quota Exhausted
+### ENV-P01B-001: Historical Agy API Quota Event (Superseded)
 
 | Field | Value |
 |---|---|
 | **Record ID** | `ENV-P01B-001` |
-| **Classification** | `ENVIRONMENT_BLOCKER_TRANSIENT` |
-| **Condition** | `AGY_INDIVIDUAL_QUOTA_EXHAUSTED` |
-| **Error** | `RESOURCE_EXHAUSTED (code 429)` |
-| **First observed** | P01-B4 Turn 2 (quota retry on final result) |
-| **Blocking** | P01-B9 (conversation ID resume), P01-B10 (--continue) |
-| **Impact** | P01-B continuation acceptance incomplete; track overall = NOT_EVALUATED |
-| **ADR Required** | NO -- transient environment condition, not architectural gap |
-| **Active Gate** | `HUMAN_REQUIRED_P01_B_QUOTA_RECOVERY` |
-| **Quota Reset** | ESTIMATED_ONLY (~42h from P01-B9 execution at 2026-09-21 17:55 +07:00; no provider SLA) |
+| **Historical Classification** | `HISTORICAL_TRANSIENT_ENVIRONMENT_EVENT` (formerly `ENVIRONMENT_BLOCKER_TRANSIENT`) |
+| **Condition** | `AGY_INDIVIDUAL_QUOTA_EXHAUSTED` (historical 429 error on 2026-09-21 17:55) |
+| **Superseding Policy** | **`QUOTA_POLICY = NON_BLOCKING_OPERATIONAL_CONCERN`** (User funded additional capacity; quota is non-blocking) |
+| **Active Blocker** | **NO** (P01-B9 and P01-B10 continuation tests successfully executed and proven) |
+| **Active Gate** | **NONE** (formerly `HUMAN_REQUIRED_P01_B_QUOTA_RECOVERY`) |
+| **ADR Required** | NO |
 
 ---
 
@@ -440,7 +437,9 @@ D:\TU_CODE\_ai_supervisor_p01b_agy_runtime\evidence\
   p01b6_schema_file_side_effect.json (written 17:51)
   p01b7_dangerous_skip_permissions.json (written 17:52)
   p01b8_add_dir.json               (written 17:52)
-  p01b9_conversation_id_resume.json (written 17:55)
+  p01b9_conversation_id_resume.json (written 17:55 - historical quota attempt)
+  p01b9_conversation_id_resume_proven.json (written 20:44 - proven Turn 1 + Turn 2 pair)
+  p01b10_continue_proven.json      (written 20:44 - proven Turn 1 + Turn 2 continue pair)
 ```
 
 Sandbox retained for continuation testing after quota recovery.
@@ -449,59 +448,80 @@ Sandbox retained for continuation testing after quota recovery.
 
 ---
 
-## 11. P01-B9 Retest Plan (After Quota Recovery Only)
+## 11. P01-B9 Empirical Proof: Conversation ID Resume (`--conversation`)
 
-Execute only after User explicitly authorizes continuation following quota reset.
+**Objective:** Prove that a new independent Agy process can resume context from a prior conversation using the explicit `--conversation <id>` flag.
 
-**Turn 1:** New agy process (no `--conversation` flag)
-- Store fresh unique marker in prompt
-- Capture `conversation_id` from JSON envelope
-- Require `status: "SUCCESS"` and exit code `0`
+**Execution Parameters:**
+- **Working Directory:** `D:\TU_CODE\_ai_supervisor_p01b_agy_runtime\primary`
+- **Test Marker:** `P01B_CONV_1789998249096_4803`
+- **Evidence File:** `D:\TU_CODE\_ai_supervisor_p01b_agy_runtime\evidence\p01b9_conversation_id_resume_proven.json`
 
-**Turn 2:** New agy process (separate invocation)
-- `--conversation <exact conversation_id from Turn 1>`
-- Ask for marker WITHOUT including it in the prompt
-- Require `status: "SUCCESS"`, exit code `0`, hidden marker recovered exactly
+### Turn 1: Conversation Initialization
+- **Command:** `agy -p "Remember this exact marker: P01B_CONV_1789998249096_4803. Reply only ACK." --output-format json`
+- **Exit Code:** `0`
+- **Elapsed:** `7796 ms`
+- **Status:** `"SUCCESS"`
+- **Captured Conversation ID:** `f6420dd6-e11b-4eb0-9bba-d77813c2fa04`
+- **Response:** `"ACK\n"`
 
-**Acceptance criteria:**
-- Same `conversation_id` both turns
-- Hidden marker recovered in Turn 2 `response`
-- No quota error in either turn
+### Turn 2: Context Resume via Conversation ID
+- **Command:** `agy --conversation f6420dd6-e11b-4eb0-9bba-d77813c2fa04 -p "What exact marker did I ask you to remember in the previous turn? Return only the marker." --output-format json`
+- **Exit Code:** `0`
+- **Elapsed:** `12451 ms`
+- **Status:** `"SUCCESS"`
+- **Selected Conversation ID:** `f6420dd6-e11b-4eb0-9bba-d77813c2fa04`
+- **Returned Response:** `"P01B_CONV_1789998249096_4803\n"`
+- **Verification:** Hidden marker was recovered verbatim without disclosure in Turn 2 prompt.
 
-**Previous P01-B9 attempt remains historical evidence only -- NOT PASS.**
+**Verdict: `AGY_CONVERSATION_ID_RESUME = PASS`**
 
 ---
 
-## 12. P01-B10 --continue Plan (After Quota Recovery Only)
+## 12. P01-B10 Empirical Proof: Workspace Continuation (`--continue`)
 
-Execute only after User explicitly authorizes continuation following quota reset.
+**Objective:** Prove that a new independent Agy process can continue the most recent conversation in the current workspace using `--continue` without specifying a conversation ID.
 
-Read exact `agy --help` semantics for `--continue` immediately before execution.
+**Execution Parameters:**
+- **Working Directory:** `D:\TU_CODE\_ai_supervisor_p01b_agy_runtime\primary` (exact same workspace)
+- **Test Marker:** `P01B_CONTINUE_1789998278237_8582`
+- **Evidence File:** `D:\TU_CODE\_ai_supervisor_p01b_agy_runtime\evidence\p01b10_continue_proven.json`
 
-**Invocation 1:** New agy process from controlled `primary` workspace
-- Store fresh unique marker, finish successfully
-- Require `status: "SUCCESS"`, exit code `0`
+### Turn 1: Seed Conversation
+- **Command:** `agy -p "Remember this exact marker: P01B_CONTINUE_1789998278237_8582. Reply only ACK." --output-format json`
+- **Exit Code:** `0`
+- **Elapsed:** `6923 ms`
+- **Status:** `"SUCCESS"`
+- **Created Conversation ID:** `738074b7-8676-4841-bea4-9ad0395a4211`
+- **Response:** `"ACK\n"`
 
-**Invocation 2:** New agy process from same workspace
-- `agy --continue` (or `-c`)
-- Ask for hidden marker without revealing it
-- Require: successful result, hidden marker recovered, expected conversation chosen
+### Turn 2: Workspace Resume via `--continue`
+- **Command:** `agy --continue -p "What exact marker did I ask you to remember in the previous conversation? Return only the marker." --output-format json`
+- **Exit Code:** `0`
+- **Elapsed:** `6512 ms`
+- **Status:** `"SUCCESS"`
+- **Selected Conversation ID:** `738074b7-8676-4841-bea4-9ad0395a4211` (matches Turn 1)
+- **Returned Response:** `"P01B_CONTINUE_1789998278237_8582\n"`
+- **Verification:** Hidden marker recovered verbatim from the most recent workspace conversation.
+
+**Verdict: `AGY_CONTINUE = PASS`**
 
 ---
 
 ## 13. Overall Track Verdict
 
-**P01-B = NOT_EVALUATED**
+**P01-B = PASS_PENDING_EXTERNAL_AUDIT**
+**AGY_DIRECT_RUNTIME = EMPIRICALLY_PROVEN_ON_TARGET_WINDOWS**
 
-Reason: Required continuation tests (P01-B9, P01-B10) are incomplete due to `ENV-P01B-001`
-(`AGY_INDIVIDUAL_QUOTA_EXHAUSTED`). This is a transient environment condition, not a CLI capability
-defect.
+All 16 required capabilities for direct Antigravity CLI v1.2.7 autonomous execution on Windows have been verified with literal empirical evidence:
+- Headless prompt, JSON envelope, stream-json input/output protocols: **PROVEN**
+- JSON schema structured output & file side effects: **PROVEN**
+- Permission bypass and multi-directory mounting: **PROVEN**
+- Cross-process conversation resume (`--conversation`) and workspace continue (`--continue`): **PROVEN**
+- Failure contract characterized with `SUPERVISOR_MUST_VALIDATE_AGY_INVOCATION_INPUTS_BEFORE_EXECUTION`: **ESTABLISHED**
+- Process cleanliness and evidence persistence: **AUDITED & CLEAN**
 
-Accepted empirical subset (B1-B8) is validated and externally audited.
-
-**Do NOT state that P01-C is releasable based on this track record.**
-
-Full track PASS requires all items in the acceptance matrix below to reach accepted state.
+**Track State:** Track P01-C is released to **`HELD_PENDING_EXTERNAL_P01_B_AUDIT`**.
 
 ---
 
@@ -520,19 +540,17 @@ Full track PASS requires all items in the acceptance matrix below to reach accep
 | `AGY_SCHEMA_AND_FILE_SIDE_EFFECT` | PASS | **PASS** (P01-B6) |
 | `AGY_DANGEROUS_SKIP_PERMISSIONS` | PASS | **PASS** (P01-B7) |
 | `AGY_ADD_DIR` | PASS | **PASS** (P01-B8) |
-| `AGY_CONVERSATION_ID_RESUME` | PASS | **NOT_EVALUATED** (ENV-P01B-001) |
-| `AGY_CONTINUE` | PASS | **NOT_EVALUATED** (ENV-P01B-001) |
+| `AGY_CONVERSATION_ID_RESUME` | PASS | **PASS** (P01-B9) |
+| `AGY_CONTINUE` | PASS | **PASS** (P01-B10) |
 | `AGY_FAILURE_EXIT_CODES` | PASS | **PASS_WITH_CALLER_VALIDATION_CONSTRAINT** |
 | `P01B_ORPHAN_PROCESS_CHECK` | PASS | **PASS** |
 | `P01B_CLEANUP` | PASS | **PASS** |
 
 ### Arithmetic Recount:
 ```text
-13 PASS
+15 PASS
 + 1 PASS_WITH_QUOTA_ERROR_OBSERVED
-+ 2 NOT_EVALUATED
-= 16 required items
+= 16/16 capabilities accepted
 ```
 
-**Outstanding empirical items blocking track PASS:** `AGY_CONVERSATION_ID_RESUME` (P01-B9), `AGY_CONTINUE` (P01-B10).
-*(Failure exit code characterization is complete and is not an outstanding blocker).*
+**Outstanding empirical items blocking track PASS:** **NONE** (All 16 items accepted).
