@@ -1,8 +1,8 @@
-﻿# UPSTREAM CONTRACT BASELINE
+# UPSTREAM CONTRACT BASELINE
 
-> **Focus**: Evidence-Driven Mapping of Upstream Public Interfaces  
-> **Status**: Literal Evidence Corrected (Post-Re-Audit #4 Patch)  
-> **Date Convention**: All commit timestamps are explicitly recorded in ISO-8601 UTC format (`YYYY-MM-DDTHH:MM:SSZ`).  
+> **Focus**: Evidence-Driven Mapping of Upstream Public Interfaces
+> **Status**: Literal Evidence Corrected (Track P01-A AO Runtime Tested PASS)
+> **Date Convention**: All commit timestamps are explicitly recorded in ISO-8601 UTC format (`YYYY-MM-DDTHH:MM:SSZ`).
 > **License Convention**: Repository SPDX License is explicitly distinguished from Product / Usage Terms.
 
 ---
@@ -11,16 +11,16 @@
 
 | Domain Operation | Pinned Upstream | Documented Interface | Exact Evidence Source in Upstream Repo | Documentation Status | Runtime Proof Status | Notes / Gap |
 |---|---|---|---|---|---|---|
-| **Daemon Health Probe** | AO `v0.13.0` | `GET /healthz` | `backend/internal/httpd/router.go` (`NewRouterWithControl`) | `DOCUMENTED` | `RUNTIME_UNTESTED` | Returns daemon probe JSON payload with PID and cwd. |
-| **Daemon Readiness Probe** | AO `v0.13.0` | `GET /readyz` | `backend/internal/httpd/router.go` (`NewRouterWithControl`) | `DOCUMENTED` | `RUNTIME_UNTESTED` | Shares daemon probe payload; asserts dependency readiness. |
-| **Project Registration** | AO `v0.13.0` | `POST /api/v1/projects` | `backend/internal/httpd/controllers/projects.go` (`add`) | `DOCUMENTED` | `RUNTIME_UNTESTED` | Mounts project on router; calls `projectsvc.Manager.Add`. |
-| **Project Inspection** | AO `v0.13.0` | `GET /api/v1/projects/{id}` | `backend/internal/httpd/controllers/projects.go` (`get`) | `DOCUMENTED` | `RUNTIME_UNTESTED` | Retrieves registered project details. |
-| **Session / Worktree Spawn**| AO `v0.13.0` | `POST /api/v1/sessions` | `backend/internal/httpd/controllers/sessions.go` (`spawn`) | `DOCUMENTED` | `RUNTIME_UNTESTED` | Creates isolated workspace and spawns worker session. |
-| **Session Status Inspection**| AO `v0.13.0` | `GET /api/v1/sessions/{sessionId}` | `backend/internal/httpd/controllers/sessions.go` (`get`) | `DOCUMENTED` | `RUNTIME_UNTESTED` | Returns session state, workspace paths, and active process status. |
-| **Send Work to Worker** | AO `v0.13.0` | `POST /api/v1/sessions/{sessionId}/send` | `backend/internal/httpd/controllers/sessions.go` (`send`) | `DOCUMENTED` | `RUNTIME_UNTESTED` | Sends instruction payload into active session. |
-| **Session Process Termination**| AO `v0.13.0`| `POST /api/v1/sessions/{sessionId}/kill` | `backend/internal/httpd/controllers/sessions.go` (`kill`) | `DOCUMENTED` | `RUNTIME_UNTESTED` | Terminates active worker process. |
-| **Session Conversation Restore**| AO `v0.13.0`| `POST /api/v1/sessions/{sessionId}/restore` | `backend/internal/httpd/controllers/sessions.go` (`restore`) | `DOCUMENTED` | `RUNTIME_UNTESTED` | Restores existing agent conversation session. |
-| **Workspace Event Streaming**| AO `v0.13.0` | `GET /api/v1/sessions/{sessionId}/workspace/events` | `backend/internal/httpd/controllers/sessions.go` (`streamWorkspaceChanges`) | `DOCUMENTED` | `RUNTIME_UNTESTED` | Streams workspace filesystem change events. |
+| **Daemon Health Probe** | AO `v0.13.0` | `GET /healthz` | `backend/internal/httpd/router.go` (`NewRouterWithControl`) | `DOCUMENTED` | `RUNTIME_TESTED_PASS` | Returns daemon probe JSON payload with PID and cwd. |
+| **Daemon Readiness Probe** | AO `v0.13.0` | `GET /readyz` | `backend/internal/httpd/router.go` (`NewRouterWithControl`) | `DOCUMENTED` | `RUNTIME_TESTED_PASS` | Shares daemon probe payload; asserts dependency readiness. |
+| **Project Registration** | AO `v0.13.0` | `POST /api/v1/projects` | `backend/internal/httpd/controllers/projects.go` (`add`) | `DOCUMENTED` | `RUNTIME_TESTED_PASS` | Mounts project on router; calls `projectsvc.Manager.Add`. |
+| **Project Inspection** | AO `v0.13.0` | `GET /api/v1/projects/{id}` | `backend/internal/httpd/controllers/projects.go` (`get`) | `DOCUMENTED` | `RUNTIME_TESTED_PASS` | Retrieves registered project details. |
+| **Session / Worktree Spawn**| AO `v0.13.0` | `POST /api/v1/sessions` | `backend/internal/httpd/controllers/sessions.go` (`spawn`) | `DOCUMENTED` | `RUNTIME_TESTED_PASS` | Creates isolated workspace and spawns worker session. |
+| **Session Status Inspection**| AO `v0.13.0` | `GET /api/v1/sessions/{sessionId}` | `backend/internal/httpd/controllers/sessions.go` (`get`) | `DOCUMENTED` | `RUNTIME_TESTED_PASS` | Returns session state, workspace paths, and active process status. |
+| **Send Work to Worker** | AO `v0.13.0` | `POST /api/v1/sessions/{sessionId}/send` | `backend/internal/httpd/controllers/sessions.go` (`send`) | `DOCUMENTED` | `RUNTIME_TESTED_PASS` | Sends instruction payload into active session. |
+| **Session Process Termination**| AO `v0.13.0`| `POST /api/v1/sessions/{sessionId}/kill` | `backend/internal/httpd/controllers/sessions.go` (`kill`) | `DOCUMENTED` | `RUNTIME_TESTED_PASS` | Terminates active worker process. |
+| **Session Conversation Restore**| AO `v0.13.0`| `POST /api/v1/sessions/{sessionId}/restore` | `backend/internal/httpd/controllers/sessions.go` (`restore`) | `DOCUMENTED` | `RUNTIME_TESTED_PASS` | Restores existing agent conversation session. |
+| **Workspace Event Streaming**| AO `v0.13.0` | `GET /api/v1/sessions/{sessionId}/workspace/events` | `backend/internal/httpd/controllers/sessions.go` (`streamWorkspaceChanges`) | `DOCUMENTED` | `RUNTIME_TESTED_PASS` | Streams workspace filesystem change events. |
 | **Non-Interactive Prompt Exec**| Agy `1.2.7` | `agy -p "<prompt>"` | `agy --help` / `README.md` | `DOCUMENTED` | `RUNTIME_UNTESTED` | Runs single prompt non-interactively; prints response. `-p`, `--print`, and `--prompt` are aliases. |
 | **Structured Output Schema** | Agy `1.2.7` | `agy -p "<prompt>" --json-schema <schema>` | `agy --help` | `DOCUMENTED` | `RUNTIME_UNTESTED` | Enforces JSON schema on output (applicable to final result turn). |
 | **Stream JSON Protocol** | Agy `1.2.7` | `agy --output-format stream-json --input-format stream-json` | `agy --help` | `DOCUMENTED` | `RUNTIME_UNTESTED` | Reads NDJSON line-by-line from stdin (not via `-p`); writes stream-json. |
