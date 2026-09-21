@@ -2,6 +2,8 @@
 
 > **Authority**: Canonical 13-State Workflow Specification
 > **Status**: Approved Baseline (Updated Architecture V2.1 / Reaudit 001)
+> **Canonical Counts**: `TASK_STATE_COUNT = 13` | `DOMAIN_TRANSITION_COUNT = 22` | `CANONICAL_GRAPH_EDGE_COUNT = 25`
+> **Count Semantics**: Exactly 22 executable state-to-state domain transitions. The 25 total lifecycle graph edges include 3 pseudo lifecycle edges (`[*] -> DRAFT`, `APPROVED -> [*]`, `CANCELLED -> [*]`). Terminal states `APPROVED` and `CANCELLED` have zero outgoing transitions.
 
 ---
 

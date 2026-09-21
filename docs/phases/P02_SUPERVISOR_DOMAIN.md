@@ -39,7 +39,7 @@ Implement the headless core domain model, 13-state workflow state machine, immut
 
 ### 2.2 Domain Services
 - **StateMachine**:
-  - Full 13-state machine implementation with 100% edge parity across all 25 canonical transitions.
+  - Full 13-state machine implementation: 22 executable domain transitions across 13 states, and 25 total lifecycle graph edges (including 3 pseudo lifecycle edges).
   - Enforcement of pre-dispatch invariants: allocate `TaskAttempt` and atomically commit `READY → DISPATCHED` in StateStore before external calls.
 - **TaskContractValidator**:
   - Schema validation against `task-contract.schema.json`.
@@ -75,7 +75,7 @@ Implement the headless core domain model, 13-state workflow state machine, immut
 
 ## 4. Exit Gate
 - Complete unit test suite verifying:
-  - 100% of 25 state machine transitions succeed; representative invalid transitions fail.
+  - 100% of 22 executable domain transitions succeed; 25 canonical graph edges verified; representative invalid transitions fail.
   - Contract immutability and `verification_requests` validation.
   - Pre-dispatch atomic attempt allocation and `READY → DISPATCHED` persistence in SQLite.
   - Crash recovery classification on restart.
