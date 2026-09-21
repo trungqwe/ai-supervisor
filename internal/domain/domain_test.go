@@ -1,6 +1,7 @@
 package domain_test
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -66,48 +67,124 @@ func TestCanonicalTaskStateCount(t *testing.T) {
 	}
 }
 
-// TestTaskContractInvariants verifies TaskContract fields and ADR-012 revision model.
-func TestTaskContractInvariants(t *testing.T) {
+// TestTaskContractSerializationParity verifies JSON serialization against task-contract.schema.json.
+// Asserts all 17 required keys are emitted even when arrays are empty,
+// and asserts forbidden properties (such as is_immutable) are never emitted.
+func TestTaskContractSerializationParity(t *testing.T) {
 	contract := domain.TaskContract{
-		ContractID:           "CONTRACT-TASK-P02-001-01",
+		ContractID:           "CONTRACT-TASK-P02-001-02",
 		TaskID:               "TASK-P02-001",
-		RevisionNumber:       1,
+		RevisionNumber:       2,
 		SupersedesContractID: nil,
 		PhaseID:              "P02",
-		Objective:            "Bootstrap domain core",
+		Objective:            "Align JSON serialization and state transition terminology",
 		Requirements:         []string{"FR-001", "FR-002"},
+		ArchitectureRefs:     []string{}, // Empty slice: must still serialize as []
 		BaseSHA:              "ca3262eed4b1f72236e86457c865d07cef197094",
-		AllowedScope:         []string{"internal/domain/**"},
+		AllowedScope:         []string{"internal/domain/**", "internal/workflow/**"},
 		ForbiddenScope:       []string{"docs/**"},
-		AcceptanceCriteria:   []string{"Unit tests pass"},
-		VerificationRequests: []domain.VerificationRequest{
-			{
-				ID:         "domain-tests",
-				ProfileID:  "go-test",
-				Parameters: map[string]any{"package": "./..."},
-				Cwd:        ".",
-			},
-		},
-		RequiredEvidence: []string{"git_diff", "go_test_exit_code"},
-		WorkerProfile:    "antigravity-standard",
-		ReportContract:   "docs/schemas/worker-report.schema.json",
-		IsImmutable:      true,
+		Constraints:          []string{}, // Empty slice: must still serialize as []
+		AcceptanceCriteria:   []string{"Serialization parity passes"},
+		VerificationRequests: []domain.VerificationRequest{}, // Empty slice: must serialize as []
+		RequiredEvidence:     []string{"git_diff", "go_test_exit_code"},
+		WorkerProfile:        "antigravity-standard",
+		ReportContract:       "docs/schemas/worker-report.schema.json",
+		StopConditions:       []string{}, // Empty slice: must still serialize as []
+		IsImmutable:          true,       // Internal domain property: MUST NOT be serialized
 	}
 
-	if contract.ContractID == "" || contract.TaskID == "" {
-		t.Fatal("expected contract_id and task_id to be populated")
+	data, err := json.Marshal(contract)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
 	}
-	if contract.RevisionNumber != 1 {
-		t.Fatalf("expected revision_number 1, got %d", contract.RevisionNumber)
+
+	var unmarshaled map[string]any
+	if err := json.Unmarshal(data, &unmarshaled); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
 	}
-	if contract.SupersedesContractID != nil {
-		t.Fatal("expected supersedes_contract_id to be nil on first revision")
+
+	requiredKeys := []string{
+		"contract_id",
+		"task_id",
+		"revision_number",
+		"phase_id",
+		"objective",
+		"requirements",
+		"architecture_refs",
+		"base_sha",
+		"allowed_scope",
+		"forbidden_scope",
+		"constraints",
+		"acceptance_criteria",
+		"verification_requests",
+		"required_evidence",
+		"worker_profile",
+		"report_contract",
+		"stop_conditions",
 	}
-	if contract.BaseSHA == "" {
-		t.Fatal("expected base_sha to be populated")
+
+	for _, key := range requiredKeys {
+		val, exists := unmarshaled[key]
+		if !exists {
+			t.Errorf("REQUIRED key %q missing from serialized TaskContract", key)
+			continue
+		}
+		if val == nil {
+			t.Errorf("REQUIRED key %q serialized as null", key)
+		}
 	}
-	if len(contract.VerificationRequests) != 1 {
-		t.Fatalf("expected 1 verification request, got %d", len(contract.VerificationRequests))
+
+	// Assert is_immutable is strictly ABSENT
+	if _, exists := unmarshaled["is_immutable"]; exists {
+		t.Errorf("forbidden property \"is_immutable\" is present in serialized TaskContract")
+	}
+
+	// Assert only allowed properties from task-contract.schema.json are present
+	allowedSchemaKeys := map[string]bool{
+		"contract_id":            true,
+		"task_id":                true,
+		"revision_number":        true,
+		"supersedes_contract_id": true,
+		"phase_id":               true,
+		"objective":              true,
+		"requirements":           true,
+		"architecture_refs":      true,
+		"base_sha":               true,
+		"allowed_scope":          true,
+		"forbidden_scope":        true,
+		"constraints":            true,
+		"acceptance_criteria":    true,
+		"required_evidence":      true,
+		"worker_profile":         true,
+		"report_contract":        true,
+		"stop_conditions":        true,
+		"verification_requests":  true,
+	}
+
+	for key := range unmarshaled {
+		if !allowedSchemaKeys[key] {
+			t.Errorf("unknown / non-schema key %q present in serialized TaskContract", key)
+		}
+	}
+
+	// Optional field supersedes_contract_id should be omitted when nil
+	if _, exists := unmarshaled["supersedes_contract_id"]; exists {
+		t.Errorf("supersedes_contract_id should be omitted when nil")
+	}
+
+	// Test with supersedes_contract_id populated
+	prevID := "CONTRACT-TASK-P02-001-01"
+	contract.SupersedesContractID = &prevID
+	data2, err := json.Marshal(contract)
+	if err != nil {
+		t.Fatalf("json.Marshal with supersedes_contract_id failed: %v", err)
+	}
+	var unmarshaled2 map[string]any
+	if err := json.Unmarshal(data2, &unmarshaled2); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+	if unmarshaled2["supersedes_contract_id"] != prevID {
+		t.Errorf("expected supersedes_contract_id %q, got %v", prevID, unmarshaled2["supersedes_contract_id"])
 	}
 }
 

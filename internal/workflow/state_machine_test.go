@@ -66,32 +66,40 @@ var expectedDomainTransitions = [][2]domain.TaskState{
 	{domain.StateHumanRequired, domain.StateCancelled},
 }
 
-// TestCanonicalCounts asserts canonical counts: 13 states and 25 edges.
+// TestCanonicalCounts asserts canonical counts: 13 states, 22 domain transitions, and 25 graph edges.
 func TestCanonicalCounts(t *testing.T) {
 	states := domain.AllTaskStates()
-	if len(states) != workflow.CanonicalStateCount {
-		t.Fatalf("expected state count %d, got %d", workflow.CanonicalStateCount, len(states))
+	if len(states) != workflow.TaskStateCount {
+		t.Fatalf("expected state count %d, got %d", workflow.TaskStateCount, len(states))
 	}
 	if len(states) != 13 {
 		t.Fatalf("expected 13 states, got %d", len(states))
 	}
 
-	if len(expectedCanonical25Edges) != workflow.CanonicalEdgeCount {
-		t.Fatalf("expected fixture edge count %d, got %d", workflow.CanonicalEdgeCount, len(expectedCanonical25Edges))
+	allowed := workflow.AllowedTransitions()
+	if len(allowed) != workflow.DomainTransitionCount {
+		t.Fatalf("expected domain transition count %d, got %d", workflow.DomainTransitionCount, len(allowed))
 	}
-	if len(expectedCanonical25Edges) != 25 {
-		t.Fatalf("expected 25 canonical edges, got %d", len(expectedCanonical25Edges))
+	if len(allowed) != 22 {
+		t.Fatalf("expected 22 domain transitions, got %d", len(allowed))
 	}
 
-	canonicalEdges := workflow.CanonicalEdges()
-	if len(canonicalEdges) != 25 {
-		t.Fatalf("expected CanonicalEdges() to return 25 items, got %d", len(canonicalEdges))
+	if len(expectedCanonical25Edges) != workflow.CanonicalGraphEdgeCount {
+		t.Fatalf("expected fixture edge count %d, got %d", workflow.CanonicalGraphEdgeCount, len(expectedCanonical25Edges))
+	}
+	if len(expectedCanonical25Edges) != 25 {
+		t.Fatalf("expected 25 canonical graph edges, got %d", len(expectedCanonical25Edges))
+	}
+
+	graphEdges := workflow.CanonicalGraphEdges()
+	if len(graphEdges) != 25 {
+		t.Fatalf("expected CanonicalGraphEdges() to return 25 items, got %d", len(graphEdges))
 	}
 
 	for i, edge := range expectedCanonical25Edges {
-		if canonicalEdges[i].From != edge.From || canonicalEdges[i].To != edge.To {
+		if graphEdges[i].From != edge.From || graphEdges[i].To != edge.To {
 			t.Errorf("edge[%d] mismatch: expected %s -> %s, got %s -> %s",
-				i, edge.From, edge.To, canonicalEdges[i].From, canonicalEdges[i].To)
+				i, edge.From, edge.To, graphEdges[i].From, graphEdges[i].To)
 		}
 	}
 }

@@ -6,19 +6,25 @@ import (
 	"github.com/trungqwe/ai-supervisor/internal/domain"
 )
 
-// CanonicalStateCount is the number of canonical task states (13).
-const CanonicalStateCount = 13
+// TaskStateCount is the number of canonical task states (13).
+const TaskStateCount = 13
 
-// CanonicalEdgeCount is the total number of canonical edges in the workflow graph (25),
-// as specified across docs/06_WORKFLOW_STATE_MACHINE.md and audit baselines.
-// This comprises:
-// - 1 initial pseudo-edge: [*] -> DRAFT
-// - 22 canonical state-to-state domain transitions
-// - 2 terminal pseudo-edges: APPROVED -> [*], CANCELLED -> [*]
-const CanonicalEdgeCount = 25
+// CanonicalStateCount is an alias for TaskStateCount (13).
+const CanonicalStateCount = TaskStateCount
 
 // DomainTransitionCount is the count of valid direct state-to-state transitions (22).
 const DomainTransitionCount = 22
+
+// CanonicalGraphEdgeCount is the total number of canonical edges in the workflow graph (25),
+// as specified in docs/06_WORKFLOW_STATE_MACHINE.md.
+// This comprises:
+// - 1 initial pseudo-edge: [*] -> DRAFT
+// - 22 executable state-to-state domain transitions
+// - 2 terminal pseudo-edges: APPROVED -> [*], CANCELLED -> [*]
+const CanonicalGraphEdgeCount = 25
+
+// CanonicalEdgeCount is an alias for CanonicalGraphEdgeCount (25).
+const CanonicalEdgeCount = CanonicalGraphEdgeCount
 
 // InvalidTransitionError represents a disallowed transition between two states.
 type InvalidTransitionError struct {
@@ -36,8 +42,8 @@ type CanonicalEdge struct {
 	To   string
 }
 
-// CanonicalEdges returns all 25 canonical workflow graph edges from docs/06_WORKFLOW_STATE_MACHINE.md.
-func CanonicalEdges() []CanonicalEdge {
+// CanonicalGraphEdges returns all 25 canonical workflow graph edges from docs/06_WORKFLOW_STATE_MACHINE.md.
+func CanonicalGraphEdges() []CanonicalEdge {
 	return []CanonicalEdge{
 		{From: "[*]", To: "DRAFT"},
 		{From: "DRAFT", To: "READY"},
@@ -65,6 +71,11 @@ func CanonicalEdges() []CanonicalEdge {
 		{From: "APPROVED", To: "[*]"},
 		{From: "CANCELLED", To: "[*]"},
 	}
+}
+
+// CanonicalEdges is an alias for CanonicalGraphEdges.
+func CanonicalEdges() []CanonicalEdge {
+	return CanonicalGraphEdges()
 }
 
 // StateMachine provides pure evaluation of workflow state transitions.

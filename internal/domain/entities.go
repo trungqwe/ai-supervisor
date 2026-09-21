@@ -46,6 +46,7 @@ type VerificationRequest struct {
 
 // TaskContract represents the immutable work specification dispatched to a worker.
 // Revisions are tracked monotonically; contracts never contain transient attempt identities.
+// Serialized form strictly adheres to task-contract.schema.json (additionalProperties: false).
 type TaskContract struct {
 	ContractID           string                `json:"contract_id"`
 	TaskID               string                `json:"task_id"`
@@ -54,18 +55,18 @@ type TaskContract struct {
 	PhaseID              string                `json:"phase_id"`
 	Objective            string                `json:"objective"`
 	Requirements         []string              `json:"requirements"`
-	ArchitectureRefs     []string              `json:"architecture_refs,omitempty"`
+	ArchitectureRefs     []string              `json:"architecture_refs"`
 	BaseSHA              string                `json:"base_sha"`
 	AllowedScope         []string              `json:"allowed_scope"`
 	ForbiddenScope       []string              `json:"forbidden_scope"`
-	Constraints          []string              `json:"constraints,omitempty"`
+	Constraints          []string              `json:"constraints"`
 	AcceptanceCriteria   []string              `json:"acceptance_criteria"`
-	VerificationRequests []VerificationRequest `json:"verification_requests,omitempty"`
+	VerificationRequests []VerificationRequest `json:"verification_requests"`
 	RequiredEvidence     []string              `json:"required_evidence"`
 	WorkerProfile        string                `json:"worker_profile"`
 	ReportContract       string                `json:"report_contract"`
-	StopConditions       []string              `json:"stop_conditions,omitempty"`
-	IsImmutable          bool                  `json:"is_immutable"`
+	StopConditions       []string              `json:"stop_conditions"`
+	IsImmutable          bool                  `json:"-"`
 }
 
 // TaskAttempt represents a single execution, retry, or revision iteration bound to a contract.
