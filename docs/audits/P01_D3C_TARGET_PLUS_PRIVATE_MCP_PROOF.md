@@ -2,15 +2,19 @@
 
 > **Authority**: Phase 1 Upstream Proof Dossier — Track P01-D3C
 > **Date**: 2026-09-21
-> **Architecture Status**: `ARCHITECTURE_V2_CANDIDATE` (Strictly Candidate; Not Frozen)
+> **Architecture Status**: `ARCHITECTURE_V2_CANDIDATE_TRANSPORT_APPROVED_NOT_FROZEN`
 > **D3B External Audit**: `APPROVED` (commit `d7ddd67b60abba1497fbf2dc550c2d0abaddd96f`)
 > **D3B Portal Empirical Preflight**: `PASS` (MCP tab, Testing tab, Submit tab — empirically documented 2026-09-21)
 > **Target Account**: Personal ChatGPT Plus
 > **Plus Developer Mode**: `EMPIRICALLY_PROVEN` on target account (Settings → Security and login → Developer mode: VISIBLE and ENABLED)
-> **P01-D3C Status**: `IN_PROGRESS`
+> **P01-D3C Status**: `PASS`
+> **External Audit**: `APPROVED`
+> **Transport Scope**: `PROVEN_ON_TARGET_ACCOUNT`
+> **P01-D Overall Status**: `TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`
 > **P01-D3A-SEC-001**: `HISTORICAL_PROCESS_RECORD` (`ACTIVE_P01_GATE_FROM_SEC001 = NONE`)
 > **P01-D3A Security Status**: `PASS` (Functional PASS; SEC-001 Historical Record)
-> **P01-A / P01-B / P01-C**: `HELD`
+> **P01-A**: `READY` (Released from Hold)
+> **P01-B / P01-C**: `HELD`
 > **Sandbox**: `D:\TU_CODE\_ai_supervisor_p01d_openai_mcp_proof\` (D3A assets reused; strictly isolated)
 
 ---
@@ -987,7 +991,7 @@ No workarounds. No browser automation. No silent architecture switch.
 | HUMAN_REQUIRED_D3C_MCP_OFFLINE_RECOVERY | `CLOSED` | Completed by User |
 | D3C-12 — No Inbound Exposure | `PASS` | Pre-verified loopback-only 127.0.0.1; zero public ingress |
 | **P01-D3C Final** | `PASS` | **All 12 sub-gates and Checkpoints A through I PASS; PLUS_PRIVATE_MCP_TRANSPORT PROVEN_ON_TARGET_ACCOUNT** |
-| **Active Gate** | `ISSUED` | **EXTERNAL_SUPERVISOR_D3C_TRANSPORT_AUDIT** |
+| **Active Gate** | `CLOSED` | **EXTERNAL_SUPERVISOR_D3C_TRANSPORT_AUDIT APPROVED** |
 
 ---
 
@@ -997,14 +1001,20 @@ No workarounds. No browser automation. No silent architecture switch.
 ================================================================================
 P01-D3C FINAL VERDICT: PASS
 
+EXTERNAL AUDIT = APPROVED
+P01-D3C = PASS
 PLUS_PRIVATE_MCP_TRANSPORT = PROVEN_ON_TARGET_ACCOUNT
-P01-D = TRANSPORT_PROVEN_PENDING_EXTERNAL_ARCHITECTURE_AUDIT
+P01-D = TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED
 PUBLIC_PLUGIN_PATH = OPTIONAL_FUTURE_DISTRIBUTION
 P01-D3B = PRESERVED_FALLBACK_RESEARCH
-ARCHITECTURE_V2 = CANDIDATE_READY_FOR_EXTERNAL_TRANSPORT_AUDIT
-P01-A / P01-B / P01-C = HELD
+ARCHITECTURE_V2 = CANDIDATE_TRANSPORT_APPROVED_NOT_FROZEN
 
-ACTIVE GATE: EXTERNAL_SUPERVISOR_D3C_TRANSPORT_AUDIT
+TRACK RELEASES:
+P01-A = READY
+P01-B = HELD
+P01-C = HELD
+
+ACTIVE GATE: READY_FOR_EXTERNAL_P01_A_EXECUTION_PROMPT
 
 EMPIRICAL TRANSPORT FINDINGS SUMMARY:
 1. Target Personal ChatGPT Plus developer mode app connects reliably via official Secure MCP Tunnel.
@@ -1027,4 +1037,4 @@ Generalization to all account tiers or enterprise workspaces requires separate e
 ================================================================================
 ```
 
-Tracks P01-A, P01-B, and P01-C remain strictly HELD pending External Supervisor Transport Architecture Audit.
+Track P01-A is RELEASED FROM HOLD (`READY`). Tracks P01-B and P01-C remain strictly HELD pending subsequent phase/track authorization.
