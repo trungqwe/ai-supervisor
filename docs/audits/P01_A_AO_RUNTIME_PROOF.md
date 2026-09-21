@@ -14,9 +14,9 @@
 
 # 1. Executive Summary & Verification Matrix
 
-Track P01-A rigorously proves that pinned upstream **Untrivial Agent Orchestrator (AO)** (`v0.13.0`, commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`) executes faithfully on the target Windows host environment, delivering all architectural primitives claimed in ADR-002, ADR-003, and ADR-004.
+Track P01-A rigorously proves that pinned upstream **Untrivial Agent Orchestrator (AO)** (`v0.13.0`, commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`) executes faithfully on the target Windows host environment, empirically proving the P01-A scoped AO runtime primitives required by the current architecture baseline on the target Windows host.
 
-All **21 acceptance items** and the **cleanup protocol** passed with 100% compliance:
+21 NUMBERED RUNTIME/PROVENANCE CHECKS = PASS; P01A_CLEANUP GATE = PASS; TOTAL OBSERVED VALIDATIONS = 22:
 
 | Check ID | Acceptance Item | Result | Verification Evidence |
 |---|---|---|---|
@@ -27,7 +27,7 @@ All **21 acceptance items** and the **cleanup protocol** passed with 100% compli
 | **P01A-05** | `AO_CONTROL_LOOPBACK` | **PASS** | Loopback binding verified on `127.0.0.1:4140` |
 | **P01A-06** | `AO_HEALTH` | **PASS** | `GET /healthz` returned HTTP 200 OK (`pid: 28732`, `status: "ok"`) |
 | **P01A-07** | `AO_READY` | **PASS** | `GET /readyz` returned HTTP 200 OK (`status: "ready"`) |
-| **P01A-08** | `AO_PROJECT_REGISTER` | **PASS** | `POST /api/v1/projects` registered fixture repo as `fixture-repo` (HTTP 200) |
+| **P01A-08** | `AO_PROJECT_REGISTER` | **PASS** | `POST /api/v1/projects` registered fixture repo as `fixture-repo` (HTTP 201 Created) |
 | **P01A-09** | `AO_PROJECT_GET` | **PASS** | `GET /api/v1/projects/fixture-repo` returned HTTP 200 OK with correct paths and default branch |
 | **P01A-10** | `AO_SESSION_SPAWN` | **PASS** | `POST /api/v1/sessions` spawned session `fixture-repo-1` (HTTP 201 Created) |
 | **P01A-11** | `AO_SESSION_GET` | **PASS** | `GET /api/v1/sessions/fixture-repo-1` returned HTTP 200 OK (`status: "working"`, `activity.state: "active"`) |
@@ -137,13 +137,11 @@ Host: 127.0.0.1:4140
 Content-Type: application/json
 
 {
-  "id": "fixture-repo",
-  "name": "P01-A Fixture Repo",
   "path": "D:\\TU_CODE\\_ai_supervisor_p01a_ao_runtime\\fixture-repo"
 }
 ```
 
-**Response (HTTP 200 OK)**:
+**Response (HTTP 201 Created)**:
 ```json
 {
   "project": {
@@ -163,8 +161,9 @@ Content-Type: application/json
 
 {
   "projectId": "fixture-repo",
-  "displayName": "p01a-probe",
-  "harness": "agy"
+  "harness": "agy",
+  "prompt": "Harmless lifecycle test probe. Do not modify files.",
+  "displayName": "p01a-probe"
 }
 ```
 
@@ -266,12 +265,16 @@ Host: 127.0.0.1:4140
 }
 ```
 
-### 6.3 Upstream Unit Test Execution
-Executed on host Windows environment:
+### 6.3 Upstream Gitworktree Managed-Root Guard & Unit Test Execution
+The runtime path safety architecture operates across two distinct layers:
+1. **API Session Workspace Path Guard**: Evaluated at the HTTP layer, rejecting requests attempting to escape session boundaries (`../../outside.txt`) or supply non-relative absolute paths (`C:\Windows\System32`) with HTTP 400 Bad Request (`INVALID_WORKSPACE_PATH`).
+2. **Gitworktree Managed-Root Guard**: Implemented in `backend/internal/adapters/workspace/gitworktree/workspace.go` via `managedPath` and `validateManagedPath`, enforcing containment inside the project's worktree tree.
+
+The upstream unit test suite in `backend/internal/adapters/workspace/gitworktree/workspace_test.go` directly exercises these guards:
 ```bash
-go test -v ./internal/sessionguard/ -run "TestManagedPathSafety|TestValidateConfigRejectsPathEscapingIDs"
+go test -v -run "TestManagedPathSafety|TestValidateConfigRejectsPathEscapingIDs" ./internal/adapters/workspace/gitworktree
 ```
-**Result**: `ok untrivial/agent-orchestrator/backend/internal/sessionguard 0.316s` (100% PASS).
+**Result**: `ok github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree 0.00s` (100% PASS on Windows host environment).
 
 ---
 
@@ -429,7 +432,7 @@ Upon completion of runtime proofs:
 
 | Metric | Result | Authority |
 |---|---|---|
-| **Track P01-A Proof Result** | **`PASS`** | 21/21 Acceptance Checks 100% PASS |
+| **Track P01-A Proof Result** | **`PASS`** | 21 Numbered Runtime/Provenance Checks PASS; P01A_CLEANUP PASS; Total 22 Validations PASS |
 | **AO Windows ConPTY** | **`EMPIRICALLY_PROVEN`** | Validated via headless conhost.exe child tree |
 | **AO Worktree Isolation** | **`EMPIRICALLY_PROVEN`** | Dedicated worktree branch verified clean |
 | **AO Path Guard** | **`EMPIRICALLY_PROVEN`** | Traversal and absolute escapes rejected HTTP 400 |
