@@ -1,10 +1,10 @@
 # P01-C AUDIT: AO ↔ AGY ADAPTER & WORKERREPORT INTEGRATION PROOF
 
-> **Track**: P01-C — AO ↔ Agy Adapter Integration Proof  
-> **Status**: COMPLETED (EMPIRICAL RUNTIME PROVEN)  
-> **Verdict**: GAP_REQUIRES_ADR  
-> **Audited Baseline**: 85837fe5f27d75aec0e0996b60c03a26b2464856  
-> **Date**: 2026-09-21  
+> **Track**: P01-C — AO ↔ Agy Adapter Integration Proof
+> **Status**: COMPLETED (EMPIRICAL RUNTIME EXECUTED)
+> **Verdict**: GAP_REQUIRES_ADR_WITH_RESTORE_DEFECT
+> **Audited Baseline**: 9a5837f15a4c342ac4a83b3e82aa1ef9c6cec4e8
+> **Date**: 2026-09-21
 
 ---
 
@@ -21,7 +21,7 @@ The proof investigated whether pinned AO and Agy can execute automated tasks, de
 4. **Result Surface**: AO's public session endpoint (`GET /api/v1/sessions/{id}`) does **NOT** expose assistant text responses or structured worker reports (`NATIVE_RESULT_SURFACE = NOT_EXPOSED`). The terminal stream (`/mux`) provides raw interactive xterm ANSI byte frames (`RAW_INTERACTIVE`), which is unsuitable for structured report transport.
 5. **WorkerReport Artifact via Public Workspace File API**: Pinned AO and Agy successfully deliver a canonical `WorkerReport` by having the worker generate `.supervisor/worker-report.json` in the worktree. The Supervisor retrieves this file via AO's public workspace file API (`GET /api/v1/sessions/{id}/workspace/file?path=.supervisor/worker-report.json`) with HTTP 200 OK.
 6. **Zero-Trust Independent Verification**: All 12 required fields of `docs/09_WORKER_REPORT.md` were validated. The Supervisor independently verified claims against ground truth (Git HEAD, branch, base SHA, git diff, `verify.ps1` exit code 0). A zero-trust false-claim test confirmed that falsified claims are flagged as `MISMATCH`.
-7. **Native Conversation ID & Context Restore**: AO captures the native Agy conversation UUID. Calling `POST /api/v1/sessions/{id}/restore` launches Agy with `--conversation <id>`. Context continuity was empirically proven: a secret marker provided in Turn 1 (and never written to disk) was successfully recalled in the restored session.
+7. **Native Conversation ID & Context Restore**: AO captures the native Agy conversation UUID. Calling `POST /api/v1/sessions/{id}/restore` launches Agy with `--conversation <id>`. Historical direct-Agy query proved native CLI resume (`SUPPORTING_AGY_NATIVE_RESUME_EVIDENCE = PASS`). However, targeted AO-only context restore via `POST /send` failed to complete Turn 2 due to underlying provider model quota exhaustion (`P01C_AO_AGY_CONTEXT_RESTORE = FAIL`).
 8. **Upstream Patches**: Zero upstream patches are required (`AO_UPSTREAM_PATCH_REQUIRED = NO`, `AGY_UPSTREAM_PATCH_REQUIRED = NO`).
 9. **Supervisor Normalization**: Formalizing the `.supervisor/worker-report.json` artifact convention and defining the pre-invocation validation boundary requires an explicit Architecture Decision Record.
 
@@ -32,9 +32,11 @@ EXISTING_PUBLIC_SURFACES_SUFFICIENT = YES
 SUPERVISOR_NORMALIZATION_REQUIRED = YES
 AO_UPSTREAM_PATCH_REQUIRED = NO
 AGY_UPSTREAM_PATCH_REQUIRED = NO
+P01C_AO_AGY_CONTEXT_RESTORE = FAIL
+ADR_010 = NOT_CREATED
 
-P01-C VERDICT = GAP_REQUIRES_ADR
-NEXT GATE = EXTERNAL_SUPERVISOR_P01_C_GAP_AUDIT
+P01-C VERDICT = GAP_REQUIRES_ADR_WITH_RESTORE_DEFECT
+NEXT GATE = EXTERNAL_SUPERVISOR_P01_C_RESTORE_FAILURE_AUDIT
 ```
 
 ---
@@ -278,7 +280,7 @@ Checked against canonical required fields in `docs/09_WORKER_REPORT.md`:
 
 # 10. Independent Claim Verification & Zero-Trust Test
 
-Under the core verification rule (`CLAIMS != TRUTH`), the Supervisor independently collected ground truth from Git and test execution:
+Under the core verification rule (`CLAIMS != TRUTH`), the P01-C proof harness, modeling the intended Supervisor evidence collector, independently collected ground truth from Git and test execution:
 
 ### Ground Truth vs. Worker Claims:
 | Field | Worker Claim | Independent Ground Truth | Verification Result |
@@ -288,13 +290,14 @@ Under the core verification rule (`CLAIMS != TRUTH`), the Supervisor independent
 | **Head SHA** | `4f48d65f1d5498e9b556d8f78105dfe4aee5f01e` | `4f48d65f1d5498e9b556d8f78105dfe4aee5f01e` (via `git rev-parse HEAD`) | **MATCH** |
 | **Files Changed** | `["probe.txt"]` | `["probe.txt"]` (via `git diff-tree --no-commit-id --name-only -r`) | **MATCH** |
 | **Probe Content** | Modified to confirmed value | `PROBE_P01C_CONFIRMED` (via file read) | **MATCH** |
-| **Test Exit Code** | 0 (`PASSED`) | Exit code 0 (via re-execution of `verify.ps1`) | **MATCH** |
-| **Build Status** | `PASSED` | Verified clean worktree state | **MATCH** |
+| **Commands Run** | `powershell ... verify.ps1` | `WORKER_COMMAND_CLAIM = UNVERIFIED_CLAIM`; Independent rerun: exit 0 | **CURRENT_OUTCOME_PASS** |
+| **Test Outcome** | 0 (`PASSED`) | Exit code 0 (via independent rerun of `verify.ps1`) | **CURRENT_TEST_PASS** |
+| **Build Status** | `PASSED` | Fixture contains no build step; clean worktree does not verify execution | **MISMATCH_EXPECTED_SKIPPED** |
 
 - `P01C_INDEPENDENT_EVIDENCE_PATH = PASS`
 
 ### Zero-Trust False-Claim Detection:
-To verify that the Supervisor detects forged claims, a corrupted report copy was evaluated:
+To verify that the P01-C proof harness, modeling the intended Supervisor evidence collector, detects forged claims, a corrupted report copy was evaluated:
 - Injected false claim: `head_sha: "0000000000000000000000000000000000000000"`
 - Independent check: Actual HEAD is `4f48d65f1d5498e9b556d8f78105dfe4aee5f01e` -> **DETECTED MISMATCH** (FAIL claim).
 - Injected false claim: `files_changed: ["false_file.txt"]`
@@ -326,18 +329,22 @@ To verify that the Supervisor detects forged claims, a corrupted report copy was
 - `--conversation <id>`: **CONFIRMED PRESENT**
 - `P01C_RESTORE_ARGV_TRACE = PASS`
 
-### Context Retention Proof:
+### Context Retention Proof (Historical Run):
 In Turn 1, the worker prompt included a disposable secret marker:
 ```text
 Hidden context marker: P01C_SECRET_RESTORE_MARKER_948127 (keep this marker in memory only; do NOT write it to any file).
 ```
 Inspection of the worktree verified no file contained this token.
-Querying the restored conversation for the hidden marker:
+Querying the restored conversation for the hidden marker was originally executed directly against Agy:
 ```powershell
 agy --add-dir <worktree> --dangerously-skip-permissions --conversation 7c5b5631-153f-49e5-b8bb-1c489fe4c9bd --print "What was the P01-C restore marker from the previous conversation? Return only the marker."
 ```
 - Output: `P01C_SECRET_RESTORE_MARKER_948127` (exact match, exit code 0).
-- `P01C_AO_AGY_CONTEXT_RESTORE = PASS`
+
+**Evidence Correction (External Supervisor Audit Finding)**:
+Direct Agy execution proves native Agy session resumption, not AO end-to-end restore delivery.
+- `SUPPORTING_AGY_NATIVE_RESUME_EVIDENCE = PASS`
+- Historical classification: `P01C_AO_AGY_CONTEXT_RESTORE = NOT_PROVEN_BY_EXISTING_EVIDENCE`
 
 ### Post-Restore Interactive Completion:
 - Testing message delivery to restored session via `POST /api/v1/sessions/fixture-repo-1/send`:
@@ -422,3 +429,124 @@ The core integration loop between AO and Agy is fully viable on Windows without 
 
 ### Next Gate:
 `EXTERNAL_SUPERVISOR_P01_C_GAP_AUDIT`
+
+---
+
+# 14. Targeted AO-Only Restore Context Proof (Remediation Execution)
+
+Pursuant to External Supervisor Audit instructions, a targeted isolated retest was executed to prove AO end-to-end restore context recall without calling direct `agy --conversation`.
+
+### Test Configuration:
+- **Sandbox**: `D:\TU_CODE\_ai_supervisor_p01c_ao_agy_integration`
+- **Isolated Daemon**: Port 4150 (PID 35788 / 48140)
+- **Pinned AO Commit**: `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6` (`v0.13.0`) -> **PASS**
+- **Pinned AO Binary SHA256**: `DA8C92810E81964396BBEB69FF27C50CA7241D347AE5F239E5AE084B678EDA13` -> **PASS**
+- **Pinned Agy Version**: `1.2.7` -> **PASS**
+- **Runtime Isolation**: `P01C_RUNTIME_ISOLATION = PASS`
+
+### Step-by-Step Execution Evidence:
+1. **Fresh Out-of-Band Marker**:
+   - Generated marker: `P01C_AO_RESTORE_1790007240247`
+   - Injected into Turn 1 initial worker prompt dispatched via AO `POST /api/v1/sessions` (Session ID: `fixture-repo-2`).
+   - Instruction: Hold token in memory only; do not write to any file.
+
+2. **Turn 1 Completion**:
+   - Dispatched to worker in worktree `runtime\data\worktrees\fixture-repo\fixture-repo-2`.
+   - Process tree spawned: `ao.exe pty-host` -> `conhost.exe` -> `cmd.exe` -> `agy.exe`.
+   - Completed successfully at 138s (activity transitioned from `active` to `idle` via Agy `Stop` hook).
+
+3. **Workspace Marker Leak Check**:
+   - Recursive scan of session worktree (excluding `.agents`, `.git`).
+   - Leaked files found: **0**.
+   - `RESTORE_MARKER_WORKSPACE_LEAK = NO` -> **PASS**
+
+4. **Session Termination & Restore via AO**:
+   - Terminated via `POST /api/v1/sessions/fixture-repo-2/kill` (HTTP 200). Verified `isTerminated = true`.
+   - Restored via `POST /api/v1/sessions/fixture-repo-2/restore` (HTTP 200).
+
+5. **Restored Process Argv Inspection**:
+   - Inspected process tree under daemon:
+     ```text
+     [PID 39956] ao.exe pty-host fixture-repo-2 ... C:\Users\Admin\AppData\Roaming\npm\agy.cmd
+                  --add-dir ... --dangerously-skip-permissions --conversation 4f4e85e9-9ae9-42e1-aecc-f1d3d4fe1926
+       ├── [PID 29136] conhost.exe --headless ...
+       └── [PID 25252] cmd.exe /c agy.cmd ... --conversation 4f4e85e9-9ae9-42e1-aecc-f1d3d4fe1926
+            └── [PID 35532] agy.exe ... --conversation 4f4e85e9-9ae9-42e1-aecc-f1d3d4fe1926
+     ```
+   - `--conversation 4f4e85e9-9ae9-42e1-aecc-f1d3d4fe1926` confirmed present.
+   - `P01C_TARGET_RESTORE_ARGV = PASS`
+
+6. **Critical Turn 2 — Delivered via AO POST /send**:
+   - After 15s ConPTY stabilization window, sent query via `POST /api/v1/sessions/fixture-repo-2/send` (HTTP 200).
+   - Turn 2 prompt semantic instruction:
+     ```text
+     From the prior conversation context, recall the restore marker I asked you to remember.
+     Create exactly this disposable proof artifact:
+     .supervisor/restore-context-proof.json
+     with JSON:
+     {
+       "recalled_marker": "<the marker you actually remember>",
+       "source": "ao-restored-conversation"
+     }
+     Do not search workspace files for the marker.
+     Do not modify application source.
+     ```
+   - Literal marker value was strictly omitted from the prompt.
+
+7. **Turn 2 Completion & Activity Observation**:
+   - Polled `GET /api/v1/sessions/fixture-repo-2` for 180 seconds.
+   - Observed activity state: Remained `idle` continuously (`[Turn 2 3s] idle` ... `[Turn 2 180s] idle`). Did not transition to `active`.
+   - `P01C_TARGET_POST_RESTORE_COMPLETION = FAIL`
+
+8. **Root Cause Analysis (Native Session Transcript)**:
+   - Inspected native Agy transcript (`C:\Users\Admin\.gemini\antigravity-cli\brain\4f4e85e9-9ae9-42e1-aecc-f1d3d4fe1926\.system_generated\logs\transcript.jsonl`):
+     ```json
+     {
+       "step_index": 1,
+       "source": "SYSTEM",
+       "type": "ERROR_MESSAGE",
+       "status": "DONE",
+       "error": "API error (attempt 1): RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 36h46m27s."
+     }
+     ```
+   - Underlying Agy CLI engine encountered an individual API quota block (`RESOURCE_EXHAUSTED`), preventing the restored process from executing model turns or producing files.
+
+9. **Public API Retrieval**:
+   - Attempted retrieval via `GET /api/v1/sessions/fixture-repo-2/workspace/file?path=.supervisor/restore-context-proof.json`.
+   - Result: HTTP 404 (file not created).
+   - `P01C_AO_RESTORED_REPORT_VIA_PUBLIC_API = FAIL`
+   - `P01C_AO_AGY_CONTEXT_RESTORE = FAIL`
+
+### ADR Safety & Governance Action:
+- **ADR-010 Creation Halted**: Per Section 15 governance directive ("If restored AO session cannot recover the marker through POST /send: STOP. Set P01-C = GAP_REQUIRES_ADR_WITH_RESTORE_DEFECT. Do NOT create ADR-010 as final resolution").
+- **ADR Number Collision Protection**: Per Section 31 safety check, `docs/adr/ADR-010-task-contract-immutability.md` already exists in the canonical Phase-0 frozen baseline (commit `5d07389`). No overwrite was performed.
+- `ADR_010 = NOT_CREATED`
+
+---
+
+# 15. Track P01-C Final Audit Summary
+
+| Checkpoint | Verdict | Literal Evidence / Mechanism |
+|---|---|---|
+| **P01C_AO_PIN** | **PASS** | AO commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`, tag `v0.13.0`, SHA256 matches. |
+| **P01C_AGY_PIN** | **PASS** | Agy version `1.2.7` matches. |
+| **P01C_RUNTIME_ISOLATION** | **PASS** | Isolated daemon on loopback port 4150, data directory isolated. |
+| **P01C_INITIAL_ARGV_TRACE** | **PASS** | Verified `--add-dir`, `--dangerously-skip-permissions`, `--prompt-interactive`. |
+| **P01C_AGY_HOOK_INSTALL** | **PASS** | Verified `.agents/hooks.json` installed with `ao hooks agy`. |
+| **P01C_COMPLETION_SIGNAL** | **PASS** | `Stop` hook transitions session to `idle` while process hierarchy remains live. |
+| **P01C_NATIVE_RESULT_SURFACE** | **NOT_EXPOSED** | No assistant response or report in session DTO. |
+| **P01C_TERMINAL_RESULT_SURFACE** | **RAW_INTERACTIVE** | Raw xterm byte stream only. |
+| **P01C_REPORT_FILE_CREATED** | **PASS** | Worker created `.supervisor/worker-report.json` in worktree (Run 1). |
+| **P01C_REPORT_VIA_AO_PUBLIC_API** | **PASS** | `GET /workspace/file` returned 200 with report content (Run 1). |
+| **P01C_REPORT_CONTRACT_VALID** | **PASS** | All 12 canonical fields verified against schema (Run 1). |
+| **P01C_INDEPENDENT_EVIDENCE_PATH** | **PASS** | Ground truth independently collected from Git diff and test runner. |
+| **P01C_FALSE_CLAIM_DETECTED** | **PASS** | Injected false head SHA and files flagged as `MISMATCH`. |
+| **P01C_NATIVE_AGY_SESSION_ID_CAPTURE** | **PASS** | Native Agy conversation UUID captured. |
+| **P01C_RESTORE_ARGV_TRACE** | **PASS** | `--conversation <id>` verified in restored process hierarchy. |
+| **RESTORE_MARKER_WORKSPACE_LEAK** | **NO** | 0 files in session worktree leaked the fresh marker. |
+| **P01C_TARGET_POST_RESTORE_COMPLETION** | **FAIL** | Turn 2 via `POST /send` timed out in idle due to underlying Agy quota exhaustion. |
+| **P01C_AO_RESTORED_REPORT_VIA_PUBLIC_API** | **FAIL** | HTTP 404 from workspace file API for restore proof artifact. |
+| **P01C_AO_AGY_CONTEXT_RESTORE** | **FAIL** | Context recall through AO `POST /send` failed empirically. |
+| **SUPPORTING_AGY_NATIVE_RESUME_EVIDENCE** | **PASS** | Direct CLI resume proved native context continuity in Run 1. |
+| **ADR_010** | **NOT_CREATED** | Withheld due to restore defect; ADR-010 collision protected. |
+| **P01-C Final State** | **GAP_REQUIRES_ADR_WITH_RESTORE_DEFECT** | Upstream integration loop established, but restore context via AO unproven. |
