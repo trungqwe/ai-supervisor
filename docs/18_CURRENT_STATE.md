@@ -26,8 +26,8 @@
 | **Known Process Deviations** | P00-DEV-001 (`ACCEPTED_AT_PHASE0_FREEZE`); Process Hygiene Deviation recorded (prohibition against inspecting `.codex/auth.json` or credential stores); **P01B-DEV-001** (`NEGATIVE_TEST_REMOTE_BOUNDARY_EXCEEDED`, `PROCESS_HYGIENE_DEVIATION`: NEG-A/C/D crossed remote inference boundary; security impact: NONE; evidence validity: PRESERVED; architecture verdict impact: NONE). |
 | **Open Decisions** | Architecture V2 freeze decision deferred until upstream runtime proofs (P01-A, P01-B, P01-C) are complete; Public gateway distribution path (`P01-D3B`) preserved for future multi-user product phase. |
 | **Documentation Baseline Versions** | AO `v0.13.0` (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`), Agy `1.2.7` (`7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`), `tunnel-client` `v0.0.14`. |
-| **Pending Runtime Proofs (P01)** | Track P01-A (AO Runtime Proof: `EXTERNAL_AUDIT_APPROVED`), Track P01-B (Direct Antigravity CLI Capability Proof: `EXTERNAL_AUDIT_APPROVED`), Track P01-C (AO ↔ Agy Adapter / WorkerReport Integration Proof: `READY`), Track P01-D (ChatGPT Plus Transport Feasibility: `TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). |
-| **Next Approved Action** | Track P01-C Runtime Execution (AO ↔ Agy Adapter / WorkerReport Integration Proof). ACTIVE_GATE: `P01_C_RUNTIME_EXECUTION_AUTHORIZED`. Do NOT freeze Architecture V2 yet. |
+| **Pending Runtime Proofs (P01)** | Track P01-A (AO Runtime Proof: `EXTERNAL_AUDIT_APPROVED`), Track P01-B (Direct Antigravity CLI Capability Proof: `EXTERNAL_AUDIT_APPROVED`), Track P01-C (AO ↔ Agy Adapter / WorkerReport Integration Proof: `GAP_REQUIRES_ADR`), Track P01-D (ChatGPT Plus Transport Feasibility: `TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). |
+| **Next Approved Action** | Track P01-C Runtime Execution (AO ↔ Agy Adapter / WorkerReport Integration Proof). ACTIVE_GATE: `EXTERNAL_SUPERVISOR_P01_C_GAP_AUDIT`. Do NOT freeze Architecture V2 yet. |
 
 ---
 
@@ -56,3 +56,4 @@
 | [`P01_A_EXTERNAL_AUDIT.md`](audits/P01_A_EXTERNAL_AUDIT.md) | `APPROVED` (External Supervisor approved P01-A runtime proof with required literal evidence corrections; P01-B released to READY) | 2026-09-21 |
 | [`P01_B_AGY_CLI_PROOF.md`](audits/P01_B_AGY_CLI_PROOF.md) | `PASS_PENDING_EXTERNAL_AUDIT` (16/16 capabilities proven; P01-B1 through P01-B8 accepted; P01-B9 `--conversation` PASS; P01-B10 `--continue` PASS; failure contract characterized; orphan check PASS) | 2026-09-21 |
 | [`P01_B_EXTERNAL_AUDIT.md`](audits/P01_B_EXTERNAL_AUDIT.md) | `APPROVED` (External Supervisor approved P01-B direct Agy capability proof; 16/16 capabilities verified; P01-C released to READY) | 2026-09-21 |
+| [`P01_C_AO_AGY_INTEGRATION_PROOF.md`](audits/P01_C_AO_AGY_INTEGRATION_PROOF.md) | `GAP_REQUIRES_ADR` (AO ↔ Agy integration loop proven live; WorkerReport delivered via workspace file API; zero upstream patches required; report-file convention and validation boundary require ADR) | 2026-09-21 |

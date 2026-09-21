@@ -1,7 +1,7 @@
 # UPSTREAM CONTRACT BASELINE
 
 > **Focus**: Evidence-Driven Mapping of Upstream Public Interfaces
-> **Status**: Literal Evidence Updated (Track P01-A AO Runtime PASS; Track P01-B Agy RUNTIME_TESTED_PASS / COMPLETE)
+> **Status**: Literal Evidence Updated (Track P01-A AO Runtime PASS; Track P01-B Agy RUNTIME_TESTED_PASS; Track P01-C AO ↔ Agy Integration GAP_REQUIRES_ADR)
 > **Date Convention**: All commit timestamps are explicitly recorded in ISO-8601 UTC format (`YYYY-MM-DDTHH:MM:SSZ`).
 > **License Convention**: Repository SPDX License is explicitly distinguished from Product / Usage Terms.
 
@@ -54,8 +54,15 @@ agy --add-dir <path> --dangerously-skip-permissions --prompt-interactive <prompt
 ```
 AO wraps Agy in an interactive harness rather than passing `--json-schema` or using `--print`.
 
-### C. The Integration Gap (`P01_PROOF_REQUIRED`)
-The crucial unanswered architectural question is:
+### C. The Integration Gap & Empirical Resolution (Track P01-C: `GAP_REQUIRES_ADR`)
+Track P01-C evaluated the empirical integration between pinned AO `v0.13.0` and pinned Agy `1.2.7`:
 > *Can the existing AO Agy integration satisfy our WorkerReport contract without custom integration code?*
 
-Because AO invokes Agy interactively, it is currently unproven whether AO's session event stream or completion detection will cleanly expose the structured `WorkerReport`. This question is isolated to **Phase P01 Track P01-C** (currently HELD).
+**Empirical Resolution:**
+1. **Interactive Invocation**: Pinned AO launches Agy in interactive mode via `agy --add-dir <wt> --dangerously-skip-permissions --prompt-interactive "<prompt>"`. It does not pass `--json-schema` or `--output-format`.
+2. **Turn Completion Signal**: AO detects turn completion via the Agy `Stop` hook (`.agents/hooks.json`), transitioning session activity from `active` (`working`) to `idle` (`idle`) while the ConPTY process remains alive (`PROCESS_RUNNING` while `WORKER_TURN_COMPLETE`).
+3. **Result Exposure**: AO's public session API (`GET /api/v1/sessions/{id}`) does **NOT** natively expose assistant text responses or WorkerReport data (`NATIVE_RESULT_SURFACE = NOT_EXPOSED`). Terminal streams (`/mux`) provide raw ANSI byte frames (`RAW_INTERACTIVE`).
+4. **WorkerReport via Workspace File API**: The integration loop is empirically proven by having the worker output `.supervisor/worker-report.json`, which the Supervisor retrieves via AO's public workspace file API (`GET /api/v1/sessions/{id}/workspace/file?path=.supervisor/worker-report.json`).
+5. **Context Retention across Restore**: Native conversation UUID is captured and passed to `--conversation <id>` on restore. Context retention of memory-only tokens was proven across restore cycles without disk persistence.
+6. **No Upstream Patches**: Neither AO nor Agy requires code modifications (`AO_UPSTREAM_PATCH_REQUIRED = NO`, `AGY_UPSTREAM_PATCH_REQUIRED = NO`).
+7. **Architectural Gap**: Adopting the `.supervisor/worker-report.json` convention and formalizing the pre-invocation validation boundary (`SUPERVISOR_AOADAPTER_BOUNDARY`) requires an approved Architecture Decision Record (`GAP_REQUIRES_ADR`).

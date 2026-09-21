@@ -105,6 +105,9 @@ Empirical negative testing (P01-B safe negative suite) established that Agy 1.2.
 **Operational Constraint:** `CALLER_VALIDATION_REQUIRED` / `SUPERVISOR_MUST_VALIDATE_AGY_INVOCATION_INPUTS_BEFORE_EXECUTION`
 The Supervisor Control Plane / AOAdapter must validate all CLI parameters (format enums, path accessibility, schema readability and parseability) prior to invoking Agy.
 
-### Remaining Questions for P01-C (HELD):
-- Does AO's interactive harness (`--prompt-interactive`) interact cleanly with Agy's structured output flags?
-- Can the existing AO-Agy integration satisfy the WorkerReport contract without custom adapter code?
+### P01-C Empirical Findings (`GAP_REQUIRES_ADR`):
+- **Interactive Invocation**: AO launches Agy interactively using `--prompt-interactive` without `--json-schema` or `--output-format`.
+- **Completion Detection**: AO detects turn completion via the Agy `Stop` hook (`.agents/hooks.json`), triggering `ActivityIdle` while processes remain running.
+- **Conversation Restore**: Native Agy conversation UUID is captured and restored via `--conversation <id>`, successfully preserving memory tokens across restore cycles without disk persistence.
+- **WorkerReport Delivery**: WorkerReport contract is satisfied without upstream patches using the report-file convention (`.supervisor/worker-report.json`), retrieved via AO's public workspace file API (`GET /api/v1/sessions/{id}/workspace/file?path=...`).
+- **Architectural Adoption**: Formalizing the `.supervisor/worker-report.json` convention and pre-invocation validation boundary requires an approved ADR.
