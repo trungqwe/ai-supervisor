@@ -4,7 +4,7 @@
 > **Phase 0 Baseline**: Frozen at tag `phase0-architecture-v1` (commit `6f72eaca30be3fc3ac00f25829dd4283ed98c3f5`)
 > **Phase 1 Historical Freeze**: Tag `phase1-architecture-v2` (commit `883b083023398d95d50e3bb88e90dcfca0171745`; `HISTORICAL_FREEZE_SNAPSHOT_SUPERSEDED_BY_REAUDIT`)
 > **Phase 1 Current Baseline**: Frozen at tag `phase1-architecture-v2.1` (commit `62d3fe0df4a3a05697da77349ff085430ea452f7`)
-> **Updated**: 2026-09-22 (P02 Final Implementation Release: P02_CODE = AUTHORIZED for TASK-P02-001; Active Gate: P02_TASK_001_DOMAIN_BOOTSTRAP)
+> **Updated**: 2026-09-22 (TASK-P02-002 = REVISION_REQUIRED; Active Gate: P02_TASK_002_REVISION_2)
 
 ## 1. High-Level Summary
 
@@ -14,14 +14,14 @@
 | **Phase 1 (Upstream Proof)** | **COMPLETE** (Track P01-A: `EXTERNAL_AUDIT_APPROVED`; Track P01-B: `EXTERNAL_AUDIT_APPROVED`; Track P01-C: `EXTERNAL_AUDIT_APPROVED_WITH_ADR_011`; Track P01-D: `TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). All proofs verified. |
 | **Architecture V2 (Historical Freeze)** | **FROZEN** at tag `phase1-architecture-v2` (`HISTORICAL_FREEZE_SNAPSHOT_SUPERSEDED_BY_REAUDIT`). Immutable historical snapshot. |
 | **Architecture V2.1 (Current Baseline)** | **FROZEN** at tag `phase1-architecture-v2.1`. Zero modifications permitted without architecture governance amendment. |
-| **Project Stage** | **P02 IMPLEMENTATION** (`P02 = IMPLEMENTATION_ACTIVE`). Application code is `AUTHORIZED` for `TASK-P02-002` (`TASK_P02_001 = EXTERNAL_AUDIT_APPROVED`). |
+| **Project Stage** | **P02 IMPLEMENTATION** (`P02 = IMPLEMENTATION_ACTIVE`). `P02_CODE = AUTHORIZED`. `TASK_P02_001 = EXTERNAL_AUDIT_APPROVED`. `TASK_P02_002 = REVISION_REQUIRED` (Revision 2 in progress). `P02_003 = NOT_RELEASED`. |
 | **Blocked Issues** | V1 ChatGPT transport blocker: **NONE**. P01 upstream-proof blocker: **NONE**. Pre-code verification command gap: **RESOLVED** via ADR-013 accepted and schema migrated to `verification_requests`. |
 | **Known Process Deviations** | P00-DEV-001 (`ACCEPTED_AT_PHASE0_FREEZE`); Process Hygiene Deviation recorded; **P01B-DEV-001**; **P01C-DEV-001**; **P01C-DEV-002**; **P01C-DEV-003**; **P01C-DEV-004**. |
 | **Open Implementation Decisions** | **NONE** (All pre-code architecture decisions accepted: ADR-013 Accepted, ADR-014 Accepted with Go 1.27.x baseline / 1.26.x min, ADR-015 Accepted with SQLite WAL + synchronous=FULL). |
 | **Documentation Baseline Versions** | AO `v0.13.0` (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`), Agy `1.2.7` (`7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`), `tunnel-client` `v0.0.14`. |
 | **Upstream Runtime Proofs (P01)** | Track P01-A (`EXTERNAL_AUDIT_APPROVED`), Track P01-B (`EXTERNAL_AUDIT_APPROVED`), Track P01-C (`EXTERNAL_AUDIT_APPROVED_WITH_ADR_011`), Track P01-D (`TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). Phase P01 proof activity is **COMPLETE**. |
-| **Next Approved Action** | Execute `TASK-P02-002` (Implement TaskContract validator, schema verification, revision lineage & path containment). |
-| **Active Gate** | `P02_TASK_002_CONTRACT_VALIDATOR` |
+| **Next Approved Action** | Complete TASK-P02-002 Revision 2: recover and commit complete implementation artifact, restore clean-checkout reproducibility, implement two-view JSON number semantics. |
+| **Active Gate** | `P02_TASK_002_REVISION_2` |
 | **P01 Execution Status** | `COMPLETE` |
 
 ---
@@ -60,3 +60,4 @@
 | [`P02_TASK_001_EXTERNAL_AUDIT.md`](audits/P02_TASK_001_EXTERNAL_AUDIT.md) | `REVISION_REQUIRED` (Commit 60d43ad audited: StateMachine logic & boundaries PASS, TaskContract serialization REVISION_REQUIRED; Active Gate: P02_TASK_001_REVISION_2) | 2026-09-22 |
 | [`P02_TASK_001_EXTERNAL_REAUDIT.md`](audits/P02_TASK_001_EXTERNAL_REAUDIT.md) | `EXTERNAL_AUDIT_APPROVED` (Commit 2477815 verified: TaskContract serialization parity resolved, 13 states / 22 domain transitions / 25 graph edges confirmed; Task-P02-001 closed; TASK-P02-002 released) | 2026-09-22 |
 | [`P02_TASK_002_DEPENDENCY_AUDIT.md`](audits/P02_TASK_002_DEPENDENCY_AUDIT.md) | `APPROVED` (github.com/google/jsonschema-go v0.4.3 evaluated: MIT, Go 1.23.0 floor, Draft-07, zero runtime dependencies, MCP-SDK alignment) | 2026-09-22 |
+| [`P02_TASK_002_EXTERNAL_AUDIT.md`](audits/P02_TASK_002_EXTERNAL_AUDIT.md) | `REVISION_REQUIRED` (Remote artifact incomplete: 4 implementation files untracked; go.mod/go.sum not committed; UseNumber regression; Active Gate: P02_TASK_002_REVISION_2) | 2026-09-22 |
