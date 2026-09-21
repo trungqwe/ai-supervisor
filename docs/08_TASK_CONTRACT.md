@@ -51,7 +51,7 @@ A **Task Contract** is the authoritative specification dispatched to an AI codin
 > [!IMPORTANT]
 > **Two-Stage Verification Request Validation**:
 > - **Stage A (JSON Schema Structural Validation)**: `task-contract.schema.json` verifies only that `cwd` is an optional non-empty string bounded to 256 characters, and that parameters form a valid JSON object. Generic JSON Schema shape validation does **NOT** guarantee filesystem containment or safety.
-> - **Stage B (P02 TaskContractValidator Semantic Validation)**: The Supervisor's `TaskContractValidator` evaluates `cwd` against the assigned workspace worktree: rejecting absolute paths, volume/UNC escapes, and directory traversal (`..`) escaping root, ensuring the final target remains a strict descendant of the assigned workspace root.
+> - **Stage B (P02 TaskContractValidator Semantic Validation)**: The Supervisor's `TaskContractValidator` evaluates `cwd` against the assigned workspace worktree: rejecting absolute paths, volume/UNC escapes, and directory traversal (`..`) escaping root, ensuring the resolved target path is either exactly the assigned worktree root (`.` / root directory) or a descendant contained within the assigned worktree root (`TARGET == ROOT || TARGET_IS_DESCENDANT_OF_ROOT`).
 > ```
 > JSON SCHEMA SHAPE VALIDATION != PATH CONTAINMENT VALIDATION
 > ```

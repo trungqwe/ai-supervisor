@@ -144,7 +144,7 @@ JSON SCHEMA SHAPE VALIDATION != PATH CONTAINMENT VALIDATION
    - Makes **zero claim** of filesystem containment or safety.
 
 2. **Stage B — Semantic Validation (`TaskContractValidator` in Phase P02)**:
-   - Validates `cwd`: Rejects absolute paths, Windows volume/UNC syntax, and `..` traversals that escape the assigned workspace root. The target directory must resolve strictly as a descendant of the worktree.
+   - Validates `cwd`: Rejects absolute paths, Windows volume/UNC syntax, and `..` traversals that escape the assigned workspace root. The resolved directory must be either exactly the assigned worktree root or a descendant contained within the worktree (`TARGET == ROOT || TARGET_IS_DESCENDANT_OF_ROOT`).
    - Depends exclusively on a pure domain abstraction: **`VerificationPolicyCatalog`**:
      ```go
      type VerificationPolicyCatalog interface {

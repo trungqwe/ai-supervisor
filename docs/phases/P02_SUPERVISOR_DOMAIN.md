@@ -1,8 +1,8 @@
 # PHASE SPECIFICATION: P02 — SUPERVISOR DOMAIN CORE
 
-> **Phase Status**: IMPLEMENTATION_DECISIONS_APPROVED_PENDING_EXTERNAL_COMMIT_AUDIT
-> **Code Status**: NOT_STARTED
-> **Active Gate**: EXTERNAL_SUPERVISOR_P02_IMPLEMENTATION_RELEASE_AUDIT
+> **Phase Status**: IMPLEMENTATION_AUTHORIZED
+> **Code Status**: AUTHORIZED
+> **Active Gate**: P02_TASK_001_DOMAIN_BOOTSTRAP
 > **Approved Toolchain Baseline**: Go 1.27.x (Development Baseline) / Go 1.26.x (Minimum Supported Line)
 > **Approved Storage Engine**: SQLite (WAL mode, synchronous = FULL, foreign_keys = ON)
 
@@ -49,7 +49,7 @@ Implement the headless core domain model, 13-state workflow state machine, immut
   - Pre-dispatch verification request semantic validation via `VerificationPolicyCatalog` (ADR-013 Layer A):
     * Pure domain interface `VerificationPolicyCatalog` (`LookupProfile(profileID) (VerificationProfilePolicy, bool)`);
     * `VerificationProfilePolicy` domain metadata exposing parameter schema, cwd policy, and max timeout;
-    * Enforces `JSON SCHEMA SHAPE VALIDATION != PATH CONTAINMENT VALIDATION`, verifying `cwd` strictly resolves as a descendant of the workspace worktree;
+    * Enforces `JSON SCHEMA SHAPE VALIDATION != PATH CONTAINMENT VALIDATION`, verifying `cwd` resolves either exactly as the assigned worktree root or as a descendant contained within the assigned worktree root (`TARGET == ROOT || TARGET_IS_DESCENDANT_OF_ROOT`);
     * P02 testable via in-memory fake policy catalog.
 
 ### 2.3 StateStore (Local SQLite)

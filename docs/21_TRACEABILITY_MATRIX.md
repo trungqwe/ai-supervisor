@@ -14,7 +14,7 @@
 | **FR-005** (Worker Dispatch) | `docs/04_ARCHITECTURE.md#sec-2.1` | ADR-002, ADR-012 | `AOAdapter` | P03 | Verify worktree spawn, attempt pre-allocation & task send | Agent Orchestrator |
 | **FR-006** (Worker Observation) | `docs/04_ARCHITECTURE.md#sec-2.1` | ADR-002 | `AOAdapter` | P03 | Test heartbeat & event stream | Agent Orchestrator |
 | **FR-007** (Report Ingestion) | `docs/09_WORKER_REPORT.md` | ADR-006, ADR-011, ADR-012 | `EvidenceCollector` | P04 | Attempt-scoped report fetch via AO workspace API & schema validation | AIWorkHub |
-| **FR-008** (Evidence Collection)| `docs/04_ARCHITECTURE.md#sec-2.2` | ADR-006, ADR-011, ADR-012 | `EvidenceCollector` | P04 | Independent git diff & constrained test runner execution bound to TaskAttempt | AIWorkHub |
+| **FR-008** (Evidence Collection) | `docs/04_ARCHITECTURE.md#sec-2.2` | ADR-006, ADR-011, ADR-012, ADR-013 | `EvidenceCollector` | P04 | Independent git diff & constrained test runner execution bound to TaskAttempt | AIWorkHub |
 | **FR-009** (Scope Violation) | `docs/07_SECURITY_MODEL.md#sec-2` | ADR-010 | `PolicyEngine` | P04 | Flag file touched outside allowed_scope | Proxide |
 | **FR-010** (Review Bundle) | `docs/10_REVIEW_BUNDLE.md` | ADR-006, ADR-011, ADR-012 | `ReviewBundleBuilder` | P04 | Attempt-scoped bundle schema compliance | AIWorkHub / Codencer |
 | **FR-011** (Supervisor Decision)| `docs/06_WORKFLOW_STATE_MACHINE.md` | ADR-005, ADR-011, ADR-012 | `StateMachine` | P02 | Test APPROVE / REVISION transitions bound to task_id and attempt_id | Symphony |
