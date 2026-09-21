@@ -446,3 +446,93 @@ func TestTaskContractValidator_SymlinkJunctionEscape(t *testing.T) {
 		t.Logf("Symlink escape successfully rejected: %v", err)
 	}
 }
+
+func TestTaskContractValidator_NumericFidelity(t *testing.T) {
+	// 9007199254740993 = 2^53 + 1, the smallest integer not exactly representable
+	// as float64. float64 would silently become 9007199254740992.
+	const exactToken = "9007199254740993"
+
+	schemaBytes := loadCanonicalSchema(t)
+
+	// Create a catalog that permits an arbitrary integer "large_id" parameter
+	catalog := &testCatalog{
+		profiles: map[string]domain.VerificationProfilePolicy{
+			"numeric-profile": {
+				ProfileID: "numeric-profile",
+				ParameterSchema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"large_id": map[string]any{"type": "integer"},
+					},
+					"required":             []any{"large_id"},
+					"additionalProperties": false,
+				},
+				CwdPolicy:         "worktree_root",
+				MaxTimeoutSeconds: 60,
+			},
+		},
+	}
+
+	validator, err := contract.NewValidator(schemaBytes, catalog)
+	if err != nil {
+		t.Fatalf("NewValidator failed: %v", err)
+	}
+
+	// Build a minimal valid contract JSON with the large integer in parameters
+	rawJSON := []byte(`{
+  "contract_id": "CONTRACT-NUMERIC-01",
+  "task_id": "TASK-NUMERIC",
+  "revision_number": 1,
+  "supersedes_contract_id": null,
+  "phase_id": "P02",
+  "objective": "Numeric fidelity test",
+  "requirements": ["FR-001"],
+  "architecture_refs": [],
+  "base_sha": "a1b2c3d4e5f6789012345678901234567890abcd",
+  "allowed_scope": ["internal/**"],
+  "forbidden_scope": [],
+  "constraints": [],
+  "acceptance_criteria": ["Numeric token preserved"],
+  "required_evidence": ["git_diff"],
+  "worker_profile": "antigravity-standard",
+  "report_contract": "docs/schemas/worker-report.schema.json",
+  "stop_conditions": [],
+  "verification_requests": [
+    {
+      "id": "num-req-1",
+      "profile_id": "numeric-profile",
+      "parameters": {
+        "large_id": 9007199254740993
+      },
+      "cwd": ".",
+      "timeout_seconds": 10
+    }
+  ]
+}`)
+
+	parsed, err := validator.ValidateRaw(rawJSON, nil, ".")
+	if err != nil {
+		t.Fatalf("expected numeric fidelity fixture to pass validation, got: %v", err)
+	}
+
+	if len(parsed.VerificationRequests) == 0 {
+		t.Fatal("expected at least one verification request in parsed contract")
+	}
+
+	largeID, ok := parsed.VerificationRequests[0].Parameters["large_id"]
+	if !ok {
+		t.Fatal("expected 'large_id' key in parsed parameters")
+	}
+
+	// The value must be preserved as json.Number, not silently coerced to float64
+	numVal, isNumber := largeID.(json.Number)
+	if !isNumber {
+		t.Fatalf("expected large_id to be json.Number, got %T (value: %v)", largeID, largeID)
+	}
+
+	if numVal.String() != exactToken {
+		t.Errorf("numeric fidelity violated: expected %q, got %q (float64 coercion detected)", exactToken, numVal.String())
+	}
+
+	t.Logf("JSON_NUMBER_SEMANTICS_PRESERVED = PASS: large_id = %q (exact)", numVal.String())
+}
