@@ -4,7 +4,8 @@
   "attempt_id": "ATTEMPT-01",
   "task_contract": {
     "task_id": "TASK-P01-001",
-    "objective": "Verify AO connectivity"
+    "objective": "Verify AO connectivity",
+    "contract_id": "CONTRACT-TASK-P01-001-01"
   },
   "worker_claims": {
     "claimed_status": "COMPLETED",

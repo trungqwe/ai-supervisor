@@ -35,7 +35,8 @@ This Architecture Decision Record establishes the canonical contract for turn co
   ```
 - **Pre-Dispatch Ownership**: Prior to dispatching a task to AO, the Supervisor assigns:
   - `task_id` (unique task identifier)
-  - `attempt_id` (monotonically increasing execution attempt identifier)
+  - `attempt_id` (unique immutable opaque execution identity)
+  - `attempt_number` (monotonically increasing integer within a task per ADR-012)
   - `expected_report_path` (exact destination path communicated in the task prompt)
 - **Strict Identity Validation**: The worker must write its report to `expected_report_path`. On ingestion, the Supervisor enforces:
   ```
@@ -48,7 +49,7 @@ This Architecture Decision Record establishes the canonical contract for turn co
   ```
   Agy Stop Hook -> AO Session IDLE -> Bounded Fetch -> JSON Parse -> Schema Validation -> Identity Match -> REPORT_READY
   ```
-- **Failure Taxonomy**: If the report cannot be verified, the Supervisor classifies the failure into explicit semantic categories:
+- **Failure Taxonomy**: If the report cannot be verified, the Task transitions to state `FAILED` with explicit semantic `failure_reason` (these are error codes, NOT workflow states):
   - `REPORT_MISSING`: Artifact does not appear within the bounded fetch window.
   - `REPORT_INVALID`: Artifact is non-JSON or violates the canonical `WorkerReport` schema.
   - `REPORT_IDENTITY_MISMATCH`: Artifact contains incorrect `task_id` or `attempt_id`.
@@ -69,7 +70,7 @@ This Architecture Decision Record establishes the canonical contract for turn co
 ### 5. Zero-Trust Evidence Boundary
 - **Worker Claims vs. Authoritative Evidence**: `WorkerReport` content represents unverified worker assertions (`WORKER_CLAIMS`), not verified truth.
 - **Strict Separation in ReviewBundle**:
-  - Worker claims (`commands_run`, `tests`, `build_status`, `summary`) are captured as telemetry.
+  - Worker claims (`commands_run`, `tests`, `build_status`, `worker_claims`) are captured as telemetry.
   - The Supervisor independently establishes objective ground truth:
     - Base commit SHA and Head commit SHA
     - Branch name and author
@@ -110,7 +111,7 @@ This Architecture Decision Record establishes the canonical contract for turn co
 
 ### 10. Bounded Report Fetch Window
 - Upon detecting session activity transition to `IDLE`, the Supervisor polls `GET /api/v1/sessions/{id}/workspace/file` using bounded retry with exponential backoff.
-- Indefinite polling is prohibited. If the report is not retrievable within policy bounds, the execution transitions immediately to `REPORT_MISSING`.
+- Indefinite polling is prohibited. If the report is not retrievable within policy bounds, the task transitions to state `FAILED` with `failure_reason = REPORT_MISSING`.
 
 ---
 

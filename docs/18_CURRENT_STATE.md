@@ -1,17 +1,19 @@
 # 18_CURRENT_STATE.md — Operational Tracking & Proof Status
 
-> **Status**: P02 ENTRY (Phase 1 Complete — Architecture V2 Frozen)
+> **Status**: P02 ENTRY (Phase 1 Complete — Architecture V2.1 Frozen)
 > **Phase 0 Baseline**: Frozen at tag `phase0-architecture-v1` (commit `6f72eaca30be3fc3ac00f25829dd4283ed98c3f5`)
-> **Phase 1 Baseline**: Frozen at tag `phase1-architecture-v2`
-> **Updated**: 2026-09-22 (Phase P01 Final External Audit APPROVED; Architecture V2 FROZEN; Phase P02 Released to Implementation Decision Gate)
+> **Phase 1 Historical Freeze**: Tag `phase1-architecture-v2` (commit `883b083023398d95d50e3bb88e90dcfca0171745`; `HISTORICAL_FREEZE_SNAPSHOT_SUPERSEDED_BY_REAUDIT`)
+> **Phase 1 Current Baseline**: Frozen at tag `phase1-architecture-v2.1`
+> **Updated**: 2026-09-22 (Phase P01 Final External Reaudit 001 APPROVED; Architecture V2.1 FROZEN; Phase P02 Released to Implementation Decision Gate)
 
 ## 1. High-Level Summary
 
 | Dimension | Current State |
 |---|---|
 | **Phase 0 (Architecture & Foundation)** | **FROZEN** at tag `phase0-architecture-v1`. Zero modifications permitted without Phase-0 unfreeze protocol. |
-| **Phase 1 (Upstream Proof)** | **COMPLETE** (Track P01-A: `EXTERNAL_AUDIT_APPROVED`; Track P01-B: `EXTERNAL_AUDIT_APPROVED`; Track P01-C: `EXTERNAL_AUDIT_APPROVED_WITH_ADR_011`; Track P01-D: `TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). Final audit `APPROVED`. |
-| **Architecture V2** | **FROZEN** at tag `phase1-architecture-v2`. Zero modifications permitted without architecture governance amendment. |
+| **Phase 1 (Upstream Proof)** | **COMPLETE** (Track P01-A: `EXTERNAL_AUDIT_APPROVED`; Track P01-B: `EXTERNAL_AUDIT_APPROVED`; Track P01-C: `EXTERNAL_AUDIT_APPROVED_WITH_ADR_011`; Track P01-D: `TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). Reaudit 001 `APPROVED`. |
+| **Architecture V2 (Historical Freeze)** | **FROZEN** at tag `phase1-architecture-v2` (`HISTORICAL_FREEZE_SNAPSHOT_SUPERSEDED_BY_REAUDIT`). Immutable historical reference. |
+| **Architecture V2.1 (Current Baseline)** | **FROZEN** at tag `phase1-architecture-v2.1`. Zero modifications permitted without architecture governance amendment. |
 | **Project Stage** | **P02 ENTRY** (`P02 = READY_FOR_DECISION_GATE`). Application code is `NOT_STARTED`. |
 | **Blocked Issues** | V1 ChatGPT transport blocker: **NONE**. P01 upstream-proof blocker: **NONE** (`ENV-P01B-001` superseded by funded capacity policy and canonicalized as `HISTORICAL_TRANSIENT_ENVIRONMENT_EVENT`). Public Plugin Path (`P01-D3B`) remains `OPTIONAL_FUTURE_DISTRIBUTION` / `PRESERVED_FALLBACK_RESEARCH`. Security incident `P01-D3A-SEC-001` historical record (`ACTIVE_P01_GATE_FROM_SEC001 = NONE`). |
 | **Known Process Deviations** | P00-DEV-001 (`ACCEPTED_AT_PHASE0_FREEZE`); Process Hygiene Deviation recorded (prohibition against inspecting `.codex/auth.json` or credential stores); **P01B-DEV-001** (`NEGATIVE_TEST_REMOTE_BOUNDARY_EXCEEDED`, `PROCESS_HYGIENE_DEVIATION`); **P01C-DEV-001** (`MISMATCH_EXPECTED_SKIPPED_CLASSIFICATION`); **P01C-DEV-002** (`INDEPENDENT_EVIDENCE_SEMANTICS_CORRECTION`); **P01C-DEV-003** (`PRIVATE_PROVIDER_SESSION_TRANSCRIPT_INSPECTION`, `PROCESS_HYGIENE_DEVIATION`); **P01C-DEV-004** (`GLOBAL_AGY_IMAGE_NAME_TERMINATION`, `PROCESS_HYGIENE_DEVIATION`: exact PID/ancestry cleanup rule enacted). |
@@ -21,6 +23,7 @@
 | **Next Approved Action** | Phase P02 Implementation Decision Gate (`P02_IMPLEMENTATION_DECISION_GATE`). Resolve Q3 (Language) and Q4 (State Store Engine) via ADR. Do NOT write production code yet. |
 | **Active Gate** | `P02_IMPLEMENTATION_DECISION_GATE` |
 | **P01 Execution Status** | `COMPLETE` |
+
 ---
 
 # 2. Audit History
@@ -50,4 +53,5 @@
 | [`P01_B_EXTERNAL_AUDIT.md`](audits/P01_B_EXTERNAL_AUDIT.md) | `APPROVED` (External Supervisor approved P01-B direct Agy capability proof; 16/16 capabilities verified; P01-C released to READY) | 2026-09-21 |
 | [`P01_C_AO_AGY_INTEGRATION_PROOF.md`](audits/P01_C_AO_AGY_INTEGRATION_PROOF.md) | `GAP_RESOLVED_BY_ADR_PENDING_PHASE_P01_FINAL_AUDIT` (Canonical AO ↔ Agy integration proven; architectural gap accommodated by ADR-011) | 2026-09-21 |
 | [`P01_C_EXTERNAL_AUDIT.md`](audits/P01_C_EXTERNAL_AUDIT.md) | `APPROVED_WITH_ADR_011` (External Supervisor approved Track P01-C with ADR-011; canonical integration proven; Phase P01 ready for final audit) | 2026-09-21 |
-| [`P01_FINAL_EXTERNAL_AUDIT.md`](audits/P01_FINAL_EXTERNAL_AUDIT.md) | `APPROVED` (External Supervisor final audit approval; Architecture V2 frozen at tag `phase1-architecture-v2`; P02 released to decision gate) | 2026-09-22 |
+| [`P01_FINAL_EXTERNAL_AUDIT.md`](audits/P01_FINAL_EXTERNAL_AUDIT.md) | `APPROVED` (Historical Phase 1 audit; tag `phase1-architecture-v2`; SUPERSEDED_BY `P01_FINAL_EXTERNAL_REAUDIT_001.md`) | 2026-09-22 |
+| [`P01_FINAL_EXTERNAL_REAUDIT_001.md`](audits/P01_FINAL_EXTERNAL_REAUDIT_001.md) | `APPROVED` (External Supervisor post-freeze reaudit; Architecture V2.1 frozen at tag `phase1-architecture-v2.1`; P02 released to decision gate) | 2026-09-22 |

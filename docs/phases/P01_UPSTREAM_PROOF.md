@@ -2,8 +2,8 @@
 
 > **Phase Status**: COMPLETE
 > **Exit Verdict**: GAP_REQUIRES_ADR_RESOLVED
-> **Resolved ADR**: ADR-011 (`docs/adr/ADR-011-worker-report-handoff-and-agy-invocation-boundary.md`)
-> **Final Audit Record**: `docs/audits/P01_FINAL_EXTERNAL_AUDIT.md`
+> **Resolved ADRs**: ADR-011 (`docs/adr/ADR-011-worker-report-handoff-and-agy-invocation-boundary.md`), ADR-012 (`docs/adr/ADR-012-task-contract-revision-and-attempt-binding.md`)
+> **Final Audit Record**: `docs/audits/P01_FINAL_EXTERNAL_REAUDIT_001.md` (supersedes `docs/audits/P01_FINAL_EXTERNAL_AUDIT.md`)
 
 ---
 
@@ -44,14 +44,14 @@ Determine exactly how pinned AO invokes Agy and evaluate the integration gap:
 - Empirical tracing of AO's invocation argv (verifying use of `--prompt-interactive`, `--add-dir`, `--dangerously-skip-permissions`, `--conversation`).
 - Assess worker completion detection in AO session lifecycle.
 - **Critical Evaluation Question**: "Can the existing AO Agy adapter satisfy our WorkerReport requirements without custom integration code?"
-- Deliverable: Documented finding with explicit verdict (`YES`, `NO`, or `PARTIAL`) and concrete evidence.
+- Deliverable: Documented finding with explicit verdict (`YES`, `NO`, or `PARTIAL`) and concrete evidence. Resolved via ADR-011 and ADR-012.
 
 ### Track P01-D — ChatGPT Plus Transport Feasibility Proof
 Determine the viable transport path for ChatGPT Web to invoke Supervisor tools:
 - Analyze supported surfaces for target user account (ChatGPT Plus Web / Local MCP relay / Custom Action).
 - Determine whether tools can be invoked without desktop browser automation and without copy-pasting.
 - Record exact authentication, local loopback requirements, and approval prompts.
-- **Gate Rule**: No Supervisor application code in Phase P02 may begin until Track P01-D proves a feasible transport path.
+- Proven via Track P01-D3C: Target ChatGPT Plus -> Developer Mode App -> OpenAI Secure MCP Tunnel -> official `tunnel-client` v0.0.14 -> private loopback MCP server (`127.0.0.1:3182/mcp`).
 
 ---
 

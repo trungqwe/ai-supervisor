@@ -1,7 +1,7 @@
-﻿# 22. MODULE PROVENANCE & ANTI-REINVENTION JUSTIFICATION
+# 22. MODULE PROVENANCE & ANTI-REINVENTION JUSTIFICATION
 
-> **Authority**: Core Module Ownership Register & Anti-Reinvention Proof  
-> **Status**: Approved Baseline (Remediated Phase 0)
+> **Authority**: Core Module Ownership Register & Anti-Reinvention Proof
+> **Status**: Approved Baseline (Updated Architecture V2.1 / Reaudit 001)
 
 ---
 
@@ -40,12 +40,12 @@
 - **Forbidden Responsibility**: Does NOT block OS file access directly; operates as post-execution audit gate.
 
 ### Module: `EvidenceCollector`
-- **Purpose**: Independently collects base/head SHAs, Git diffs, and process exit codes from the local filesystem.
+- **Purpose**: Orchestrates independent evidence acquisition (Git base/head SHAs, diffs, changed files, scope compliance, and trusted verification test results). It MAY invoke an internal constrained verification runner to execute approved `required_tests` / build-verification commands with discrete parameter arrays.
 - **Origin**: AIWorkHub candidate verification and Codencer evidence model (`docs/sources/05_AIWORKHUB.md`, `docs/sources/07_CODENCER.md`).
 - **Existing Upstream Capability Checked**: YES (AO reports session exit code, but does not correlate Git diffs or build test audit packets).
 - **Reason This Module Exists in Our Code**: Zero-trust verification: worker claims must be corroborated by independent evidence.
-- **Why We Own This**: Bridge between Git ground truth and ChatGPT audit.
-- **Forbidden Responsibility**: Does NOT execute worker builds; only inspects resulting artifacts.
+- **Why We Own This**: Bridge between Git/test ground truth and ChatGPT audit.
+- **Forbidden Responsibility**: Does NOT execute arbitrary shell; does NOT perform worker implementation; does NOT expose command execution primitives to ChatGPT; does NOT accept unconstrained user shell strings. Implementation remains Phase P04.
 
 ### Module: `ReviewBundleBuilder`
 - **Purpose**: Assembles Task Contract, Worker Claims, Git Diff, Test Artifacts, and Policy Findings into a unified JSON bundle.

@@ -1,17 +1,22 @@
 # PHASE P01 FINAL EXTERNAL AUDIT DOSSIER
 
-> **Authority**: External Supervisor Independent Audit Authority  
-> **Phase**: Phase P01 — Upstream Proof & Transport Feasibility  
-> **Status**: APPROVED  
-> **Phase Verdict**: P01_FINAL_EXTERNAL_AUDIT = APPROVED  
-> **Date**: 2026-09-22  
-> **Repository**: `D:\TU_CODE\ai-supervisor`  
-> **Pre-Execution Remote Baseline**: `08b517ac2974c85dcb0e3d51c5e1d3d3bc64d0c2`  
-> **Historical Phase-0 Freeze**: Tag `phase0-architecture-v1` (`6f72eaca30be3fc3ac00f25829dd4283ed98c3f5`)  
-> **Pinned AO**: `Untrivial-ai/agent-orchestrator` `v0.13.0` (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`)  
-> **Pinned Agy**: `google-antigravity/antigravity-cli` `1.2.7` (`7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`)  
-> **Architecture Status**: `ARCHITECTURE_V2 = FROZEN` (Tag: `phase1-architecture-v2`)  
-> **Project Stage**: `P02 ENTRY` (Ready for Implementation Decision Gate)  
+> [!WARNING]
+> **SUPERSEDED_BY**: [docs/audits/P01_FINAL_EXTERNAL_REAUDIT_001.md](P01_FINAL_EXTERNAL_REAUDIT_001.md)
+> **Reason**: Post-freeze independent audit discovered canonical consistency defects (control-flow defect in architecture sequence diagram, state machine diagram/table edge disparity, failure recovery contradictions, security runner prescription, and TaskContract revision identity gap resolved via ADR-012).
+> **Historical Note**: Preserved as historical record of initial Phase P01 audit and tag phase1-architecture-v2.
+
+> **Authority**: External Supervisor Independent Audit Authority
+> **Phase**: Phase P01 — Upstream Proof & Transport Feasibility
+> **Status**: APPROVED
+> **Phase Verdict**: P01_FINAL_EXTERNAL_AUDIT = APPROVED
+> **Date**: 2026-09-22
+> **Repository**: `D:\TU_CODE\ai-supervisor`
+> **Pre-Execution Remote Baseline**: `08b517ac2974c85dcb0e3d51c5e1d3d3bc64d0c2`
+> **Historical Phase-0 Freeze**: Tag `phase0-architecture-v1` (`6f72eaca30be3fc3ac00f25829dd4283ed98c3f5`)
+> **Pinned AO**: `Untrivial-ai/agent-orchestrator` `v0.13.0` (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`)
+> **Pinned Agy**: `google-antigravity/antigravity-cli` `1.2.7` (`7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`)
+> **Architecture Status**: `ARCHITECTURE_V2 = FROZEN` (Tag: `phase1-architecture-v2`)
+> **Project Stage**: `P02 ENTRY` (Ready for Implementation Decision Gate)
 
 ---
 

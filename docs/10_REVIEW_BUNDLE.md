@@ -1,7 +1,7 @@
 # 10. REVIEW BUNDLE SPECIFICATION
 
-> **Focus**: High-Signal Audit Synthesis, Reducing ChatGPT Tool Calls & Evidence Correlation
-> **Status**: Approved Baseline
+> **Focus**: High-Signal Audit Synthesis, Attempt-Scoped Evaluation & Evidence Correlation
+> **Status**: Approved Baseline (Updated Architecture V2.1 / Reaudit 001)
 
 ---
 
@@ -9,7 +9,7 @@
 
 In manual workflows, reviewing an agent's work requires ChatGPT to make 15–30 low-level tool calls (inspecting files, running git diffs, checking logs, reading configs). This exhausts conversation token limits and degrades reasoning focus.
 
-The **Review Bundle** solves this by pre-correlating all evidence into a single structured, high-signal document prepared by the Supervisor Control Plane. ChatGPT needs only call `get_review_bundle(task_id)` to receive a complete, synthesized audit packet.
+The **Review Bundle** solves this by pre-correlating all evidence into a single structured, high-signal document prepared by the Supervisor Control Plane. ChatGPT needs only call `get_review_bundle(task_id, attempt_id)` to receive a complete, synthesized audit packet for the specific execution attempt under evaluation.
 
 ---
 
@@ -57,14 +57,14 @@ classDiagram
 1. **`bundle_id`**: Unique identifier for the compiled review bundle.
 2. **`task_id`**: Identifier of the task being reviewed.
 3. **`attempt_id`**: Specific execution attempt identifier, binding the bundle strictly to a `TaskAttempt`.
-4. **`task_contract`**: The original immutable requirements, scope, and acceptance criteria.
+4. **`task_contract`**: The governing immutable contract revision (`contract_id`, `revision_number`, requirements, scope, acceptance criteria).
 5. **`worker_claims`**: Self-reported worker claims from the attempt's `WorkerReport`.
 6. **`actual_git_evidence`**:
    - `actual_base_sha` vs `actual_head_sha` verified directly from Git.
    - `actual_changed_files`: Whitelist diff comparison against `allowed_scope`.
    - `diff_stat`: Insertions, deletions, and structural summary.
 7. **`actual_test_evidence`**:
-   - Independent verification of test command exit codes (`all_passed`, `executed_commands`).
+   - Independent verification of test command exit codes (`all_passed`, `executed_commands`) captured via trusted verification runner.
 8. **`policy_findings`**:
    - `rule_id`, `passed`, and `details` for all evaluated policy rules.
 9. **`unverified_claims`**:
