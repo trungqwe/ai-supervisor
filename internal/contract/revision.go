@@ -74,8 +74,23 @@ func ValidateImmutability(original, candidate *domain.TaskContract) error {
 		return nil
 	}
 
-	// Check specification fields
-	if original.TaskID != candidate.TaskID ||
+	// Compare SupersedesContractID
+	var supersedesMatch bool
+	if original.SupersedesContractID == nil && candidate.SupersedesContractID == nil {
+		supersedesMatch = true
+	} else if original.SupersedesContractID != nil && candidate.SupersedesContractID != nil {
+		supersedesMatch = (*original.SupersedesContractID == *candidate.SupersedesContractID)
+	} else {
+		supersedesMatch = false
+	}
+
+	// Check all canonical serialized specification fields:
+	// TaskID, RevisionNumber, SupersedesContractID, PhaseID, Objective, Requirements,
+	// ArchitectureRefs, BaseSHA, AllowedScope, ForbiddenScope, Constraints,
+	// AcceptanceCriteria, VerificationRequests, RequiredEvidence, WorkerProfile,
+	// ReportContract, StopConditions.
+	if !supersedesMatch ||
+		original.TaskID != candidate.TaskID ||
 		original.RevisionNumber != candidate.RevisionNumber ||
 		original.PhaseID != candidate.PhaseID ||
 		original.Objective != candidate.Objective ||

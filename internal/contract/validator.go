@@ -120,41 +120,63 @@ func (v *TaskContractValidator) ValidateVerificationRequests(requests []domain.V
 			return newProfileError(req.ProfileID, fmt.Sprintf("profile %q not found in policy catalog", req.ProfileID))
 		}
 
-		// Timeout check
+		// 14. Profile Identity: policy ProfileID must not be empty and must match requested ProfileID
+		if policy.ProfileID == "" {
+			return newProfileError(fmt.Sprintf("verification_requests[%d].profile_id", i), fmt.Sprintf("profile policy for %q has empty ProfileID", req.ProfileID))
+		}
+		if policy.ProfileID != req.ProfileID {
+			return newProfileError(fmt.Sprintf("verification_requests[%d].profile_id", i), fmt.Sprintf("profile policy ID mismatch: requested %q but policy declared %q", req.ProfileID, policy.ProfileID))
+		}
+
+		// 15. Hard Timeout Policy: Host profile owns a HARD timeout ceiling > 0
+		if policy.MaxTimeoutSeconds <= 0 {
+			return newProfileError(fmt.Sprintf("verification_requests[%d].profile_id", i), fmt.Sprintf("profile %q has invalid MaxTimeoutSeconds %d (must be > 0)", req.ProfileID, policy.MaxTimeoutSeconds))
+		}
+
+		// Requested timeout checks: 0 = use default/ceiling later; positive = must be <= MaxTimeoutSeconds
 		if req.TimeoutSeconds < 0 {
 			return newProfileError(fmt.Sprintf("verification_requests[%d].timeout_seconds", i), "timeout cannot be negative")
 		}
-		if req.TimeoutSeconds > 0 && policy.MaxTimeoutSeconds > 0 && req.TimeoutSeconds > policy.MaxTimeoutSeconds {
+		if req.TimeoutSeconds > policy.MaxTimeoutSeconds {
 			return newProfileError(
 				fmt.Sprintf("verification_requests[%d].timeout_seconds", i),
 				fmt.Sprintf("requested timeout %d exceeds profile maximum %d", req.TimeoutSeconds, policy.MaxTimeoutSeconds),
 			)
 		}
 
-		// Parameter schema validation
-		// Parameters may contain json.Number; project them to validator-compatible types.
-		if policy.ParameterSchema != nil {
-			resolvedParamSchema, err := CompileProfileSchema(policy.ParameterSchema)
-			if err != nil {
-				return newProfileError(req.ProfileID, fmt.Sprintf("invalid parameter schema in profile %q: %v", req.ProfileID, err))
-			}
-			if resolvedParamSchema != nil {
-				// Project parameters for schema validation (json.Number → int64/uint64/float64).
-				// The authoritative req.Parameters (with json.Number) is NOT mutated.
-				projectedParams, err := projectForValidator(req.Parameters)
-				if err != nil {
-					return newProfileError(
-						fmt.Sprintf("verification_requests[%d].parameters", i),
-						fmt.Sprintf("parameter numeric projection failed for profile %q: %v", req.ProfileID, err),
-					)
-				}
-				if err := resolvedParamSchema.Validate(projectedParams); err != nil {
-					return newProfileError(
-						fmt.Sprintf("verification_requests[%d].parameters", i),
-						fmt.Sprintf("parameter validation failed for profile %q: %v", req.ProfileID, err),
-					)
-				}
-			}
+		// 16. Parameter Schema Policy: Host profile MUST have an explicit non-nil, non-empty ParameterSchema
+		if policy.ParameterSchema == nil || len(policy.ParameterSchema) == 0 {
+			return newProfileError(fmt.Sprintf("verification_requests[%d].profile_id", i), fmt.Sprintf("profile %q has nil or empty ParameterSchema (must explicitly define parameter schema)", req.ProfileID))
+		}
+
+		// 17. Direct Semantic Input: req.Parameters == nil must not bypass the structural contract
+		if req.Parameters == nil {
+			return newProfileError(fmt.Sprintf("verification_requests[%d].parameters", i), fmt.Sprintf("parameters for profile %q cannot be nil; must be an explicit object", req.ProfileID))
+		}
+
+		// Parameter schema compilation and validation
+		resolvedParamSchema, err := CompileProfileSchema(policy.ParameterSchema)
+		if err != nil {
+			return newProfileError(req.ProfileID, fmt.Sprintf("invalid parameter schema in profile %q: %v", req.ProfileID, err))
+		}
+		if resolvedParamSchema == nil {
+			return newProfileError(req.ProfileID, fmt.Sprintf("failed to compile parameter schema for profile %q", req.ProfileID))
+		}
+
+		// Project parameters for schema validation (json.Number → int64/uint64/float64).
+		// The authoritative req.Parameters (with json.Number) is NOT mutated.
+		projectedParams, err := projectForValidator(req.Parameters)
+		if err != nil {
+			return newProfileError(
+				fmt.Sprintf("verification_requests[%d].parameters", i),
+				fmt.Sprintf("parameter numeric projection failed for profile %q: %v", req.ProfileID, err),
+			)
+		}
+		if err := resolvedParamSchema.Validate(projectedParams); err != nil {
+			return newProfileError(
+				fmt.Sprintf("verification_requests[%d].parameters", i),
+				fmt.Sprintf("parameter validation failed for profile %q: %v", req.ProfileID, err),
+			)
 		}
 
 		// Cwd containment validation

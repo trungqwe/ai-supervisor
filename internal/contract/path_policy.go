@@ -8,17 +8,52 @@ import (
 )
 
 // ValidateCwdContainment verifies that cwd conforms to the profile policy and
-// remains contained within the assigned worktree root.
+// remains contained within the assigned trusted worktree root.
 func ValidateCwdContainment(cwd, worktreeRoot, cwdPolicy string) error {
-	// Default policy if omitted
+	// 1. Canonical root procedure: trusted worktree root MUST be validated BEFORE
+	// accepting either cwd = "." or worktree_contained paths.
+	if strings.TrimSpace(worktreeRoot) == "" {
+		return newPathError("worktree_root", "worktree root cannot be empty")
+	}
+
+	absRoot, err := filepath.Abs(worktreeRoot)
+	if err != nil {
+		return newPathError("worktree_root", fmt.Sprintf("failed to get absolute path for worktree root %q: %v", worktreeRoot, err))
+	}
+	cleanRoot := filepath.Clean(absRoot)
+
+	fi, err := os.Stat(cleanRoot)
+	if err != nil {
+		return newPathError("worktree_root", fmt.Sprintf("worktree root %q does not exist or cannot be accessed: %v", cleanRoot, err))
+	}
+	if !fi.IsDir() {
+		return newPathError("worktree_root", fmt.Sprintf("worktree root %q is not a directory", cleanRoot))
+	}
+
+	realRoot, err := filepath.EvalSymlinks(cleanRoot)
+	if err != nil {
+		// EvalSymlinks MUST succeed; NO fallback such as filepath.Abs allowed.
+		return newPathError("worktree_root", fmt.Sprintf("failed to resolve symlinks for worktree root %q: %v", cleanRoot, err))
+	}
+	canonicalRealRoot := filepath.Clean(realRoot)
+
+	fiReal, err := os.Stat(canonicalRealRoot)
+	if err != nil {
+		return newPathError("worktree_root", fmt.Sprintf("canonical worktree root %q cannot be accessed: %v", canonicalRealRoot, err))
+	}
+	if !fiReal.IsDir() {
+		return newPathError("worktree_root", fmt.Sprintf("canonical worktree root %q is not a directory", canonicalRealRoot))
+	}
+
+	// 2. Policy validation
 	if cwdPolicy == "" {
 		cwdPolicy = "worktree_root"
 	}
-
 	if cwdPolicy != "worktree_root" && cwdPolicy != "worktree_contained" {
 		return newPathError("cwd_policy", fmt.Sprintf("unsupported cwd_policy %q: allowed 'worktree_root' or 'worktree_contained'", cwdPolicy))
 	}
 
+	// 3. Lexical checks on cwd
 	trimmed := strings.TrimSpace(cwd)
 
 	// Lexical escape checks
@@ -26,7 +61,7 @@ func ValidateCwdContainment(cwd, worktreeRoot, cwdPolicy string) error {
 		return newPathError("cwd", fmt.Sprintf("absolute or leading slash path %q is forbidden", cwd))
 	}
 
-	// Volume / drive checks (e.g. C:, C:, C:foo)
+	// Volume / drive checks (e.g. C:, C:\, C:foo)
 	if len(trimmed) >= 2 && trimmed[1] == ':' {
 		return newPathError("cwd", fmt.Sprintf("drive-qualified path %q is forbidden", cwd))
 	}
@@ -40,7 +75,7 @@ func ValidateCwdContainment(cwd, worktreeRoot, cwdPolicy string) error {
 	}
 
 	// Device path check (\\?\ or \??\)
-	if strings.HasPrefix(trimmed, `\\?\`) || strings.HasPrefix(trimmed, `\\??\`) {
+	if strings.HasPrefix(trimmed, `\\?\`) || strings.HasPrefix(trimmed, `\??\`) {
 		return newPathError("cwd", fmt.Sprintf("device path %q is forbidden", cwd))
 	}
 
@@ -50,7 +85,7 @@ func ValidateCwdContainment(cwd, worktreeRoot, cwdPolicy string) error {
 		return newPathError("cwd", fmt.Sprintf("parent traversal %q escaping root is forbidden", cwd))
 	}
 
-	// Policy enforcement
+	// 4. Policy enforcement for "worktree_root"
 	if cwdPolicy == "worktree_root" {
 		if cleanCwd != "." && cleanCwd != "" {
 			return newPathError("cwd", fmt.Sprintf("policy 'worktree_root' requires cwd to be '.' or empty, got %q", cwd))
@@ -58,56 +93,73 @@ func ValidateCwdContainment(cwd, worktreeRoot, cwdPolicy string) error {
 		return nil
 	}
 
-	// "worktree_contained"
+	// 5. Policy enforcement for "worktree_contained"
 	if cleanCwd == "." || cleanCwd == "" {
 		return nil
 	}
 
-	// If worktreeRoot is specified, evaluate physical containment & symlinks
-	if worktreeRoot != "" {
-		cleanRoot := filepath.Clean(worktreeRoot)
-		realRoot, err := filepath.EvalSymlinks(cleanRoot)
+	// Lexical containment against canonical real root
+	targetLexical := filepath.Join(canonicalRealRoot, filepath.FromSlash(cleanCwd))
+	if !isWithinRoot(targetLexical, canonicalRealRoot) {
+		return newPathError("cwd", fmt.Sprintf("target %q lexically escapes worktree root %q", cwd, canonicalRealRoot))
+	}
+
+	// Component-aware existing prefix walk from canonical real root toward target
+	components := strings.Split(cleanCwd, "/")
+	currentPath := canonicalRealRoot
+	foundNonExistent := false
+
+	for i, comp := range components {
+		if comp == "" || comp == "." {
+			continue
+		}
+
+		if foundNonExistent {
+			// All existing ancestors were already inspected successfully and confirmed inside canonical root.
+			// First truly nonexistent component was confirmed via os.IsNotExist.
+			// Lexical containment of the complete target was verified against canonical root.
+			continue
+		}
+
+		nextPath := filepath.Join(currentPath, comp)
+
+		// Inspect component using os.Lstat to distinguish existing links/reparse entries from nonexistence
+		_, err := os.Lstat(nextPath)
 		if err != nil {
-			realRoot, _ = filepath.Abs(cleanRoot)
+			if os.IsNotExist(err) {
+				// First truly nonexistent component confirmed by os.IsNotExist
+				foundNonExistent = true
+				continue
+			}
+			// Fail closed on any other filesystem error (permission, I/O, invalid path, reparse resolution, etc.)
+			return newPathError("cwd", fmt.Sprintf("filesystem error inspecting path component %q: %v", nextPath, err))
 		}
 
-		target := filepath.Join(cleanRoot, filepath.FromSlash(cleanCwd))
+		// Component physically exists on disk. Resolve symlinks/junctions.
+		realNext, err := filepath.EvalSymlinks(nextPath)
+		if err != nil {
+			// Existing symlink/junction/reparse component could not be resolved (e.g. dangling symlink or I/O error).
+			// MUST REJECT; do NOT treat as a nonexistent future suffix.
+			return newPathError("cwd", fmt.Sprintf("failed to resolve symlink or path component %q: %v", nextPath, err))
+		}
 
-		// Check if target physically exists
-		if _, err := os.Stat(target); err == nil {
-			realTarget, err := filepath.EvalSymlinks(target)
+		// Resolved component must remain root-or-descendant of canonical real root
+		if !isWithinRoot(realNext, canonicalRealRoot) {
+			return newPathError("cwd", fmt.Sprintf("resolved path component %q (%q) escapes worktree root %q", nextPath, realNext, canonicalRealRoot))
+		}
+
+		// If intermediate component (not leaf), it must be a directory
+		if i < len(components)-1 {
+			nextFi, err := os.Stat(realNext)
 			if err != nil {
-				return newPathError("cwd", fmt.Sprintf("failed to resolve symlinks for %q: %v", target, err))
+				return newPathError("cwd", fmt.Sprintf("failed to stat resolved intermediate component %q: %v", realNext, err))
 			}
-			if !isWithinRoot(realTarget, realRoot) {
-				return newPathError("cwd", fmt.Sprintf("resolved target %q escapes worktree root %q", realTarget, realRoot))
-			}
-		} else {
-			// Nonexistent target: lexical containment + check longest existing ancestor
-			if !isWithinRoot(target, cleanRoot) {
-				return newPathError("cwd", fmt.Sprintf("target %q lexically escapes worktree root %q", target, cleanRoot))
-			}
-
-			// Find longest existing ancestor
-			existingAncestor := target
-			for {
-				parent := filepath.Dir(existingAncestor)
-				if parent == existingAncestor {
-					break
-				}
-				existingAncestor = parent
-				if _, err := os.Stat(existingAncestor); err == nil {
-					break
-				}
-			}
-
-			if _, err := os.Stat(existingAncestor); err == nil {
-				realAncestor, err := filepath.EvalSymlinks(existingAncestor)
-				if err == nil && !isWithinRoot(realAncestor, realRoot) {
-					return newPathError("cwd", fmt.Sprintf("resolved ancestor %q escapes worktree root %q", realAncestor, realRoot))
-				}
+			if !nextFi.IsDir() {
+				return newPathError("cwd", fmt.Sprintf("intermediate path component %q is not a directory", realNext))
 			}
 		}
+
+		currentPath = realNext
 	}
 
 	return nil
@@ -115,8 +167,8 @@ func ValidateCwdContainment(cwd, worktreeRoot, cwdPolicy string) error {
 
 // isWithinRoot checks if target is either root itself or a descendant of root.
 func isWithinRoot(target, root string) bool {
-	targetClean := filepath.Clean(target)
-	rootClean := filepath.Clean(root)
+	targetClean := strings.TrimPrefix(filepath.Clean(target), `\\?\`)
+	rootClean := strings.TrimPrefix(filepath.Clean(root), `\\?\`)
 
 	if strings.EqualFold(targetClean, rootClean) {
 		return true
@@ -159,7 +211,7 @@ func ValidateScopePatterns(patterns []string) error {
 			return newScopeError("pattern", fmt.Sprintf("UNC scope pattern %q is forbidden", pattern))
 		}
 
-		if strings.HasPrefix(trimmed, `\\?\`) || strings.HasPrefix(trimmed, `\\??\`) {
+		if strings.HasPrefix(trimmed, `\\?\`) || strings.HasPrefix(trimmed, `\??\`) {
 			return newScopeError("pattern", fmt.Sprintf("device scope pattern %q is forbidden", pattern))
 		}
 
