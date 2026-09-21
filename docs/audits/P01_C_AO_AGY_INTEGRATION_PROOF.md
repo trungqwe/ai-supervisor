@@ -21,7 +21,7 @@ The proof investigated whether pinned AO and Agy can execute automated tasks, de
 4. **Result Surface**: AO's public session endpoint (`GET /api/v1/sessions/{id}`) does **NOT** expose assistant text responses or structured worker reports (`NATIVE_RESULT_SURFACE = NOT_EXPOSED`). The terminal stream (`/mux`) provides raw interactive xterm ANSI byte frames (`RAW_INTERACTIVE`), which is unsuitable for structured report transport.
 5. **WorkerReport Artifact via Public Workspace File API**: Pinned AO and Agy successfully deliver a canonical `WorkerReport` by having the worker generate `.supervisor/worker-report.json` in the worktree. The Supervisor retrieves this file via AO's public workspace file API (`GET /api/v1/sessions/{id}/workspace/file?path=.supervisor/worker-report.json`) with HTTP 200 OK.
 6. **Zero-Trust Independent Verification**: All 12 required fields of `docs/09_WORKER_REPORT.md` were validated. The Supervisor independently verified claims against ground truth (Git HEAD, branch, base SHA, git diff, `verify.ps1` exit code 0). A zero-trust false-claim test confirmed that falsified claims are flagged as `MISMATCH`.
-7. **Native Conversation ID & Context Restore**: AO captures the native Agy conversation UUID. Calling `POST /api/v1/sessions/{id}/restore` launches Agy with `--conversation <id>`. Historical direct-Agy query proved native CLI resume (`SUPPORTING_AGY_NATIVE_RESUME_EVIDENCE = PASS`). However, targeted AO-only context restore via `POST /send` failed to complete Turn 2 due to underlying provider model quota exhaustion (`P01C_AO_AGY_CONTEXT_RESTORE = FAIL`).
+7. **Native Conversation ID & Context Restore**: AO captures the native Agy conversation UUID. Calling `POST /api/v1/sessions/{id}/restore` launches Agy with `--conversation <id>`. Historical direct-Agy query proved native CLI resume (`SUPPORTING_AGY_NATIVE_RESUME_EVIDENCE = PASS`). Targeted AO-only context restore Attempt 1 via `POST /send` returned HTTP 200, but Turn 2 execution was prevented by upstream model capacity exhaustion (`RESOURCE_EXHAUSTED` / 429), canonically reclassified as `INCONCLUSIVE_TRANSIENT_PROVIDER_FAILURE` per External Supervisor Audit. `P01C_AO_AGY_CONTEXT_RESTORE = NOT_YET_PROVEN` pending provider capacity recovery.
 8. **Upstream Patches**: Zero upstream patches are required (`AO_UPSTREAM_PATCH_REQUIRED = NO`, `AGY_UPSTREAM_PATCH_REQUIRED = NO`).
 9. **Supervisor Normalization**: Formalizing the `.supervisor/worker-report.json` artifact convention and defining the pre-invocation validation boundary requires an explicit Architecture Decision Record.
 
@@ -32,11 +32,12 @@ EXISTING_PUBLIC_SURFACES_SUFFICIENT = YES
 SUPERVISOR_NORMALIZATION_REQUIRED = YES
 AO_UPSTREAM_PATCH_REQUIRED = NO
 AGY_UPSTREAM_PATCH_REQUIRED = NO
-P01C_AO_AGY_CONTEXT_RESTORE = FAIL
-ADR_010 = NOT_CREATED
+P01C_AO_AGY_CONTEXT_RESTORE = NOT_YET_PROVEN
+P01C_TARGETED_RESTORE_ATTEMPT_1 = INCONCLUSIVE_TRANSIENT_PROVIDER_FAILURE
+ADR_011 = NOT_CREATED (PENDING_TARGETED_RESTORE_PASS)
 
-P01-C VERDICT = GAP_REQUIRES_ADR_WITH_RESTORE_DEFECT
-NEXT GATE = EXTERNAL_SUPERVISOR_P01_C_RESTORE_FAILURE_AUDIT
+P01-C VERDICT = GAP_REQUIRES_ADR_PENDING_TARGETED_RESTORE_PROOF
+NEXT GATE = P01_C_TARGETED_AO_RESTORE_CONTEXT_PROOF
 ```
 
 ---
@@ -432,7 +433,7 @@ The core integration loop between AO and Agy is fully viable on Windows without 
 
 ---
 
-# 14. Targeted AO-Only Restore Context Proof (Remediation Execution)
+# 14. Targeted AO-Only Restore Context Proof (Attempt 1 — Transient Provider Failure)
 
 Pursuant to External Supervisor Audit instructions, a targeted isolated retest was executed to prove AO end-to-end restore context recall without calling direct `agy --conversation`.
 
@@ -496,31 +497,24 @@ Pursuant to External Supervisor Audit instructions, a targeted isolated retest w
 7. **Turn 2 Completion & Activity Observation**:
    - Polled `GET /api/v1/sessions/fixture-repo-2` for 180 seconds.
    - Observed activity state: Remained `idle` continuously (`[Turn 2 3s] idle` ... `[Turn 2 180s] idle`). Did not transition to `active`.
-   - `P01C_TARGET_POST_RESTORE_COMPLETION = FAIL`
+   - Classification: `P01C_TARGET_POST_RESTORE_COMPLETION = INCONCLUSIVE_TRANSIENT_PROVIDER_FAILURE` (AO `POST /send` succeeded with HTTP 200, but worker model execution did not begin).
 
-8. **Root Cause Analysis (Native Session Transcript)**:
-   - Inspected native Agy transcript (`C:\Users\Admin\.gemini\antigravity-cli\brain\4f4e85e9-9ae9-42e1-aecc-f1d3d4fe1926\.system_generated\logs\transcript.jsonl`):
-     ```json
-     {
-       "step_index": 1,
-       "source": "SYSTEM",
-       "type": "ERROR_MESSAGE",
-       "status": "DONE",
-       "error": "API error (attempt 1): RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 36h46m27s."
-     }
-     ```
-   - Underlying Agy CLI engine encountered an individual API quota block (`RESOURCE_EXHAUSTED`), preventing the restored process from executing model turns or producing files.
+8. **Root Cause Analysis & Reclassification (External Supervisor Audit Finding)**:
+   - External Supervisor Audit independently determined that Attempt 1 failed solely due to upstream model capacity exhaustion (`RESOURCE_EXHAUSTED` / 429), not an architectural defect in AO restore mechanics.
+   - `QUOTA_POLICY = NON_BLOCKING_OPERATIONAL_CONCERN`. Provider capacity errors must not be classified as FAIL, BLOCKER, GAP, or RESTORE_DEFECT.
+   - Attempt 1 Canonical Reclassification: `P01C_TARGETED_RESTORE_ATTEMPT_1 = INCONCLUSIVE_TRANSIENT_PROVIDER_FAILURE`.
+   - Process Hygiene Deviation Recorded: `P01C-DEV-003 = PRIVATE_PROVIDER_SESSION_TRANSCRIPT_INSPECTION` (Security incident: NO; Evidence validity: PRESERVED; Architecture impact: NONE; inspection of private transcript storage prohibited on all future runs).
 
 9. **Public API Retrieval**:
    - Attempted retrieval via `GET /api/v1/sessions/fixture-repo-2/workspace/file?path=.supervisor/restore-context-proof.json`.
-   - Result: HTTP 404 (file not created).
-   - `P01C_AO_RESTORED_REPORT_VIA_PUBLIC_API = FAIL`
-   - `P01C_AO_AGY_CONTEXT_RESTORE = FAIL`
+   - Result: HTTP 404 (artifact not created due to upstream capacity block).
+   - `P01C_AO_RESTORED_REPORT_VIA_PUBLIC_API = NOT_EVALUATED_PROVIDER_CAPACITY_BLOCKED`
+   - `P01C_AO_AGY_CONTEXT_RESTORE = NOT_YET_PROVEN`
 
 ### ADR Safety & Governance Action:
-- **ADR-010 Creation Halted**: Per Section 15 governance directive ("If restored AO session cannot recover the marker through POST /send: STOP. Set P01-C = GAP_REQUIRES_ADR_WITH_RESTORE_DEFECT. Do NOT create ADR-010 as final resolution").
-- **ADR Number Collision Protection**: Per Section 31 safety check, `docs/adr/ADR-010-task-contract-immutability.md` already exists in the canonical Phase-0 frozen baseline (commit `5d07389`). No overwrite was performed.
-- `ADR_010 = NOT_CREATED`
+- **ADR Number Protection**: Verified `docs/adr/ADR-010-task-contract-immutability.md` already exists in the canonical Phase-0 frozen baseline (commit `5d07389`). Existing ADR-010 is preserved unperturbed.
+- **ADR-011 Reserved**: The WorkerReport handoff and invocation boundary decision is designated as **ADR-011** (`docs/adr/ADR-011-worker-report-handoff-and-agy-invocation-boundary.md`) and will be formally created upon successful targeted restore execution.
+- `ADR_011 = NOT_CREATED` (pending targeted restore pass).
 
 ---
 
@@ -544,9 +538,9 @@ Pursuant to External Supervisor Audit instructions, a targeted isolated retest w
 | **P01C_NATIVE_AGY_SESSION_ID_CAPTURE** | **PASS** | Native Agy conversation UUID captured. |
 | **P01C_RESTORE_ARGV_TRACE** | **PASS** | `--conversation <id>` verified in restored process hierarchy. |
 | **RESTORE_MARKER_WORKSPACE_LEAK** | **NO** | 0 files in session worktree leaked the fresh marker. |
-| **P01C_TARGET_POST_RESTORE_COMPLETION** | **FAIL** | Turn 2 via `POST /send` timed out in idle due to underlying Agy quota exhaustion. |
-| **P01C_AO_RESTORED_REPORT_VIA_PUBLIC_API** | **FAIL** | HTTP 404 from workspace file API for restore proof artifact. |
-| **P01C_AO_AGY_CONTEXT_RESTORE** | **FAIL** | Context recall through AO `POST /send` failed empirically. |
+| **P01C_TARGET_POST_RESTORE_COMPLETION** | **INCONCLUSIVE_TRANSIENT_PROVIDER_FAILURE** | Turn 2 via `POST /send` returned 200, but model execution was blocked by upstream 429 capacity. |
+| **P01C_AO_RESTORED_REPORT_VIA_PUBLIC_API** | **NOT_EVALUATED_PROVIDER_CAPACITY_BLOCKED** | Artifact was not created due to upstream capacity block. |
+| **P01C_AO_AGY_CONTEXT_RESTORE** | **NOT_YET_PROVEN** | Awaiting targeted restore execution with available model capacity. |
 | **SUPPORTING_AGY_NATIVE_RESUME_EVIDENCE** | **PASS** | Direct CLI resume proved native context continuity in Run 1. |
-| **ADR_010** | **NOT_CREATED** | Withheld due to restore defect; ADR-010 collision protected. |
-| **P01-C Final State** | **GAP_REQUIRES_ADR_WITH_RESTORE_DEFECT** | Upstream integration loop established, but restore context via AO unproven. |
+| **ADR_011** | **NOT_CREATED** | Reserved for post-restore resolution; ADR-010 collision protected. |
+| **P01-C Final State** | **GAP_REQUIRES_ADR_PENDING_TARGETED_RESTORE_PROOF** | Upstream integration loop established; restore context pending capacity. |
