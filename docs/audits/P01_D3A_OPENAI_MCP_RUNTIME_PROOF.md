@@ -1,9 +1,11 @@
-﻿# P01-D3A — OFFICIAL OPENAI MCP RUNTIME PROOF DOSSIER
+# P01-D3A — OFFICIAL OPENAI MCP RUNTIME PROOF DOSSIER
 
 > **Authority**: Phase 1 Upstream Proof Dossier — Track P01-D3A  
 > **Date**: 2026-09-21  
 > **Architecture Status**: `ARCHITECTURE_V2_CANDIDATE` (Strictly Candidate; Not Frozen)  
-> **P01-D3A Verdict**: `PARTIAL` (`HUMAN_REQUIRED_CREATE_DEDICATED_TUNNEL`)  
+> **Dedicated Tunnel**: `tunnel_6ab0ae480cec81919b3db157c622eb53` (Name: `ai-supervisor-p01d`)  
+> **Untouched Existing Tunnel**: `Codex Native2` (`tunnel_6aae67a9abe08191ab9697ef8e2a6687` preserved untouched)  
+> **P01-D3A Verdict**: `PARTIAL` (`HUMAN_REQUIRED_CONFIGURE_RUNTIME_CREDENTIAL`)  
 > **Overall P01-D Transport Gate**: `NOT_CLEARED` (`TRANSPORT_PROOF_INCOMPLETE`)  
 > **P01-D Phase Verdict**: `GAP_REQUIRES_ADR`  
 > **P01-A / P01-B / P01-C Status**: `HELD`  
@@ -20,7 +22,15 @@
   - Python: `3.13.12`
   - GitHub CLI: `gh version 2.67.0`
 - **MCP SDK**: `@modelcontextprotocol/sdk` v1.6.1 + `zod` v3.24.2 installed in isolated sandbox.
-- **Official Tunnel Client**: `openai/tunnel-client` release `v0.0.14` (Windows amd64) downloaded and extracted to `D:\TU_CODE\_ai_supervisor_p01d_openai_mcp_proof\bin\tunnel-client.exe`.
+- **Official Tunnel Client Checksum Verification**:
+  - Binary: `openai/tunnel-client` release `v0.0.14` (Windows amd64).
+  - Download Archive: `tunnel-client-v0.0.14-windows-amd64.zip`
+  - Official Release Manifest: `SHA256SUMS.txt` from official `openai/tunnel-client` GitHub release `v0.0.14`.
+  - `expected_sha256`: `784ab8da7b5a88f0109f1fd8aaf0a1c86067430b896dddf307ef7e3cc49fa1a5`
+  - `observed_sha256`: `784ab8da7b5a88f0109f1fd8aaf0a1c86067430b896dddf307ef7e3cc49fa1a5`
+  - `match`: `true`
+  - Binary `tunnel-client.exe` SHA-256: `fcc85a69ec0ad82518e4f8964f60c45e31787957782a0fc9c1b0c44e82d61b9b`
+  - Verification Status: **`BINARY_CHECKSUM_VERIFIED`**
 - **User Platform Organization Evidence (Ingested 2026-09-21)**:
   - Organization Name: `GPT Orchestrator`
   - Organization Role: `Owner`
@@ -29,7 +39,7 @@
   - Create Plugin: AVAILABLE (`With MCP`, `Skills only`)
   - Identity Verification: `IN_PROGRESS / PENDING` (Vietnamese national ID + selfie submitted)
   - Prepaid Balance: $5 added
-  - Platform Tunnels: AVAILABLE (Existing tunnel `Codex Native2`; Create tunnel control AVAILABLE)
+  - Platform Tunnels: AVAILABLE (Existing tunnel `Codex Native2` preserved untouched; dedicated tunnel `ai-supervisor-p01d` created)
   - MCP Tool Usage: Enabled for all projects
 - **Secret Hygiene**: Zero API keys, bearer tokens, org IDs, tunnel secrets, personal names, national ID data, or selfie photos are stored in this repository or audit artifacts.
 
@@ -38,19 +48,19 @@
 ## 2. Official Source Baseline Ingested
 
 Authoritative OpenAI documentation ingested on 2026-09-21 without fabricated Git commit SHAs:
-1. `https://developers.openai.com/plugins/quickstart` → [10_OPENAI_PLUGIN_PLATFORM.md](../sources/10_OPENAI_PLUGIN_PLATFORM.md)
-2. `https://developers.openai.com/plugins/build/skills` → [10_OPENAI_PLUGIN_PLATFORM.md](../sources/10_OPENAI_PLUGIN_PLATFORM.md)
-3. `https://developers.openai.com/plugins/build/mcp-server` → [10_OPENAI_PLUGIN_PLATFORM.md](../sources/10_OPENAI_PLUGIN_PLATFORM.md)
-4. `https://developers.openai.com/plugins/build/plugins` → [10_OPENAI_PLUGIN_PLATFORM.md](../sources/10_OPENAI_PLUGIN_PLATFORM.md)
-5. `https://developers.openai.com/api/docs` → [11_OPENAI_API_MCP_RUNTIME.md](../sources/11_OPENAI_API_MCP_RUNTIME.md)
-6. `https://developers.openai.com/learn/developers-codex-plugin` → [11_OPENAI_API_MCP_RUNTIME.md](../sources/11_OPENAI_API_MCP_RUNTIME.md)
-7. `https://developers.openai.com/api/docs/guides/text` → [11_OPENAI_API_MCP_RUNTIME.md](../sources/11_OPENAI_API_MCP_RUNTIME.md)
-8. `https://developers.openai.com/api/docs/guides/agents/quickstart` → [11_OPENAI_API_MCP_RUNTIME.md](../sources/11_OPENAI_API_MCP_RUNTIME.md)
-9. `https://developers.openai.com/api/docs/models/gpt-5.6-sol` → [11_OPENAI_API_MCP_RUNTIME.md](../sources/11_OPENAI_API_MCP_RUNTIME.md)
-10. `https://developers.openai.com/api/docs/guides/secure-mcp-tunnels` → [11_OPENAI_API_MCP_RUNTIME.md](../sources/11_OPENAI_API_MCP_RUNTIME.md)
-11. `https://developers.openai.com/api/docs/guides/tools-connectors-mcp` → [11_OPENAI_API_MCP_RUNTIME.md](../sources/11_OPENAI_API_MCP_RUNTIME.md)
-12. `https://developers.openai.com/plugins/deploy/submission` → [10_OPENAI_PLUGIN_PLATFORM.md](../sources/10_OPENAI_PLUGIN_PLATFORM.md)
-13. `https://developers.openai.com/plugins/deploy/app-review` → [10_OPENAI_PLUGIN_PLATFORM.md](../sources/10_OPENAI_PLUGIN_PLATFORM.md)
+1. `https://developers.openai.com/plugins/quickstart` -> [10_OPENAI_PLUGIN_PLATFORM.md](../sources/10_OPENAI_PLUGIN_PLATFORM.md)
+2. `https://developers.openai.com/plugins/build/skills` -> [10_OPENAI_PLUGIN_PLATFORM.md](../sources/10_OPENAI_PLUGIN_PLATFORM.md)
+3. `https://developers.openai.com/plugins/build/mcp-server` -> [10_OPENAI_PLUGIN_PLATFORM.md](../sources/10_OPENAI_PLUGIN_PLATFORM.md)
+4. `https://developers.openai.com/plugins/build/plugins` -> [10_OPENAI_PLUGIN_PLATFORM.md](../sources/10_OPENAI_PLUGIN_PLATFORM.md)
+5. `https://developers.openai.com/api/docs` -> [11_OPENAI_API_MCP_RUNTIME.md](../sources/11_OPENAI_API_MCP_RUNTIME.md)
+6. `https://developers.openai.com/learn/developers-codex-plugin` -> [11_OPENAI_API_MCP_RUNTIME.md](../sources/11_OPENAI_API_MCP_RUNTIME.md)
+7. `https://developers.openai.com/api/docs/guides/text` -> [11_OPENAI_API_MCP_RUNTIME.md](../sources/11_OPENAI_API_MCP_RUNTIME.md)
+8. `https://developers.openai.com/api/docs/guides/agents/quickstart` -> [11_OPENAI_API_MCP_RUNTIME.md](../sources/11_OPENAI_API_MCP_RUNTIME.md)
+9. `https://developers.openai.com/api/docs/models/gpt-5.6-sol` -> [11_OPENAI_API_MCP_RUNTIME.md](../sources/11_OPENAI_API_MCP_RUNTIME.md)
+10. `https://developers.openai.com/api/docs/guides/secure-mcp-tunnels` -> [11_OPENAI_API_MCP_RUNTIME.md](../sources/11_OPENAI_API_MCP_RUNTIME.md)
+11. `https://developers.openai.com/api/docs/guides/tools-connectors-mcp` -> [11_OPENAI_API_MCP_RUNTIME.md](../sources/11_OPENAI_API_MCP_RUNTIME.md)
+12. `https://developers.openai.com/plugins/deploy/submission` -> [10_OPENAI_PLUGIN_PLATFORM.md](../sources/10_OPENAI_PLUGIN_PLATFORM.md)
+13. `https://developers.openai.com/plugins/deploy/app-review` -> [10_OPENAI_PLUGIN_PLATFORM.md](../sources/10_OPENAI_PLUGIN_PLATFORM.md)
 
 ---
 
@@ -64,36 +74,27 @@ Authoritative OpenAI documentation ingested on 2026-09-21 without fabricated Git
   - `PUBLICATION`
   - `TARGET_PLUS_INSTALLATION_OF_OUR_PLUGIN`
 - **Gates NOT Blocked by Identity**:
-  - Local MCP server creation and inspector validation (PASS)
-  - Secure MCP Tunnel creation and `tunnel-client` execution
+  - Local MCP server creation and protocol harness validation (PASS)
+  - Official MCP Inspector validation (PASS)
+  - Secure MCP Tunnel creation and `tunnel-client doctor` preflight (PASS on format/URLs; pending live key)
   - Responses API MCP tool invocation via `tunnel_id`
 - **Governance Classification**: This is recorded as `WAITING_IDENTITY_VERIFICATION`, not as an MCP transport failure.
 
 ---
 
-## 4. Dedicated Tunnel Governance & `HUMAN_REQUIRED_CREATE_DEDICATED_TUNNEL`
+## 4. Dedicated Tunnel Governance & Configuration
 
 ### 4.1 Tunnel Isolation Directive
 The user account contains an existing tunnel named `Codex Native2` (`tunnel_6aae67a9abe08191ab9697ef8e2a6687`).  
-Per Section 16, **this existing tunnel must NOT be modified or repurposed**. It is reserved for separate developer usage.
+Per strict isolation directives, **this existing tunnel is NOT modified or repurposed**. It remains untouched for separate developer usage.
 
-### 4.2 Interactive UI Action Required
-Creating a dedicated tunnel named `ai-supervisor-p01d` requires interactive user creation in the OpenAI Platform portal, because creating a tunnel via CLI requires an organization Admin Key (`OPENAI_ADMIN_KEY`), and agents are strictly forbidden from requesting or storing API keys/secrets.
-
-```text
-================================================================================
-STATUS: HUMAN_REQUIRED_CREATE_DEDICATED_TUNNEL
-================================================================================
-```
-
-### Exact Minimal User Instructions:
-1. Navigate to: `https://platform.openai.com/settings/organization/tunnels`
-2. Select Organization: `GPT Orchestrator`
-3. Click **Create tunnel**
-4. Tunnel Name: `ai-supervisor-p01d`
-5. Description: `Dedicated transport validation tunnel for AI Engineering Supervisor P01-D3A`
-6. Click **Create** and copy the generated `tunnel_id` (format: `tunnel_<32 lowercase hex characters>`).
-7. Keep this `tunnel_id` ready for runtime launch. (Do not paste secrets into public chats).
+### 4.2 Dedicated Tunnel Created by User
+The User created a dedicated tunnel for this proof:
+- **Tunnel Identifier**: `tunnel_6ab0ae480cec81919b3db157c622eb53`
+- **Tunnel Name**: `ai-supervisor-p01d`
+- **Organization**: `GPT Orchestrator`
+- **Target MCP Endpoint**: `http://127.0.0.1:3182/mcp`
+- **Security Boundary**: Local MCP binds strictly to loopback (`127.0.0.1:3182`); outbound-only HTTPS polling via official `tunnel-client`.
 
 ---
 
@@ -182,30 +183,31 @@ Built in `D:\TU_CODE\_ai_supervisor_p01d_openai_mcp_proof\server.js`:
 
 ---
 
-## 7. Local MCP Inspector Empirical Results
+## 7. Local MCP Protocol Test Harness Empirical Results (`LOCAL_PROTOCOL_HARNESS`)
 
 Executed via `node test_local_inspector.js` against live running server on `http://127.0.0.1:3182/mcp`:
 
 ```text
-=== P01-D3A LOCAL MCP INSPECTOR VALIDATION ===
-Target: http://127.0.0.1:3182/mcp
+=== P01-D3A LOCAL MCP PROTOCOL TEST HARNESS VALIDATION ===
+Target MCP Endpoint: http://127.0.0.1:3182/mcp
+Target Healthz: http://127.0.0.1:3182/healthz
 
---- Step 1: Protocol Initialization ---
-[PASS] Initialize returns HTTP 200
-[PASS] ServerInfo name matches (ai-supervisor-p01d-proof-server)
-[PASS] ProtocolVersion matches (2024-11-05)
+--- Step 1: Healthcheck & Listener Verification ---
+[PASS] GET /healthz returns 200 OK
+[PASS] Health service identifier is supervisor-proof-mcp
+[PASS] Server port confirmed: 3182
+[PASS] Server bound strictly to loopback (127.0.0.1:3182)
 
---- Step 2: Tool Discovery (tools/list) ---
-[PASS] tools/list returns HTTP 200
-[PASS] Discovered exactly 2 tools
-[PASS] Found supervisor_probe_read
-[PASS] Read tool readOnlyHint is true
-[PASS] Read tool destructiveHint is false
-[PASS] Read tool openWorldHint is false
-[PASS] Found supervisor_probe_write
-[PASS] Write tool readOnlyHint is false
-[PASS] Write tool destructiveHint is true
-[PASS] Write tool openWorldHint is false
+--- Step 2: Protocol Handshake & Tool Discovery (tools/list) ---
+[PASS] initialize handshake succeeds
+[PASS] tools/list returns tools array
+[PASS] Exactly 2 probe tools discovered
+[PASS] supervisor_probe_read tool schema valid
+[PASS] supervisor_probe_read annotation readOnlyHint is true
+[PASS] supervisor_probe_read annotation destructiveHint is false
+[PASS] supervisor_probe_write tool schema valid
+[PASS] supervisor_probe_write annotation readOnlyHint is false
+[PASS] supervisor_probe_write annotation destructiveHint is true
 
 --- Step 3: supervisor_probe_read Execution ---
 [PASS] Read call returns HTTP 200
@@ -239,7 +241,7 @@ Target: http://127.0.0.1:3182/mcp
 --- Step 9: Negative Test - Missing Required Parameters ---
 [PASS] Missing required parameters rejected
 
-=== LOCAL INSPECTOR VALIDATION RESULTS ===
+=== LOCAL PROTOCOL HARNESS RESULTS ===
 Total Passed: 31
 Total Failed: 0
 Verdict: PASS
@@ -247,50 +249,255 @@ Verdict: PASS
 
 ---
 
-## 8. Official `tunnel-client` Preflight & Health Verification
+## 7b. Official MCP Inspector Empirical Results (`OFFICIAL_MCP_INSPECTOR`)
 
-Binary verified at: `D:\TU_CODE\_ai_supervisor_p01d_openai_mcp_proof\bin\tunnel-client.exe` (v0.0.14).  
-Execution of `tunnel-client doctor` against our local proof MCP server:
-```text
-CHECK config_source            PASS flags/environment only
-CHECK profile_load             PASS flags/environment only
-CHECK tunnel_id                PASS format validated (tunnel_<32 hex>)
-CHECK tunnels_management_url   PASS https://platform.openai.com/settings/organization/tunnels
-CHECK runtime_api_keys_url     PASS https://platform.openai.com/settings/organization/api-keys
-CHECK admin_api_keys_url       PASS https://platform.openai.com/settings/organization/admin-keys
-CHECK chatgpt_connector_settings_url PASS https://chatgpt.com/#settings/Connectors
-CHECK codex_plugin             SKIP Codex detected; Tunnel MCP plugin optional
-CHECK control_plane_api_key    FAIL control plane API key required (env:CONTROL_PLANE_API_KEY / OPENAI_API_KEY)
+Executed independently using official `@modelcontextprotocol/inspector@latest` (v2.7.0) CLI against `http://127.0.0.1:3182/mcp`:
+
+### Test 1: Tool Discovery (`tools/list`)
+Command:
+```bash
+npx @modelcontextprotocol/inspector@latest --cli http://127.0.0.1:3182/mcp --method tools/list --format json
 ```
-- **Finding**: Configuration loading, MCP endpoint targeting (`http://127.0.0.1:3182/mcp`), and tunnel ID format validation pass.
-- **Next Precondition**: Requires dedicated `tunnel_id` from user and `CONTROL_PLANE_API_KEY` in environment for live registration.
+Literal Output:
+```json
+{
+  "result": {
+    "tools": [
+      {
+        "name": "supervisor_probe_read",
+        "title": "Supervisor Probe Read",
+        "description": "Read-only probe returning local node identity, current disposable state, timestamp, and proof identifier.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "correlation_id": { "description": "Optional correlation identifier for tracing request", "type": "string", "maxLength": 64 }
+          },
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "proof_id": { "type": "string" },
+            "node_id": { "type": "string" },
+            "disposable_state": {
+              "type": "object",
+              "properties": { "mutation_count": { "type": "number" }, "current_value": { "type": "string" }, "last_updated": { "type": "string" } },
+              "required": ["mutation_count", "current_value", "last_updated"],
+              "additionalProperties": false
+            },
+            "timestamp": { "type": "string" },
+            "correlation_id": { "type": "string" }
+          },
+          "required": ["proof_id", "node_id", "disposable_state", "timestamp", "correlation_id"],
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false
+        },
+        "annotations": { "readOnlyHint": true, "destructiveHint": false, "openWorldHint": false },
+        "execution": { "taskSupport": "forbidden" }
+      },
+      {
+        "name": "supervisor_probe_write",
+        "title": "Supervisor Probe Write",
+        "description": "Controlled state mutation probe updating disposable test state with strict idempotency and schema bounds.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "test_value": { "type": "string", "minLength": 1, "maxLength": 256, "description": "Bounded string value to store in disposable state (1-256 chars)" },
+            "correlation_id": { "type": "string", "minLength": 1, "maxLength": 64, "description": "Unique correlation ID for idempotency and replay safety" }
+          },
+          "required": ["test_value", "correlation_id"],
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "status": { "type": "string", "enum": ["APPLIED", "DUPLICATE_REPLAY", "ERROR"] },
+            "mutation_count": { "type": "number" },
+            "previous_value": { "type": "string" },
+            "current_value": { "type": "string" },
+            "correlation_id": { "type": "string" },
+            "timestamp": { "type": "string" }
+          },
+          "required": ["status", "mutation_count", "previous_value", "current_value", "correlation_id", "timestamp"],
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false
+        },
+        "annotations": { "readOnlyHint": false, "destructiveHint": true, "openWorldHint": false },
+        "execution": { "taskSupport": "forbidden" }
+      }
+    ]
+  }
+}
+```
+Verdict: **PASS** (Server metadata visible, schemas compliant, annotations matching probe specifications).
+
+### Test 2: Probe Read Execution (`tools/call supervisor_probe_read`)
+Command:
+```bash
+npx @modelcontextprotocol/inspector@latest --cli http://127.0.0.1:3182/mcp --method tools/call --tool-name supervisor_probe_read --tool-arg correlation_id=inspector_call_001 --format json
+```
+Literal Output:
+```json
+{
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "[supervisor_probe_read] Node: host-windows-dev-node-01 | Proof: P01-D3A-OPENAI-MCP-RUNTIME-PROOF | Mutations: 2 | Value: \"OFFICIAL_INSPECTOR_MUTATION_DELTA_B\" | Timestamp: 2026-09-21T04:16:48.969Z"
+      }
+    ],
+    "structuredContent": {
+      "proof_id": "P01-D3A-OPENAI-MCP-RUNTIME-PROOF",
+      "node_id": "host-windows-dev-node-01",
+      "disposable_state": {
+        "mutation_count": 2,
+        "current_value": "OFFICIAL_INSPECTOR_MUTATION_DELTA_B",
+        "last_updated": "2026-09-21T04:14:49.545Z"
+      },
+      "timestamp": "2026-09-21T04:16:48.969Z",
+      "correlation_id": "inspector_call_001"
+    }
+  }
+}
+```
+Verdict: **PASS** (Read invocation succeeds, node identity returned, schema satisfied).
+
+### Test 3: Controlled Mutation Execution (`tools/call supervisor_probe_write`)
+Command:
+```bash
+npx @modelcontextprotocol/inspector@latest --cli http://127.0.0.1:3182/mcp --method tools/call --tool-name supervisor_probe_write --tool-arg test_value=OFFICIAL_INSPECTOR_MUTATION_DELTA_C --tool-arg correlation_id=inspector_write_003 --format json
+```
+Literal Output:
+```json
+{
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "[supervisor_probe_write] APPLIED mutation #3. Value changed from \"OFFICIAL_INSPECTOR_MUTATION_DELTA_B\" to \"OFFICIAL_INSPECTOR_MUTATION_DELTA_C\". Correlation: inspector_write_003."
+      }
+    ],
+    "structuredContent": {
+      "status": "APPLIED",
+      "mutation_count": 3,
+      "previous_value": "OFFICIAL_INSPECTOR_MUTATION_DELTA_B",
+      "current_value": "OFFICIAL_INSPECTOR_MUTATION_DELTA_C",
+      "correlation_id": "inspector_write_003",
+      "timestamp": "2026-09-21T04:16:52.524Z"
+    }
+  }
+}
+```
+Verdict: **PASS** (Write mutation succeeds, state counter increments to 3, value updated).
+
+### Test 4: Read-Back Verification
+Command:
+```bash
+npx @modelcontextprotocol/inspector@latest --cli http://127.0.0.1:3182/mcp --method tools/call --tool-name supervisor_probe_read --tool-arg correlation_id=inspector_readback_003 --format json
+```
+Literal Output confirms mutation #3 persisted to disk:
+```json
+{
+  "result": {
+    "structuredContent": {
+      "proof_id": "P01-D3A-OPENAI-MCP-RUNTIME-PROOF",
+      "node_id": "host-windows-dev-node-01",
+      "disposable_state": {
+        "mutation_count": 3,
+        "current_value": "OFFICIAL_INSPECTOR_MUTATION_DELTA_C",
+        "last_updated": "2026-09-21T04:16:52.524Z"
+      },
+      "timestamp": "2026-09-21T04:16:57.938Z",
+      "correlation_id": "inspector_readback_003"
+    }
+  }
+}
+```
+Verdict: **PASS** (Read-back proves state persisted to disk).
 
 ---
 
-## 9. Responses API Integration Specification & Model Policy
+## 8. Official `tunnel-client` Preflight & Health Verification (`OPENAI_SECURE_TUNNEL`)
 
-- **Model Policy**: For the empirical cloud round-trip, an inexpensive MCP-capable model must be used (e.g. `gpt-4o-mini` or equivalent current endpoint). The purpose is strictly transport verification, not intelligence benchmarking.
-- **Cost Guardrail**: The proof is capped under **$1.00 USD** out of the user's $5 prepaid balance. Single-shot prompt (< 100 tokens), zero agentic looping.
-- **Responses API Request Structure**:
+- **Checksum**: Verified against official release manifest (`BINARY_CHECKSUM_VERIFIED`).
+- **Binary Path**: `D:\TU_CODE\_ai_supervisor_p01d_openai_mcp_proof\bin\tunnel-client.exe` (v0.0.14).
+- **Execution Against Dedicated Tunnel**:
   ```bash
-  curl https://api.openai.com/v1/responses \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $OPENAI_API_KEY" \
-    -d '{
-      "model": "gpt-4o-mini",
-      "tools": [
-        {
-          "type": "mcp",
-          "server_label": "supervisor_proof",
-          "tunnel_id": "<DEDICATED_TUNNEL_ID>",
-          "require_approval": "never"
-        }
-      ],
-      "input": "Call supervisor_probe_read and return the exact output."
-    }'
+  tunnel-client.exe doctor --mcp.server-url url=http://127.0.0.1:3182/mcp --control-plane.tunnel-id tunnel_6ab0ae480cec81919b3db157c622eb53 --json --explain
   ```
-- **Write Probe with Approval**:
-  For `supervisor_probe_write`, test `require_approval: "always"` to empirically record the `mcp_approval_request` and subsequent continuation with `mcp_approval_response`.
+- **Independent Checks Output**:
+  | Check ID | Status | Summary / Diagnostic |
+  |---|---|---|
+  | `config_source` | **PASS** | flags/environment only |
+  | `profile_load` | **PASS** | flags/environment only |
+  | `tunnel_id` | **PASS** | format validated (`tunnel_6ab0ae480cec81919b3db157c622eb53`) |
+  | `tunnels_management_url` | **PASS** | https://platform.openai.com/settings/organization/tunnels |
+  | `runtime_api_keys_url` | **PASS** | https://platform.openai.com/settings/organization/api-keys |
+  | `admin_api_keys_url` | **PASS** | https://platform.openai.com/settings/organization/admin-keys |
+  | `chatgpt_connector_settings_url` | **PASS** | https://chatgpt.com/#settings/Connectors |
+  | `codex_plugin` | **SKIP** | Codex detected; optional plugin |
+  | `control_plane_api_key` | **FAIL** | Control plane API key required to authenticate outbound connection to OpenAI control plane |
+
+- **Governance Verdict on Doctor**: Per Section 8 directives, **overall doctor PASS is NOT marked** because a required live check (`control_plane_api_key`) failed.
+- **Runtime Precondition Required**:
+  ```text
+  ================================================================================
+  STATUS: HUMAN_REQUIRED_CONFIGURE_RUNTIME_CREDENTIAL
+  ================================================================================
+  ```
+  In strict compliance with Section 4 (Secret Handling), the agent cannot and will not request the key in chat or repository. The user must configure `OPENAI_API_KEY` or `CONTROL_PLANE_API_KEY` in their local Windows user environment.
+
+---
+
+## 9. Cloud Responses API Test Architecture & Test Harness (`RESPONSES_API_MCP_READ` / `RESPONSES_API_MCP_WRITE`)
+
+An automated proof execution harness is staged in `D:\TU_CODE\_ai_supervisor_p01d_openai_mcp_proof\test_cloud_responses_mcp.js`. It implements the exact required cloud protocol tests:
+
+1. **Model Discovery & Selection**:
+   - Tests model availability against Platform account.
+   - Evaluates least expensive candidate supporting MCP (`gpt-4o-mini`, `gpt-4.1-mini`, or account-available tier).
+   - Selected model labeled strictly `TEST_ONLY_MODEL`.
+   - Identity gating fallback: If candidate models are identity-gated, captures literal API error and flags `BLOCKED_BY_IDENTITY`.
+
+2. **Cloud Read Proof (`D3A-CLOUD-READ`)**:
+   - Request uses `type: "mcp"`, `tunnel_id: "tunnel_6ab0ae480cec81919b3db157c622eb53"`.
+   - Forces invocation of `supervisor_probe_read`.
+   - Cloud Origin Demonstration: Injects unique pre-call value `OPENAI_CLOUD_READ_PROOF_<timestamp>` into disposable state, then retrieves it through Responses API via tunnel.
+   - Captures OpenAI response ID, tool call ID, returned local state, correlation ID, and latency.
+
+3. **Write Approval Request & Denial (`D3A-APPROVAL-DENIAL`)**:
+   - Uses `require_approval: "always"` on `supervisor_probe_write`.
+   - Turn 1 must emit `mcp_approval_request`. Verifies local state has NOT changed.
+   - Rejection Test: Emits rejection response. Verifies local state remains unchanged (zero mutation).
+
+4. **Approved Write Execution (`D3A-CLOUD-WRITE`)**:
+   - Injects unique payload `OPENAI_TUNNEL_WRITE_PROOF_<timestamp>` with unique correlation ID.
+   - Emits approval confirmation.
+   - Verifies mutation occurs exactly once, counter increments, value written to disk, and tool response returns to Responses API.
+
+5. **Cloud State Read-Back**:
+   - Subsequent Responses API turn performs `supervisor_probe_read` to verify mutated state from cloud perspective.
+
+6. **Replay Safety Through OpenAI**:
+   - Submits identical correlation ID twice through cloud Responses API.
+   - Verifies first execution returns `APPLIED`, second returns `DUPLICATE_REPLAY`, mutation counter increments only once.
+
+7. **Offline & Recovery Test**:
+   - Stops local MCP server while tunnel is observable.
+   - Makes Responses API request; records literal error behavior (timeout/error structure).
+   - Restarts local MCP server; verifies recovery.
+
+8. **Tunnel-Client Reconnect (`D3A-TUNNEL-RECONNECT`)**:
+   - Restarts `tunnel-client` with local MCP still running.
+   - Verifies reconnection without recreating tunnel resources.
+   - Verifies subsequent cloud read succeeds.
+
+9. **Payload Bounds Test**:
+   - Tests 1 KB and 10 KB bounded payloads through Responses API path.
+
+10. **Secret Scanning & Cost Guardrail**:
+    - Scans request/response logs to ensure zero API keys or tokens are committed.
+    - Capped strictly under **$1.00 USD** cumulative spend.
 
 ---
 
@@ -319,18 +526,6 @@ Prepared offline in compliance with Section 30 for future submission once identi
 | **MCP Production Endpoint**| `BLOCKED_PENDING_PRODUCTIZATION_DECISION` | Requires stable HTTPS URL + domain verification |
 | **Reviewer Credentials** | Not required for initial public slice (public anonymous token or demo workspace) | Compliant (No MFA/SMS required) |
 
-### Positive Test Cases Prepared Offline:
-1. **Probe Read**: "Inspect the local supervisor node and verify current operational state." → Expects `supervisor_probe_read` execution returning node ID and mutation counter.
-2. **Controlled State Update**: "Record a supervisory audit marker 'PROPOSAL_ACCEPTED' for correlation task-001." → Expects `supervisor_probe_write` execution returning `status: "APPLIED"`.
-3. **Idempotent Replay**: "Re-send audit marker for correlation task-001." → Expects `supervisor_probe_write` execution returning `status: "DUPLICATE_REPLAY"` without state increment.
-4. **Task Contract Inspection**: "Show the active Task Contract for the registered pair." → Expects read-only contract schema display.
-5. **Review Bundle Summarization**: "Retrieve the latest worker review bundle." → Expects cognitive summary of worker claims vs git diff.
-
-### Negative Test Cases Prepared Offline:
-1. **Arbitrary File Access Refusal**: "Read `/etc/passwd` or `C:\Windows\System32\drivers\etc\hosts`." → Refused by strict parameter schema; no filesystem tool exists.
-2. **Unbounded Payload Refusal**: "Write an audit marker containing 5,000 characters." → Schema validation error (bounded to 256 chars max).
-3. **Arbitrary Command Refusal**: "Execute `git push origin main` or run `rmdir /s`." → Refusal: MCP server exposes only bounded supervisory probes; arbitrary execution is architecturally forbidden.
-
 ---
 
 ## 12. P01-D3A Verdict & Next Steps
@@ -341,11 +536,13 @@ P01-D3A VERDICT:
 PARTIAL
 
 REASON:
-- Local MCP Server: 100% PASS (31/31 inspector tests passed)
-- Official tunnel-client v0.0.14: PASS (Downloaded, verified, doctor preflight passed)
-- Official Documentation Ingested: PASS (13 documents registered)
-- Submission Artifacts: Prepared Offline
-- Dedicated Tunnel: WAITING ON USER ACTION (HUMAN_REQUIRED_CREATE_DEDICATED_TUNNEL)
+- Local MCP Protocol Test Harness: 100% PASS (31/31 checks passed)
+- Official MCP Inspector CLI (v2.7.0): 100% PASS (tools/list, probe read, probe write, read-back)
+- Official tunnel-client v0.0.14: BINARY_CHECKSUM_VERIFIED (SHA-256 matched official release manifest)
+- Dedicated Tunnel Registered: tunnel_6ab0ae480cec81919b3db157c622eb53 (ai-supervisor-p01d)
+- Untouched Tunnel: Codex Native2 preserved untouched
+- Preflight Doctor: Format & URLs PASS; control_plane_api_key FAIL
+- Current Precondition: HUMAN_REQUIRED_CONFIGURE_RUNTIME_CREDENTIAL
 - Identity-Dependent Gates: WAITING_IDENTITY_VERIFICATION
 
 OVERALL P01-D TRANSPORT GATE:
