@@ -1,10 +1,10 @@
 # 18_CURRENT_STATE.md — Operational Tracking & Proof Status
 
-> **Status**: P02 IMPLEMENTATION AUTHORIZED (Production Coding Authorized for TASK-P02-002 Revision 4)
+> **Status**: P02 IMPLEMENTATION AUTHORIZED (Production Coding Authorized for TASK-P02-003)
 > **Phase 0 Baseline**: Frozen at tag `phase0-architecture-v1` (commit `6f72eaca30be3fc3ac00f25829dd4283ed98c3f5`)
 > **Phase 1 Historical Freeze**: Tag `phase1-architecture-v2` (commit `883b083023398d95d50e3bb88e90dcfca0171745`; `HISTORICAL_FREEZE_SNAPSHOT_SUPERSEDED_BY_REAUDIT`)
 > **Phase 1 Current Baseline**: Frozen at tag `phase1-architecture-v2.1` (commit `62d3fe0df4a3a05697da77349ff085430ea452f7`)
-> **Updated**: 2026-09-22 (TASK-P02-002 = REVISION_REQUIRED; Revision: 4; Active Gate: P02_TASK_002_REVISION_4)
+> **Updated**: 2026-09-22 (TASK-P02-002 = EXTERNAL_AUDIT_APPROVED; TASK_P02_003 = AUTHORIZED; Active Gate: P02_TASK_003_SQLITE_STATESTORE)
 
 ## 1. High-Level Summary
 
@@ -14,14 +14,14 @@
 | **Phase 1 (Upstream Proof)** | **COMPLETE** (Track P01-A: `EXTERNAL_AUDIT_APPROVED`; Track P01-B: `EXTERNAL_AUDIT_APPROVED`; Track P01-C: `EXTERNAL_AUDIT_APPROVED_WITH_ADR_011`; Track P01-D: `TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). All proofs verified. |
 | **Architecture V2 (Historical Freeze)** | **FROZEN** at tag `phase1-architecture-v2` (`HISTORICAL_FREEZE_SNAPSHOT_SUPERSEDED_BY_REAUDIT`). Immutable historical snapshot. |
 | **Architecture V2.1 (Current Baseline)** | **FROZEN** at tag `phase1-architecture-v2.1`. Zero modifications permitted without architecture governance amendment. |
-| **Project Stage** | **P02 IMPLEMENTATION** (`P02 = IMPLEMENTATION_ACTIVE`). `P02_CODE = AUTHORIZED`. `TASK_P02_001 = EXTERNAL_AUDIT_APPROVED`. `TASK_P02_002 = REVISION_REQUIRED` (TASK_P02_002_REVISION = 4). `P02_003 = NOT_RELEASED`. |
+| **Project Stage** | **P02 IMPLEMENTATION** (`P02 = IMPLEMENTATION_ACTIVE`). `P02_CODE = AUTHORIZED`. `TASK_P02_001 = EXTERNAL_AUDIT_APPROVED`. `TASK_P02_002 = EXTERNAL_AUDIT_APPROVED` (`TASK_P02_002_REVISION = 4`). `TASK_P02_003 = AUTHORIZED`. `P02_004 = NOT_RELEASED`. |
 | **Blocked Issues** | V1 ChatGPT transport blocker: **NONE**. P01 upstream-proof blocker: **NONE**. Pre-code verification command gap: **RESOLVED** via ADR-013 accepted and schema migrated to `verification_requests`. |
 | **Known Process Deviations** | P00-DEV-001 (`ACCEPTED_AT_PHASE0_FREEZE`); Process Hygiene Deviation recorded; **P01B-DEV-001**; **P01C-DEV-001**; **P01C-DEV-002**; **P01C-DEV-003**; **P01C-DEV-004**. |
 | **Open Implementation Decisions** | **NONE** (All pre-code architecture decisions accepted: ADR-013 Accepted, ADR-014 Accepted with Go 1.27.x baseline / 1.26.x min, ADR-015 Accepted with SQLite WAL + synchronous=FULL). |
 | **Documentation Baseline Versions** | AO `v0.13.0` (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`), Agy `1.2.7` (`7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`), `tunnel-client` `v0.0.14`. |
 | **Upstream Runtime Proofs (P01)** | Track P01-A (`EXTERNAL_AUDIT_APPROVED`), Track P01-B (`EXTERNAL_AUDIT_APPROVED`), Track P01-C (`EXTERNAL_AUDIT_APPROVED_WITH_ADR_011`), Track P01-D (`TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). Phase P01 proof activity is **COMPLETE**. |
-| **Next Approved Action** | Complete TASK-P02-002 Revision 4: remediate Windows path separator walk, mandatory canonical schema in NewValidator/ParseAndValidateRaw, lossless numeric projection, literal clean-worktree execution proof. |
-| **Active Gate** | `P02_TASK_002_REVISION_4` |
+| **Next Approved Action** | Implement TASK-P02-003: SQLite StateStore core, V1 migrations, Project/Pair/Task/Contract/Attempt persistence, atomic pre-dispatch READY -> DISPATCHED with TaskAttempt allocation, and restart recovery classifier. |
+| **Active Gate** | `P02_TASK_003_SQLITE_STATESTORE` |
 | **P01 Execution Status** | `COMPLETE` |
 
 ---
@@ -63,3 +63,5 @@
 | [`P02_TASK_002_EXTERNAL_AUDIT.md`](audits/P02_TASK_002_EXTERNAL_AUDIT.md) | `REVISION_REQUIRED` (Remote artifact incomplete: 4 implementation files untracked; go.mod/go.sum not committed; UseNumber regression; Active Gate: P02_TASK_002_REVISION_2) | 2026-09-22 |
 | [`P02_TASK_002_EXTERNAL_REAUDIT.md`](audits/P02_TASK_002_EXTERNAL_REAUDIT.md) | `REVISION_REQUIRED` (Commit 1081704 audited: Artifact & numeric semantics PASS; Revision 3 required for path containment fail-closed, profile policy validation, immutability field coverage; Active Gate: P02_TASK_002_REVISION_3) | 2026-09-22 |
 | [`P02_TASK_002_EXTERNAL_REAUDIT_002.md`](audits/P02_TASK_002_EXTERNAL_REAUDIT_002.md) | `REVISION_REQUIRED` (Commit e378ce2 audited: Profile policy & immutability PASS; Revision 4 required for Windows separator component walk, canonical schema enforcement, lossless numeric projection; Active Gate: P02_TASK_002_REVISION_4) | 2026-09-22 |
+| [`P02_TASK_002_EXTERNAL_REAUDIT_FINAL.md`](audits/P02_TASK_002_EXTERNAL_REAUDIT_FINAL.md) | `EXTERNAL_AUDIT_APPROVED` (TASK-P02-002 Revision 4 approved: Windows path walk, mandatory canonical schema, exact rational projection, and clean worktree proven via explicit go -C) | 2026-09-22 |
+| [`P02_TASK_003_SQLITE_DEPENDENCY_AUDIT.md`](audits/P02_TASK_003_SQLITE_DEPENDENCY_AUDIT.md) | `APPROVED` (modernc.org/sqlite v1.59.0 & modernc.org/libc v1.75.7 evaluated: BSD-3-Clause, pure Go, no CGO, windows/amd64) | 2026-09-22 |
