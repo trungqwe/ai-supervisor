@@ -1,4 +1,4 @@
-﻿# P01-D3C — TARGET PERSONAL CHATGPT PLUS PRIVATE MCP TRANSPORT PROOF
+# P01-D3C — TARGET PERSONAL CHATGPT PLUS PRIVATE MCP TRANSPORT PROOF
 
 > **Authority**: Phase 1 Upstream Proof Dossier — Track P01-D3C
 > **Date**: 2026-09-21
@@ -157,24 +157,40 @@ Key confirmed facts:
 4. Public endpoint not required for developer mode: Tunnel is explicitly an alternative to public HTTPS for private/developer testing.
 5. Developer mode and submission are distinct: "These testing options do not replace the public HTTPS endpoint required for plugin submission." D3C proves private access; D3B path is the distribution path.
 6. Personal account: Official docs confirm personal accounts can use the personal Platform organization. Availability depends on account/workspace policy.
+7. Tunnel Association Requirement: Official documentation notes that for a tunnel to appear in ChatGPT, it must be associated with the target ChatGPT workspace/account (not merely the Platform organization), and the app creator must have Tunnels Read + Use permission.
 
 ---
 
-## 4. Security Status
+## 4. Security & Credential Policy Status
 
-### P01-D3A-SEC-001 — REMEDIATED
+### 4.1 User-Authorized Disposable Test Credential Policy
 
-- **Status**: `REMEDIATED` (Closed 2026-09-21)
-- **Closure Basis**: User explicitly confirmed on 2026-09-21: `OLD_D3A_PLATFORM_KEY_REVOKED = TRUE`. The exposed temporary platform key was revoked and deleted on the OpenAI Platform Dashboard.
-- **Local Environment**: Clean (zero persistent keys stored in User scope; ephemeral session/process scope only for disposable proof).
-- **Repository Hygiene**: Verified zero `sk-proj-` strings or secrets across git working tree, history, and remote GitHub repository.
-- **P01-D3A Security Verdict**: `PASS_WITH_REMEDIATED_SECURITY_INCIDENT`.
+- **Policy Status**: `TEST_CREDENTIAL_POLICY = USER_AUTHORIZED` (Effective 2026-09-21)
+- **Scope**: Disposable test credentials within P01 proof/test environments.
+- **Permitted Operations**:
+  - Receive and assign disposable test credentials directly to environment variables (`$env:CONTROL_PLANE_API_KEY`).
+  - Use credentials with `tunnel-client` and official OpenAI CLI/API proof harnesses.
+  - Reuse test keys throughout the current proof session.
+  - Allow test credentials to appear in transient IDE/terminal execution transcripts or shell command history (`PERMITTED_BY_USER_TEST_POLICY`).
+- **Permanent Prohibitions**:
+  - Committing credentials to Git working trees or history (`GIT_SECRET_EXPOSURE`).
+  - Pushing credentials to remote repositories (`GIT_SECRET_EXPOSURE`).
+  - Inserting credentials into canonical project documentation.
+  - Hard-coding credentials into production application source.
+  - Including credentials in published or distributable artifacts (`PUBLIC_ARTIFACT_SECRET_EXPOSURE`).
+- **Proof Audit Evidence**:
+  - Credential Classification: `AUTHORIZED_DISPOSABLE_TEST_CREDENTIAL`
+  - Transient execution transcript exposure: `PERMITTED_BY_USER_TEST_POLICY`
+  - Git/repository exposure: `NOT FOUND`
+  - Production artifact exposure: `NOT FOUND`
+  - Canonical documentation exposure: `NOT FOUND`
 
-### Runtime Key Rule (D3C)
+### 4.2 P01-D3A-SEC-001 — Historical Status
 
-- **Execution Scope**: Ephemeral process-only environment variable (`$env:CONTROL_PLANE_API_KEY`).
-- **Presence Verification**: Verified via boolean-only inspection (`[bool]$env:CONTROL_PLANE_API_KEY = True`).
-- **Secret Protection**: Plaintext key was never echoed, logged, committed, or written to disk.
+- **Classification**: `HISTORICAL_PROCESS_RECORD` (Pre-dates user-authorized disposable test credential policy).
+- **Platform Key Revocation**: `OLD_D3A_PLATFORM_KEY_REVOCATION = NOT_ASSERTED / INFORMATIONAL_ONLY`.
+- **Status in P01**: Informational record only; not a blocking gate for P01 under `TEST_CREDENTIAL_POLICY = USER_AUTHORIZED`.
+- **D3A Transport Proof**: Remains `PASS` (empirical evidence intact).
 
 ---
 
@@ -189,6 +205,28 @@ Key confirmed facts:
 | State file | data\state.json | Reset for fresh D3C proof |
 
 D3A Responses API results are NOT substituted for D3C. D3C caller must be the actual ChatGPT Plus browser UI.
+
+### 5.1 Local MCP Expected Tool Surface
+
+The current proof MCP server exposes exactly two tools:
+
+1. **`supervisor_probe_read`**:
+   - Title: `Supervisor Probe Read`
+   - Description: `Read-only probe returning local node identity, current disposable state, timestamp, and proof identifier.`
+   - Semantic Annotations:
+     - `readOnlyHint`: `true`
+     - `destructiveHint`: `false`
+     - `openWorldHint`: `false`
+   - Input Schema: `{ correlation_id?: string }`
+
+2. **`supervisor_probe_write`**:
+   - Title: `Supervisor Probe Write`
+   - Description: `Controlled state mutation probe updating disposable test state with strict idempotency and schema bounds.`
+   - Semantic Annotations:
+     - `readOnlyHint`: `false`
+     - `destructiveHint`: `true` (state-changing)
+     - `openWorldHint`: `false`
+   - Input Schema: `{ test_value: string (1-256 chars), correlation_id: string (1-64 chars) }`
 
 ---
 
@@ -252,6 +290,14 @@ All D3B research preserved as: FALLBACK_PUBLIC_DISTRIBUTION_PATH
   - `level=INFO msg="tunnel metadata fetched" name=ai-supervisor-p01d`
   - `level=INFO msg="🟢 tunnel-client started" tunnel_url=https://api.openai.com/v1/tunnel/tunnel_6ab0ae480cec81919b3db157c622eb53`
 - **Live Readiness**: `HEALTHY / READY / CONNECTED`.
+
+#### Runtime Revalidation (2026-09-21 13:19)
+- **Local MCP**: `GET http://127.0.0.1:3182/healthz` -> `HTTP 200` (`ok: true`, PID 26608).
+- **Tunnel Daemon**: PID 43288 active.
+- **Probe `/healthz`**: `HTTP 200` (`"live"`, `ok: true`).
+- **Probe `/readyz`**: `HTTP 200` (`"ready"`, `ok: true`).
+- **Control Plane Poll**: `ok: true` (timestamp `1789971547`).
+- **Runtime Verdict**: `P1_LOCAL_MCP = PASS`, `P2_TUNNEL_DOCTOR = PASS`, `P3_TUNNEL_READY = PASS`.
 
 HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP — issued after Steps P1/P2/P3 pass
 
@@ -350,46 +396,64 @@ Verdict: [TO BE RECORDED]
 
 ### D3C-12 — No Inbound Exposure
 
-- **Local MCP Bind**: `127.0.0.1:3182` only (loopback).
-- **Tunnel Admin Bind**: `127.0.0.1:8080` only (loopback).
+- **Local MCP Bind**: `127.0.0.1:3182` only (loopback confirmed).
+- **Tunnel Admin Bind**: `127.0.0.1:8080` only (loopback confirmed).
+- **Windows Process Listener**: `LOOPBACK_ONLY`.
 - **Windows Inbound Firewall Rule**: None added.
-- **Router Port Forwarding**: None.
-- **Public MCP Endpoint**: None (outbound HTTPS long-polling only to OpenAI control plane).
-- **Verdict**: `PASS` (Pre-verified).
+- **Router Port Forwarding**: `ROUTER_PORT_FORWARDING = NOT_INDEPENDENTLY_VERIFIED`
+- **Impact**: `NONE FOR CURRENT PROOF` (a service bound exclusively to `127.0.0.1` is not remotely reachable through ordinary router port forwarding).
+- **Public MCP Endpoint**: `NONE` (strictly outbound HTTPS polling to OpenAI control plane).
+- **Verdict**: `PASS` (Based on proven loopback-only server boundary).
 
 ---
 
-## 8. Human Checkpoint — ChatGPT Developer App Creation
+## 8. Human Checkpoint — ChatGPT Developer App Creation (Checkpoint A)
 
 ```text
 HUMAN_REQUIRED_CREATE_CHATGPT_DEV_APP
 Status: ACTIVE_WAITING_FOR_USER_ACTION
+Checkpoint: D3C_CHECKPOINT_A (D3C-01 App Connection + D3C-02 Tool Discovery)
 P1_LOCAL_MCP: PASS (127.0.0.1:3182)
 P2_TUNNEL_DOCTOR: PASS
 P3_TUNNEL_READY: PASS (PID 43288, live/ready, control_plane_poll ok)
 ```
 
 Pre-conditions confirmed before issuing this checkpoint:
-- Local MCP server started on 127.0.0.1:3182 — health check PASS
+- Local MCP server running on 127.0.0.1:3182 — health check PASS
 - Tunnel doctor: all checks PASS
-- Tunnel started: ai-supervisor-p01d — ready/connected
+- Tunnel started: ai-supervisor-p01d — ready/connected (poll timestamp 1789971547)
 
 User Instructions:
 
-1. Open the target Personal ChatGPT Plus account in a browser.
-2. Confirm Developer Mode is still enabled:
+1. Keep the agent/tunnel process running.
+2. Open target Personal ChatGPT Plus account in a browser.
+3. Confirm Developer Mode is still enabled:
    Settings -> Security and login -> Developer mode = ON
-3. Navigate to: https://chatgpt.com/plugins
-4. Select the + (plus) button.
-5. Enter a temporary user-visible name: AI Supervisor P01-D3C Proof
-6. Enter a truthful description: Private MCP transport proof for the AI Engineering Supervisor.
-7. Under Connection, select: Tunnel
-8. Select ai-supervisor-p01d from the available tunnel list, OR paste:
-   tunnel_6ab0ae480cec81919b3db157c622eb53
-9. Select Create / Connect.
-10. Review the discovered tools — expected: supervisor_probe_read and supervisor_probe_write.
-11. Take a screenshot of the app connection confirmation page.
-12. Report back with the connection result.
+4. Navigate to: https://chatgpt.com/plugins
+5. Select the + (plus) button.
+6. Create a developer-mode app:
+   - Temporary Name: `AI Supervisor P01-D3C Proof`
+   - Description: `Private MCP transport proof for the AI Engineering Supervisor.`
+   - Connection: `Tunnel`
+   - Tunnel Selection: Select `ai-supervisor-p01d` (or enter `tunnel_6ab0ae480cec81919b3db157c622eb53`)
+7. Create / Connect the app.
+8. **Do NOT trigger tools yet. Do NOT approve a write action yet.**
+9. Inspect discovered tools — expected tools ONLY:
+   - `supervisor_probe_read`
+   - `supervisor_probe_write`
+10. Send back screenshot/report showing:
+    - Successful connection / app creation;
+    - Selected tunnel / connection status if visible;
+    - Discovered tool names;
+    - Tool metadata / permissions / annotations if visible;
+    - Any warning displayed by ChatGPT.
+
+#### Tunnel Association Failure Branch:
+If `ai-supervisor-p01d` is NOT visible in ChatGPT and direct `tunnel_id` entry is rejected:
+- Verify the tunnel is associated with the target ChatGPT workspace/account (not merely the Platform organization).
+- Verify the app creator has Tunnels Read + Use permission.
+- Return: `HUMAN_REQUIRED_TUNNEL_WORKSPACE_ASSOCIATION`. Record literal UI/error evidence.
+- DO NOT switch to Cloudflare/VPS. DO NOT resume D3B automatically.
 
 PROHIBITED:
 - Do NOT automate the ChatGPT UI

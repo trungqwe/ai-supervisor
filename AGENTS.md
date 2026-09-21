@@ -92,3 +92,9 @@ This document establishes immutable operational directives for all AI coding age
 
 10. **STOP AFTER PROOF RESULTS**:
     - Record literal evidence in the corresponding Phase 1 audit dossier and **STOP**. Do not automatically proceed to Phase P02.
+
+11. **P01 DISPOSABLE TEST CREDENTIAL EXCEPTION**:
+    - Per explicit User authorization (`TEST_CREDENTIAL_POLICY = USER_AUTHORIZED`), disposable proof credentials may be received, assigned to process/session environment variables, and passed to proof tools (such as `tunnel-client` or OpenAI CLI/API) within isolated P01 proof environments.
+    - Appearance of disposable proof credentials in transient IDE/terminal execution transcripts or command history is permitted and is not classified as a security incident (`PERMITTED_BY_USER_TEST_POLICY`).
+    - Committing credentials to Git, pushing to GitHub, inserting into canonical project documentation, hard-coding into production source, or embedding in public/distributable artifacts remains strictly prohibited (`GIT_SECRET_EXPOSURE` / `PUBLIC_ARTIFACT_SECRET_EXPOSURE`).
+    - This exception applies exclusively to disposable proof/test environments; production credential hygiene remains unchanged.
