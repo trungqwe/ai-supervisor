@@ -279,7 +279,9 @@ Checked against canonical required fields in `docs/09_WORKER_REPORT.md`:
 - Missing required fields: **0**
 - `P01C_REPORT_FILE_CREATED = PASS`
 - `P01C_REPORT_VIA_AO_PUBLIC_API = PASS`
-- `P01C_REPORT_CONTRACT_VALID = PASS`
+- `P01C_REPORT_REQUIRED_FIELD_PRESENCE = PASS`
+- `P01C_REPORT_SCHEMA_VALIDATION = FAIL` (Historical sample mapped `tests` with generic `{ "name": "...", "status": "..." }` properties, missing schema-required `test_suite`, `passed`, `failed` integers; would yield `REPORT_INVALID` under ADR-011)
+- `P01C_REPORT_CONTRACT_VALID = FAIL`
 
 ---
 
@@ -402,7 +404,9 @@ The pre-invocation validation boundary belongs exclusively to **Supervisor / AOA
 | `P01C_TERMINAL_RESULT_SURFACE` | Public terminal stream classification | **RAW_INTERACTIVE** | `/mux` transmits raw xterm ANSI byte frames; unsuitable for report transport |
 | `P01C_REPORT_FILE_CREATED` | WorkerReport artifact generation | **PASS** | Worker generated `.supervisor/worker-report.json` in worktree |
 | `P01C_REPORT_VIA_AO_PUBLIC_API`| Report retrieval via AO workspace API | **PASS** | `GET /api/v1/sessions/{id}/workspace/file` returned HTTP 200 with report JSON |
-| `P01C_REPORT_CONTRACT_VALID` | Canonical contract schema validation | **PASS** | 12/12 required fields validated per `docs/09_WORKER_REPORT.md` |
+| `P01C_REPORT_REQUIRED_FIELD_PRESENCE` | Top-level required field check | **PASS** | 12/12 top-level fields present in report |
+| `P01C_REPORT_SCHEMA_VALIDATION` | Formal schema validation | **FAIL** | Historical sample used `{name, status}` instead of `{test_suite, passed, failed}` |
+| `P01C_REPORT_CONTRACT_VALID` | Complete canonical contract compliance | **FAIL** | Top-level presence PASS, but nested schema validation FAIL (`REPORT_INVALID`) |
 | `P01C_INDEPENDENT_EVIDENCE_PATH`| Ground truth vs. claims comparison | **PASS** | Branch, Base SHA, Head SHA, Diff, and Test exit code verified independently |
 | `P01C_FALSE_CLAIM_DETECTED` | Zero-trust falsified claim rejection | **PASS** | Corrupted Head SHA and file list correctly detected and flagged as MISMATCH |
 | `P01C_NATIVE_AGY_SESSION_ID_CAPTURE`| Native conversation UUID capture | **PASS** | Captured native UUID `7c5b5631-153f-49e5-b8bb-1c489fe4c9bd` |
@@ -542,7 +546,9 @@ Pursuant to External Supervisor Audit instructions, a targeted isolated retest w
 | **P01C_TERMINAL_RESULT_SURFACE** | **RAW_INTERACTIVE** | Raw xterm byte stream only. |
 | **P01C_REPORT_FILE_CREATED** | **PASS** | Worker created `.supervisor/worker-report.json` in worktree (Run 1). |
 | **P01C_REPORT_VIA_AO_PUBLIC_API** | **PASS** | `GET /workspace/file` returned 200 with report content (Run 1). |
-| **P01C_REPORT_CONTRACT_VALID** | **PASS** | All 12 canonical fields verified against schema (Run 1). |
+| **P01C_REPORT_REQUIRED_FIELD_PRESENCE** | **PASS** | All 12 top-level fields present in historical report artifact. |
+| **P01C_REPORT_SCHEMA_VALIDATION** | **FAIL** | Historical sample lacked schema-required `tests` properties (`test_suite`, `passed`, `failed`). |
+| **P01C_REPORT_CONTRACT_VALID** | **FAIL** | Failed schema validation; reinforces zero-trust rule that worker reports require Supervisor schema validation. |
 | **P01C_INDEPENDENT_EVIDENCE_PATH** | **PASS** | Ground truth independently collected from Git diff and test runner. |
 | **P01C_FALSE_CLAIM_DETECTED** | **PASS** | Injected false head SHA and files flagged as `MISMATCH`. |
 | **P01C_NATIVE_AGY_SESSION_ID_CAPTURE** | **PASS** | Native Agy conversation UUID captured. |

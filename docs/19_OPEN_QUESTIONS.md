@@ -1,28 +1,30 @@
-﻿# 19. OPEN QUESTIONS & UNRESOLVED DECISIONS
+# 19. OPEN QUESTIONS & UNRESOLVED DECISIONS
 
 > **Focus**: Unresolved Architecture & Technical Questions  
-> **Status**: Recorded as UNDECIDED / GIẢ ĐỊNH / P01_PROOF_REQUIRED
+> **Status**: P01 Architecture Questions Resolved; P02 Implementation Decisions Pending
 
 ---
 
-# 1. Active Open Questions
+# 1. Resolved Architecture Questions (Phase P01)
 
 ### Q1: AO ↔ Agy Structured Completion & WorkerReport Delivery
-- **Status**: `UNDECIDED — P01_PROOF_REQUIRED`
-- **Context**: Pinned AO `v0.13.0` invokes Agy interactively (`--prompt-interactive`) rather than passing `--json-schema docs/schemas/worker-report.schema.json`.
-- **Question**: Does AO expose enough session output telemetry for the Supervisor to normalize into a `WorkerReport`, or does the AOAdapter / Agy invocation require a custom integration mechanism?
-- **Resolution Plan**: Address empirically in Phase P01 Track P01-C.
+- **Status**: `RESOLVED_BY_P01_C_AND_ADR_011`
+- **Resolution**: Track P01-C proved that AO detects turn completion via the Agy `Stop` hook transitioning session activity state to `IDLE`. In accordance with **ADR-011**, structured worker reports are delivered via attempt-scoped files (`.supervisor/reports/<task_id>/<attempt_id>.json`) retrieved through AO's public workspace file API (`GET /api/v1/sessions/{id}/workspace/file?path=...`) under zero-trust Supervisor validation rules without requiring upstream code patches.
 
 ### Q2: ChatGPT Transport Protocol for Target User Environment
-- **Status**: `UNDECIDED — P01_PROOF_REQUIRED` (Advanced from P05 to P01)
-- **Context**: Target workflow relies on ChatGPT Web invoking the Supervisor's 12 tools without manual copy-pasting or browser automation.
-- **Question**: What exact mechanism (local MCP stdio/SSE relay, ChatGPT App/Action with loopback bridge) is supported and accessible on the target user's ChatGPT Plus account?
-- **Resolution Plan**: Mandatory early feasibility proof in Phase P01 Track P01-D.
+- **Status**: `RESOLVED_BY_P01_D3C (PROVEN_ON_TARGET_ACCOUNT)`
+- **Resolution**: Track P01-D3C empirically proved that the target ChatGPT Plus account natively connects to local MCP servers via loopback HTTP/SSE tunneling (`tunnel-client` + `mcp-proxy`), allowing direct invocation of Supervisor tools without desktop browser automation and without manual copy-pasting.
+
+---
+
+# 2. Active Implementation Decisions (Phase P02 Decision Gate)
 
 ### Q3: Supervisor Core Implementation Language
-- **Status**: `UNDECIDED` (GIẢ ĐỊNH: TypeScript / Node.js vs. Go vs. Python)
-- **Resolution Plan**: Finalize via ADR in Phase P02 following Phase P01 results.
+- **Status**: `P02_DECISION_REQUIRED`
+- **Candidates**: TypeScript / Node.js vs. Go vs. Python
+- **Resolution Plan**: To be evaluated and decided under Change Governance via a dedicated ADR during the Phase P02 implementation decision gate prior to application code authoring.
 
 ### Q4: Local State Store Storage Engine
-- **Status**: `UNDECIDED` (GIẢ ĐỊNH: SQLite vs. Embedded Key-Value / JSON file store)
-- **Resolution Plan**: Finalize in Phase P02 domain implementation.
+- **Status**: `P02_DECISION_REQUIRED`
+- **Candidates**: SQLite vs. Embedded Key-Value / JSON file store
+- **Resolution Plan**: To be evaluated and decided under Change Governance via a dedicated ADR during the Phase P02 implementation decision gate prior to state store implementation.

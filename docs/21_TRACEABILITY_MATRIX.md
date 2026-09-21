@@ -1,6 +1,6 @@
-﻿# 21. TRACEABILITY MATRIX
+# 21. TRACEABILITY MATRIX
 
-> **Authority**: End-to-End Requirement Traceability  
+> **Authority**: End-to-End Requirement Traceability
 > **Status**: Approved Baseline (Remediated Phase 0)
 
 ---
@@ -13,12 +13,12 @@
 | **FR-004** (Task Contract) | `docs/08_TASK_CONTRACT.md` | ADR-010 | `TaskContractManager` | P02 | Validate schema & immutability | Symphony |
 | **FR-005** (Worker Dispatch) | `docs/04_ARCHITECTURE.md#sec-2.1` | ADR-002 | `AOAdapter` | P03 | Verify worktree spawn & task send | Agent Orchestrator |
 | **FR-006** (Worker Observation) | `docs/04_ARCHITECTURE.md#sec-2.1` | ADR-002 | `AOAdapter` | P03 | Test heartbeat & event stream | Agent Orchestrator |
-| **FR-007** (Report Ingestion) | `docs/09_WORKER_REPORT.md` | ADR-006 | `EvidenceCollector` | P04 | Parse worker report schema | AIWorkHub |
-| **FR-008** (Evidence Collection)| `docs/04_ARCHITECTURE.md#sec-2.2` | ADR-006 | `EvidenceCollector` | P04 | Independent git diff & exit code test | AIWorkHub |
+| **FR-007** (Report Ingestion) | `docs/09_WORKER_REPORT.md` | ADR-006, ADR-011 | `EvidenceCollector` | P04 | Attempt-scoped report fetch via AO workspace API & schema validation | AIWorkHub |
+| **FR-008** (Evidence Collection)| `docs/04_ARCHITECTURE.md#sec-2.2` | ADR-006, ADR-011 | `EvidenceCollector` | P04 | Independent git diff & exit code test bound to TaskAttempt | AIWorkHub |
 | **FR-009** (Scope Violation) | `docs/07_SECURITY_MODEL.md#sec-2` | ADR-010 | `PolicyEngine` | P04 | Flag file touched outside allowed_scope | Proxide |
-| **FR-010** (Review Bundle) | `docs/10_REVIEW_BUNDLE.md` | ADR-006 | `ReviewBundleBuilder` | P04 | Assert bundle schema compliance | AIWorkHub / Codencer |
-| **FR-011** (Supervisor Decision)| `docs/06_WORKFLOW_STATE_MACHINE.md` | ADR-005 | `StateMachine` | P02 | Test APPROVE / REVISION state transitions (decision recorded, zero auto-merge) | Symphony |
-| **FR-012** (Revision Loop) | `docs/06_WORKFLOW_STATE_MACHINE.md` | ADR-005 | `StateMachine` | P04 | Test re-dispatch with revision fixes | Symphony |
+| **FR-010** (Review Bundle) | `docs/10_REVIEW_BUNDLE.md` | ADR-006, ADR-011 | `ReviewBundleBuilder` | P04 | Attempt-scoped bundle schema compliance | AIWorkHub / Codencer |
+| **FR-011** (Supervisor Decision)| `docs/06_WORKFLOW_STATE_MACHINE.md` | ADR-005, ADR-011 | `StateMachine` | P02 | Test APPROVE / REVISION transitions bound to task_id and attempt_id | Symphony |
+| **FR-012** (Revision Loop) | `docs/06_WORKFLOW_STATE_MACHINE.md` | ADR-005, ADR-011 | `StateMachine` | P04 | Test re-dispatch with new attempt_id & expected report path | Symphony |
 | **FR-013** (Audit Trail) | `docs/15_OBSERVABILITY.md#sec-2` | ADR-007 | `AuditLogger` | P02 | Test append-only JSONL & token scrub | Proxide |
 | **FR-014** (Multi-Project Domain)| `docs/05_DOMAIN_MODEL.md#sec-1` | ADR-001 | `DomainModel` | P02 | Unit test project isolation | Mieruko |
 | **FR-015** (Upstream Health) | `docs/12_UPSTREAM_INTEGRATION.md#sec-1` | ADR-002 | `AOAdapter` | P01 | Live /healthz & /readyz check on AO daemon | Agent Orchestrator |

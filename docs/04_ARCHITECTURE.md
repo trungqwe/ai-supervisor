@@ -91,16 +91,25 @@ sequenceDiagram
     participant DB as State Store
     actor ChatGPT as ChatGPT Web (Supervisor)
 
-    Agy->>AO: Worker execution completes turn
-    AO-->>SCP: AOAdapter observes session completion [P01_PROOF_REQUIRED]
-    SCP->>DB: Transition state to REPORT_READY
+    Agy->>AO: Stop hook triggers; session activity transitions to IDLE
+    AO-->>SCP: AOAdapter observes session IDLE
+    SCP->>AO: Bounded fetch: GET /workspace/file?path=.supervisor/reports/<task_id>/<attempt_id>.json
+    AO-->>SCP: Return report artifact content
+    SCP->>SCP: JSON parse + worker-report.schema.json validation
+    SCP->>SCP: Validate report.task_id == task_id AND report.attempt_id == attempt_id
 
-    rect rgb(240, 248, 255)
-        Note over SCP,Git: Independent Evidence Collection (Zero Trust)
-        SCP->>Git: git diff --stat base_sha..head_sha
-        SCP->>Git: git diff base_sha..head_sha
-        SCP->>SCP: Check touched files against allowed_scope / forbidden_scope
-        SCP->>SCP: Verify test command exit codes & artifacts
+    alt Valid Report & Matching Identity
+        SCP->>DB: Store WorkerClaim (Transition state to REPORT_READY)
+        rect rgb(240, 248, 255)
+            Note over SCP,Git: Independent Evidence Collection (Zero Trust)
+            SCP->>Git: git diff --stat base_sha..head_sha
+            SCP->>Git: git diff base_sha..head_sha
+            SCP->>SCP: Check touched files against allowed_scope / forbidden_scope
+            SCP->>SCP: Verify test command exit codes & artifacts
+        end
+    else Missing / Invalid / Mismatched Report
+        SCP->>DB: Transition state to FAILED (reason: REPORT_MISSING / REPORT_INVALID / REPORT_IDENTITY_MISMATCH)
+        Note over SCP: Handoff aborted. Never reaches REPORT_READY.
     end
 
     SCP->>DB: Store Evidence (State: EVIDENCE_READY)

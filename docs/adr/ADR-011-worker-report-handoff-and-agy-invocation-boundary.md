@@ -18,7 +18,7 @@ This Architecture Decision Record establishes the canonical contract for turn co
 
 ### 1. Turn Completion Semantics
 - **Canonical Completion**: In the pinned AO + Agy integration, a worker turn completes when the native Agy Stop hook triggers AO to transition session activity state from `active` to `idle`.
-- **Process Liveness**: Agy runs as a persistent daemon across turns. Process exit is **NOT** required for normal turn completion.
+- **Process Liveness**: Agy runs as a persistent interactive process/session across turns. Process exit is **NOT** required for normal turn completion.
   ```
   PROCESS_ALIVE != TURN_RUNNING
   ```
@@ -124,7 +124,7 @@ This Architecture Decision Record establishes the canonical contract for turn co
 ## Consequences
 - **Positive**: Clean architectural separation between control-plane orchestration (AO) and governance verification (Supervisor).
 - **Positive**: Zero upstream patches required for pinned AO `v0.13.0` or Agy `1.2.7`.
-- **Positive**: Absolute zero-trust verification prevents unverified worker hallucination from passing review.
+- **Positive**: Zero-trust verification prevents acceptance solely on unverified worker claims.
 - **Negative / Trade-off**: The Supervisor must implement bounded polling logic and artifact retrieval normalization rather than receiving synchronous report payloads in HTTP response bodies.
 
 ---

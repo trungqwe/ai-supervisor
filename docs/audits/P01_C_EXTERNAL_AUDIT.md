@@ -1,17 +1,17 @@
 # P01-C -- EXTERNAL SUPERVISOR AUDIT DOSSIER
 
-> **Authority**: External Supervisor Independent Audit Authority  
-> **Status**: APPROVED_WITH_ADR_011  
-> **Verdict**: P01_C_EXTERNAL_AUDIT = APPROVED_WITH_ADR_011  
-> **Date**: 2026-09-21  
-> **Repository**: `D:\TU_CODE\ai-supervisor`  
-> **Canonical Scope Specification**: `docs/phases/P01_UPSTREAM_PROOF.md`  
-> **Audited Baseline**: `404ae2f8bca48fc2bb3a3ac8c77779249afd0b3f`  
-> **Prior Track Milestone (P01-B)**: `85837fe5f27d75aec0e0996b60c03a26b2464856`  
-> **Historical Frozen Baseline**: Tag `phase0-architecture-v1` (`6f72eaca30be3fc3ac00f25829dd4283ed98c3f5`)  
-> **Pinned AO**: `Untrivial-ai/agent-orchestrator` `v0.13.0` (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`)  
-> **Pinned Agy**: `google-antigravity/antigravity-cli` `1.2.7` (`7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`)  
-> **Architecture Status**: `ARCHITECTURE_V2 = CANDIDATE_READY_FOR_FREEZE_REVIEW`  
+> **Authority**: External Supervisor Independent Audit Authority
+> **Status**: APPROVED_WITH_ADR_011
+> **Verdict**: P01_C_EXTERNAL_AUDIT = APPROVED_WITH_ADR_011
+> **Date**: 2026-09-21
+> **Repository**: `D:\TU_CODE\ai-supervisor`
+> **Canonical Scope Specification**: `docs/phases/P01_UPSTREAM_PROOF.md`
+> **Audited Baseline**: `404ae2f8bca48fc2bb3a3ac8c77779249afd0b3f`
+> **Prior Track Milestone (P01-B)**: `85837fe5f27d75aec0e0996b60c03a26b2464856`
+> **Historical Frozen Baseline**: Tag `phase0-architecture-v1` (`6f72eaca30be3fc3ac00f25829dd4283ed98c3f5`)
+> **Pinned AO**: `Untrivial-ai/agent-orchestrator` `v0.13.0` (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`)
+> **Pinned Agy**: `google-antigravity/antigravity-cli` `1.2.7` (`7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`)
+> **Architecture Status**: `ARCHITECTURE_V2 = CANDIDATE_READY_FOR_FREEZE_REVIEW`
 
 ---
 
@@ -39,6 +39,23 @@ P01 = READY_FOR_EXTERNAL_FINAL_AUDIT
 ARCHITECTURE_V2 = CANDIDATE_READY_FOR_FREEZE_REVIEW
 ACTIVE_GATE = EXTERNAL_SUPERVISOR_P01_FINAL_AUDIT
 ```
+
+---
+
+# 1.1 Historical WorkerReport Schema Finding & Handoff Transport Distinction
+
+External audit re-evaluation of the historical P01-C WorkerReport sample identified that while top-level field presence passed, the nested `tests` array used generic `{ "name": "verify.ps1", "status": "PASSED" }` entries rather than the schema-required `test_suite`, `passed`, and `failed` integer properties from `docs/schemas/worker-report.schema.json`.
+
+```text
+HISTORICAL_P01C_REPORT_FIELD_PRESENCE = PASS
+HISTORICAL_P01C_REPORT_SCHEMA_VALIDATION = FAIL
+HISTORICAL_P01C_REPORT_TRANSPORT = PASS
+```
+
+**Interpretation**:
+1. **Public Transport Validated**: AO public workspace file API successfully transported the worker artifact with HTTP 200 OK.
+2. **Worker Artifact Invalid**: Under production ADR-011 semantics, this artifact would be rejected as `REPORT_INVALID`.
+3. **Architecture Conclusion Preserved**: This finding reinforces that `WORKER_CLAIMS != TRUSTED_INPUT` and demonstrates the necessity of Supervisor-side schema validation established in ADR-011. It does not invalidate the P01-C architectural conclusion.
 
 ---
 

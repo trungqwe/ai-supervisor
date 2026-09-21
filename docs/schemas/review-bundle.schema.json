@@ -1,10 +1,11 @@
-﻿{
+{
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "ReviewBundle",
   "type": "object",
   "required": [
     "bundle_id",
     "task_id",
+    "attempt_id",
     "task_contract",
     "worker_claims",
     "actual_git_evidence",
@@ -15,46 +16,100 @@
     "generated_at"
   ],
   "properties": {
-    "bundle_id": { "type": "string" },
-    "task_id": { "type": "string" },
-    "task_contract": { "type": "object" },
-    "worker_claims": { "type": "object" },
+    "bundle_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "attempt_id": {
+      "type": "string"
+    },
+    "task_contract": {
+      "type": "object"
+    },
+    "worker_claims": {
+      "type": "object"
+    },
     "actual_git_evidence": {
       "type": "object",
-      "required": ["actual_base_sha", "actual_head_sha", "actual_changed_files", "diff_stat"],
+      "required": [
+        "actual_base_sha",
+        "actual_head_sha",
+        "actual_changed_files",
+        "diff_stat"
+      ],
       "properties": {
-        "actual_base_sha": { "type": "string" },
-        "actual_head_sha": { "type": "string" },
-        "actual_changed_files": { "type": "array", "items": { "type": "string" } },
-        "diff_stat": { "type": "string" }
+        "actual_base_sha": {
+          "type": "string"
+        },
+        "actual_head_sha": {
+          "type": "string"
+        },
+        "actual_changed_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "diff_stat": {
+          "type": "string"
+        }
       }
     },
     "actual_test_evidence": {
       "type": "object",
-      "required": ["all_passed", "executed_commands"],
+      "required": [
+        "all_passed",
+        "executed_commands"
+      ],
       "properties": {
-        "all_passed": { "type": "boolean" },
-        "executed_commands": { "type": "array", "items": { "type": "string" } }
+        "all_passed": {
+          "type": "boolean"
+        },
+        "executed_commands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
     "policy_findings": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["rule_id", "passed", "details"],
+        "required": [
+          "rule_id",
+          "passed",
+          "details"
+        ],
         "properties": {
-          "rule_id": { "type": "string" },
-          "passed": { "type": "boolean" },
-          "details": { "type": "string" }
+          "rule_id": {
+            "type": "string"
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "details": {
+            "type": "string"
+          }
         }
       }
     },
     "unverified_claims": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
-    "recommended_review_focus": { "type": "string" },
-    "generated_at": { "type": "string", "format": "date-time" }
+    "recommended_review_focus": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
   },
   "additionalProperties": false
 }

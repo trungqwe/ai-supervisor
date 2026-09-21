@@ -44,3 +44,28 @@ Per **ADR-011** (`docs/adr/ADR-011-worker-report-handoff-and-agy-invocation-boun
 | `blockers` | array of strings | NO | Details of any encountered blocker if `status == "BLOCKED"`. |
 | `artifacts` | array of strings | NO | File paths of generated build artifacts, test logs, or coverage reports. |
 | `ready_for_review` | boolean | YES | Worker assertion that code is ready for audit. |
+
+---
+
+# 2.1 Nested Object Schemas (Mandatory Invariants)
+
+To prevent implementation drift during Phase P02, nested array items must strictly conform to `docs/schemas/worker-report.schema.json`:
+
+### `commands_run` Item Schema
+Each element in the `commands_run` array represents a process execution claimed by the worker:
+| Property | Type | Required | Description |
+|---|---|---|---|
+| `command` | string | YES | The exact shell command string executed. |
+| `exit_code` | integer | YES | The numerical process return code (0 indicates success). |
+| `output_summary` | string | NO | Truncated snippet of stdout/stderr for diagnostic context. |
+
+### `tests` Item Schema
+Each element in the `tests` array represents a test suite execution summary:
+| Property | Type | Required | Description |
+|---|---|---|---|
+| `test_suite` | string | YES | Name, path, or identifier of the test suite executed. |
+| `passed` | integer | YES | Count of passing test cases in this suite. |
+| `failed` | integer | YES | Count of failing test cases in this suite. |
+
+> [!CAUTION]
+> Historical proof artifacts using generic `{ "name": "...", "status": "..." }` mappings violate this schema and will fail Supervisor validation (`REPORT_INVALID`). The formal schema is authoritative.
