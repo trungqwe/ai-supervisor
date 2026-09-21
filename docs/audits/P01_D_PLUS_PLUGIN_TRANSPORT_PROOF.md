@@ -127,3 +127,39 @@ CANDIDATE
 
 Architecture V2 is **NOT FROZEN**.  
 Tracks P01-A, P01-B, and P01-C remain **HELD**.
+
+---
+
+## 6. Continuation & Evidence Layer Stratification (Phase P01-D3A)
+
+> **Continuation Reference**: Continued by [`P01_D3A_OPENAI_MCP_RUNTIME_PROOF.md`](P01_D3A_OPENAI_MCP_RUNTIME_PROOF.md) on 2026-09-21.
+
+To ensure strict evidentiary hygiene and prevent overclaiming, transport feasibility is partitioned into four distinct, non-conflated evidence layers:
+
+```text
+┌─────────────────────────────────────────────────────────────────────────┐
+│                 FOUR-LAYER TRANSPORT EVIDENCE TAXONOMY                  │
+├──────────────────────────┬──────────────────────────┬───────────────────┤
+│ Layer                    │ Verification Scope       │ Current Status    │
+├──────────────────────────┼──────────────────────────┼───────────────────┤
+│ 1. LOCAL_SPIKE           │ Local Relay Harness      │ PASS (Proven)     │
+│                          │ (Custom WebSocket relay) │                   │
+├──────────────────────────┼──────────────────────────┼───────────────────┤
+│ 2. OPENAI_TUNNEL /       │ Official tunnel-client   │ PARTIAL           │
+│    API_PROOF (P01-D3A)   │ + Responses API via      │ (Local MCP: PASS; │
+│                          │ dedicated tunnel_id      │ Tunnel: WAITING)  │
+├──────────────────────────┼──────────────────────────┼───────────────────┤
+│ 3. PUBLIC_PLUGIN_PROOF   │ Stable Public Gateway    │ BLOCKED           │
+│    (P01-D3B)             │ + Domain Verification    │ (Pending Identity │
+│                          │ + OpenAI Plugin Review   │ Verification)     │
+├──────────────────────────┼──────────────────────────┼───────────────────┤
+│ 4. TARGET_PLUS_PROOF     │ Live ChatGPT Plus Web    │ BLOCKED           │
+│    (P01-D4)              │ installation & prompt-   │ (Pending Layer 3  │
+│                          │ driven disk mutation     │ approval)         │
+└──────────────────────────┴──────────────────────────┴───────────────────┘
+```
+
+1. **`LOCAL_SPIKE`**: Verified custom relay feasibility in `_ai_supervisor_p01d_plugin_spike`. Retained as foundational protocol research.
+2. **`OPENAI_TUNNEL/API_PROOF` (P01-D3A)**: Proves official OpenAI `tunnel-client` and Responses API invocation against local loopback MCP server (`http://127.0.0.1:3182/mcp`).
+3. **`PUBLIC_PLUGIN_PROOF` (P01-D3B)**: Formal public marketplace submission gate. Gated on publisher identity verification.
+4. **`TARGET_PLUS_PROOF` (P01-D4)**: End-to-end verification on personal ChatGPT Plus account following directory publication.
