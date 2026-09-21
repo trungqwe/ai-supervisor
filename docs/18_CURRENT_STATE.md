@@ -1,4 +1,4 @@
-# 18. CURRENT STATE
+﻿# 18. CURRENT STATE
 
 > **Authority**: Dynamic Operational State Record
 > **Updated**: 2026-09-21 (Phase P01-A External Audit APPROVED; Track P01-B Released to READY; Architecture V2 Candidate Not Frozen)
@@ -9,7 +9,7 @@
 
 | Field | Current Value |
 |---|---|
-| **Project Stage** | **Phase 1 — Upstream Proof Execution** |
+| **Project Stage** | **Phase 1 â€” Upstream Proof Execution** |
 | **Current State** | **`ARCHITECTURE_V2_CANDIDATE_TRANSPORT_APPROVED_NOT_FROZEN`** |
 | **Architecture Status** | **`ARCHITECTURE_V2_CANDIDATE_TRANSPORT_APPROVED_NOT_FROZEN`** (P01-D transport proof complete; P01-A runtime approved; P01-B/C runtime/integration proofs remain; architecture freeze not authorized) |
 | **Phase 0 Status** | `COMPLETE` (Frozen Baseline: `phase0-architecture-v1` / `6f72eaca30be3fc3ac00f25829dd4283ed98c3f5`) |
@@ -25,8 +25,8 @@
 | **Known Process Deviations** | P00-DEV-001 (`ACCEPTED_AT_PHASE0_FREEZE`); Process Hygiene Deviation recorded (prohibition against inspecting `.codex/auth.json` or credential stores). |
 | **Open Decisions** | Architecture V2 freeze decision deferred until upstream runtime proofs (P01-A, P01-B, P01-C) are complete; Public gateway distribution path (`P01-D3B`) preserved for future multi-user product phase. |
 | **Documentation Baseline Versions** | AO `v0.13.0` (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`), Agy `1.2.7` (`7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`), `tunnel-client` `v0.0.14`. |
-| **Pending Runtime Proofs (P01)** | Track P01-A (AO Runtime Proof: `EXTERNAL_AUDIT_APPROVED`), Track P01-B (Direct Antigravity CLI Capability Proof: `READY`), Track P01-C (AO ↔ Agy Adapter / WorkerReport Integration Proof: `HELD`), Track P01-D (ChatGPT Plus Transport Feasibility: `TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). |
-| **Next Approved Action** | Track P01-B Execution — ACTIVE GATE: `P01_B_RUNTIME_EXECUTION_AUTHORIZED` (P01-A external audit approved with required corrections; P01-B released to READY and authorized for runtime execution). Track P01-C remains HELD. Do NOT freeze Architecture V2 yet. |
+| **Pending Runtime Proofs (P01)** | Track P01-A (AO Runtime Proof: `EXTERNAL_AUDIT_APPROVED`), Track P01-B (Direct Antigravity CLI Capability Proof: `PASS_PENDING_EXTERNAL_AUDIT`), Track P01-C (AO â†” Agy Adapter / WorkerReport Integration Proof: `HELD`), Track P01-D (ChatGPT Plus Transport Feasibility: `TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). |
+| **Next Approved Action** | Track P01-B Runtime Proof COMPLETE (`PASS_PENDING_EXTERNAL_AUDIT`; 8/9 capabilities proven; GAP-P01B-001 `QUOTA_EXHAUSTED_GAP` recorded). Next: Submit P01-B for External Audit. Track P01-C remains HELD. Do NOT freeze Architecture V2 yet. |
 
 ---
 
@@ -53,3 +53,5 @@
 | [`P01_D3C_EXTERNAL_TRANSPORT_AUDIT.md`](audits/P01_D3C_EXTERNAL_TRANSPORT_AUDIT.md) | `APPROVED` (P01-D3C PASS; PLUS_PRIVATE_MCP_TRANSPORT = PROVEN_ON_TARGET_ACCOUNT; P01-A = READY) | 2026-09-21 |
 | [`P01_A_AO_RUNTIME_PROOF.md`](audits/P01_A_AO_RUNTIME_PROOF.md) | `PASS` (AO v0.13.0 commit 15e9ea9; 22 Validations PASS; ConPTY, Worktree, Path Guard, SSE Events, Kill/Restore Verified; Corrected) | 2026-09-21 |
 | [`P01_A_EXTERNAL_AUDIT.md`](audits/P01_A_EXTERNAL_AUDIT.md) | `APPROVED` (External Supervisor approved P01-A runtime proof with required literal evidence corrections; P01-B released to READY) | 2026-09-21 |
+| [P01_B_AGY_CLI_PROOF.md](audits/P01_B_AGY_CLI_PROOF.md) | PASS_PENDING_EXTERNAL_AUDIT (8/9 capabilities PROVEN; P01-B1 through P01-B8 PASS; P01-B9 QUOTA_EXHAUSTED_GAP - conversation resume deferred; Agy 1.2.7 behavioral findings recorded) | 2026-09-21 |
+
