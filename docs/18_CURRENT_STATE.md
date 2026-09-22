@@ -1,10 +1,10 @@
 # 18_CURRENT_STATE.md — Operational Tracking & Proof Status
 
-> **Status**: P02 IMPLEMENTATION AUTHORIZED (Production Coding Authorized for TASK-P02-003 Revision 4)
+> **Status**: P02 IMPLEMENTATION AUTHORIZED (Production Coding Authorized for TASK-P02-004 Audit Core)
 > **Phase 0 Baseline**: Frozen at tag `phase0-architecture-v1` (commit `6f72eaca30be3fc3ac00f25829dd4283ed98c3f5`)
 > **Phase 1 Historical Freeze**: Tag `phase1-architecture-v2` (commit `883b083023398d95d50e3bb88e90dcfca0171745`; `HISTORICAL_FREEZE_SNAPSHOT_SUPERSEDED_BY_REAUDIT`)
 > **Phase 1 Current Baseline**: Frozen at tag `phase1-architecture-v2.1` (commit `62d3fe0df4a3a05697da77349ff085430ea452f7`)
-> **Updated**: 2026-09-22 (TASK-P02-003 = REVISION_REQUIRED; Revision: 4; Active Gate: P02_TASK_003_REVISION_4)
+> **Updated**: 2026-09-22 (TASK-P02-003 = EXTERNAL_AUDIT_APPROVED; TASK-P02-004 = AUTHORIZED; Active Gate: P02_TASK_004_AUDIT_CORE)
 
 ## 1. High-Level Summary
 
@@ -14,14 +14,14 @@
 | **Phase 1 (Upstream Proof)** | **COMPLETE** (Track P01-A: `EXTERNAL_AUDIT_APPROVED`; Track P01-B: `EXTERNAL_AUDIT_APPROVED`; Track P01-C: `EXTERNAL_AUDIT_APPROVED_WITH_ADR_011`; Track P01-D: `TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). All proofs verified. |
 | **Architecture V2 (Historical Freeze)** | **FROZEN** at tag `phase1-architecture-v2` (`HISTORICAL_FREEZE_SNAPSHOT_SUPERSEDED_BY_REAUDIT`). Immutable historical snapshot. |
 | **Architecture V2.1 (Current Baseline)** | **FROZEN** at tag `phase1-architecture-v2.1`. Zero modifications permitted without architecture governance amendment. |
-| **Project Stage** | **P02 IMPLEMENTATION** (`P02 = IMPLEMENTATION_ACTIVE`). `P02_CODE = AUTHORIZED`. `TASK_P02_001 = EXTERNAL_AUDIT_APPROVED`. `TASK_P02_002 = EXTERNAL_AUDIT_APPROVED`. `TASK_P02_003 = REVISION_REQUIRED` (`TASK_P02_003_REVISION = 4`). `P02_004 = NOT_RELEASED`. |
+| **Project Stage** | **P02 IMPLEMENTATION** (`P02 = IMPLEMENTATION_ACTIVE`). `P02_CODE = AUTHORIZED`. `TASK_P02_001 = EXTERNAL_AUDIT_APPROVED`. `TASK_P02_002 = EXTERNAL_AUDIT_APPROVED`. `TASK_P02_003 = EXTERNAL_AUDIT_APPROVED` (`TASK_P02_003_REVISION = 4`). `TASK_P02_004 = AUTHORIZED`. |
 | **Blocked Issues** | V1 ChatGPT transport blocker: **NONE**. P01 upstream-proof blocker: **NONE**. Pre-code verification command gap: **RESOLVED** via ADR-013 accepted and schema migrated to `verification_requests`. |
 | **Known Process Deviations** | P00-DEV-001 (`ACCEPTED_AT_PHASE0_FREEZE`); Process Hygiene Deviation recorded; **P01B-DEV-001**; **P01C-DEV-001**; **P01C-DEV-002**; **P01C-DEV-003**; **P01C-DEV-004**. |
 | **Open Implementation Decisions** | **NONE** (All pre-code architecture decisions accepted: ADR-013 Accepted, ADR-014 Accepted with Go 1.27.x baseline / 1.26.x min, ADR-015 Accepted with SQLite WAL + synchronous=FULL). |
 | **Documentation Baseline Versions** | AO `v0.13.0` (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`), Agy `1.2.7` (`7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`), `tunnel-client` `v0.0.14`. |
 | **Upstream Runtime Proofs (P01)** | Track P01-A (`EXTERNAL_AUDIT_APPROVED`), Track P01-B (`EXTERNAL_AUDIT_APPROVED`), Track P01-C (`EXTERNAL_AUDIT_APPROVED_WITH_ADR_011`), Track P01-D (`TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). Phase P01 proof activity is **COMPLETE**. |
-| **Next Approved Action** | Execute TASK-P02-003 Revision 4: enforce DRAFT->READY mutable contract activation authority, close immutable contract reuse on replanning, and validate Windows-safe report path segments. |
-| **Active Gate** | `P02_TASK_003_REVISION_4` |
+| **Next Approved Action** | Execute TASK-P02-004: implement append-only SQLite AuditEvent persistence, secret sanitization before persistence, deterministic SHA-256 hash-chain tamper evidence, lineage validation, and schema migration V1->V2. |
+| **Active Gate** | `P02_TASK_004_AUDIT_CORE` |
 | **P01 Execution Status** | `COMPLETE` |
 
 ---
@@ -68,3 +68,4 @@
 | [`P02_TASK_003_EXTERNAL_AUDIT.md`](audits/P02_TASK_003_EXTERNAL_AUDIT.md) | `REVISION_REQUIRED` (Commit accc68b audited: SQLite engine & pragmas PASS; Revision 2 required for atomic-dispatch ownership, initial task lifecycle, report path, stale contract revision, lineage, pair active lane, and recovery open attempt; Active Gate: P02_TASK_003_REVISION_2) | 2026-09-22 |
 | [`P02_TASK_003_EXTERNAL_REAUDIT.md`](audits/P02_TASK_003_EXTERNAL_REAUDIT.md) | `REVISION_REQUIRED` (Commit a53b744 audited: Rev-2 fixes approved; Revision 3 required for READY-entry contract authority, contract insert state guard, open-attempt recovery IS NULL, and SHA accuracy correction; Active Gate: P02_TASK_003_REVISION_3) | 2026-09-22 |
 | [`P02_TASK_003_EXTERNAL_REAUDIT_002.md`](audits/P02_TASK_003_EXTERNAL_REAUDIT_002.md) | `REVISION_REQUIRED` (Commit bcad6ea audited: Rev-3 contract insert lifecycle, ready preconditions, recovery ended_at IS NULL, and pair active lane approved; Revision 4 required for DRAFT->READY mutable plan requirement and Windows-safe report path validation; Active Gate: P02_TASK_003_REVISION_4) | 2026-09-22 |
+| [`P02_TASK_003_EXTERNAL_REAUDIT_FINAL.md`](audits/P02_TASK_003_EXTERNAL_REAUDIT_FINAL.md) | `EXTERNAL_AUDIT_APPROVED` (TASK-P02-003 Revision 4 approved: DRAFT->READY mutable contract authority, Windows-safe report path segments, StateStore SQLite core closed; TASK-P02-004 released) | 2026-09-22 |
