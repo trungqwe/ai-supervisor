@@ -52,7 +52,7 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003 ADR-016 REVISION 3
+# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003 ADR-016 REVISION 4
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
@@ -68,12 +68,13 @@ This document establishes immutable operational directives for all AI coding age
 > External audit of ADR-016 draft (commit `928b0d110058d8ca90d8d9b68d9aa478c1ee089a`) recorded findings `ADR16R1-001` through `ADR16R1-009` with verdict `ADR_016 = REVISION_1_REQUIRED` in `docs/audits/P03_ADR_016_EXTERNAL_AUDIT.md`.
 > External re-audit 001 of ADR-016 Revision 1 (commit `f5fadbeef86f6bd3a1b782e42c0affdfc32c3165`) verified findings `ADR16R1-001` through `ADR16R1-009` CLOSED and recorded findings `ADR16R2-001` through `ADR16R2-009` with verdict `ADR_016 = REVISION_2_REQUIRED` in `docs/audits/P03_ADR_016_EXTERNAL_REAUDIT_001.md`.
 > External re-audit 002 of ADR-016 Revision 2 (commit `11624f08d0c7351c7aeb047fa77305d2d5720bd1`) verified findings `ADR16R2-001` through `ADR16R2-009` SUBSTANTIVELY_CLOSED and recorded findings `ADR16R3-001` through `ADR16R3-010` with verdict `ADR_016 = REVISION_3_REQUIRED` in `docs/audits/P03_ADR_016_EXTERNAL_REAUDIT_002.md`.
-> ADR-016 has been remediated to Revision 3 (`ADR_016 = REVISION_3_READY_FOR_EXTERNAL_REAUDIT`, `ADR_016_ACCEPTANCE = NOT_GRANTED`).
+> External re-audit 003 of ADR-016 Revision 3 (commit `ff5993970b0fcb97f6dccace9a377404958fca5c`) verified findings `ADR16R3-001` through `ADR16R3-010` CLOSED and recorded findings `ADR16R4-001` through `ADR16R4-008` with verdict `ADR_016 = REVISION_4_REQUIRED` in `docs/audits/P03_ADR_016_EXTERNAL_REAUDIT_003.md`.
+> ADR-016 has been remediated to Revision 4 (`ADR_016 = REVISION_4_READY_FOR_EXTERNAL_REAUDIT`, `ADR_016_ACCEPTANCE = NOT_GRANTED`).
 > Architecture classification established: `P03_ARCHITECTURE_CHANGE = YES`, `P03_ADR_REQUIRED = YES`.
 > Production coding remains strictly **`HELD_PENDING_ADR_016_APPROVAL`** (`TASK_P03_003 = NOT_RELEASED`).
-> The active phase gate is **`EXTERNAL_SUPERVISOR_P03_ADR_016_REAUDIT_003`**.
+> The active phase gate is **`EXTERNAL_SUPERVISOR_P03_ADR_016_REAUDIT_004`**.
 
-1. **TASK-P03-003 ADR-016 REVISION 3 SCOPE**:
+1. **TASK-P03-003 ADR-016 REVISION 4 SCOPE**:
    - Scope is strictly confined to ADR-016 Revision 3 end-to-end consistency reconciliation and governance tracking.
    - Absolutely ZERO production code implementation (`internal/**/*.go`);
    - Absolutely ZERO schema or database migration implementation;
@@ -99,8 +100,8 @@ This document establishes immutable operational directives for all AI coding age
    - `PROPOSAL_P03_002 = EXTERNAL_APPROVED`
    - `P03_ARCHITECTURE_CHANGE = YES`
    - `P03_ADR_REQUIRED = YES`
-   - `ADR_016 = REVISION_3_READY_FOR_EXTERNAL_REAUDIT`
+   - `ADR_016 = REVISION_4_READY_FOR_EXTERNAL_REAUDIT`
    - `ADR_016_ACCEPTANCE = NOT_GRANTED`
    - `TASK_P03_003 = NOT_RELEASED`
    - `P03_CODE = HELD_PENDING_ADR_016_APPROVAL`
-   - `ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_ADR_016_REAUDIT_003`
+   - `ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_ADR_016_REAUDIT_004`
