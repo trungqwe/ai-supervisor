@@ -13,20 +13,25 @@ The `AOAdapter` is an anti-corruption layer shielding the Supervisor Control Pla
 
 ```typescript
 interface IAOAdapter {
-  // Daemon Health & Registration
-  checkHealth(): Promise<AOHealthStatus>;
+  // Preflight Probes & API Compatibility (FR-015)
+  checkHealth(): Promise<AOHealthStatus>;                           // GET /healthz (liveness)
+  checkReadiness(): Promise<AOReadinessStatus>;                      // GET /readyz (readiness)
+  listAgents(): Promise<AOAgentList>;                               // GET /api/v1/agents (harness presence)
+  getAgentReadiness(agentName?: string): Promise<AOAgentReadiness>; // GET /api/v1/agents/readiness (harness readiness)
+  getAPIContract(): Promise<string>;                                // GET /api/v1/openapi.yaml (public schema compatibility signal only)
+
+  // Project Registration
   registerProject(projectId: string, rootPath: string): Promise<AOResult>;
   getProject(projectId: string): Promise<AOProjectDetails>;
 
   // Session & Worker Lifecycle
   createWorkerSession(params: CreateWorkerParams): Promise<AOSessionDetails>;
-  getWorkerStatus(sessionId: string): Promise<AOWorkerStatus>;
+  getWorkerStatus(sessionId: string): Promise<AOWorkerStatus>;      // GET /api/v1/sessions/{id} (authoritative session/activity snapshot)
   stopWorker(sessionId: string): Promise<AOResult>;
   resumeWorker(sessionId: string): Promise<AOResult>;
 
   // Task Dispatch & Communication
   dispatchTaskContract(sessionId: string, contract: TaskContract): Promise<AODispatchResult>;
-  subscribeEvents(sessionId: string, onEvent: (e: AOEvent) => void): Subscription;
 
   // Workspace & Git Inspection
   getWorktreePath(sessionId: string): Promise<string>;
@@ -36,6 +41,21 @@ interface IAOAdapter {
   getWorkspaceFile(sessionId: string, relativePath: string): Promise<Uint8Array>;
 }
 ```
+
+### Preflight & Event Subscription Policies
+
+1. **FR-015 Preflight Classification**:
+   - `checkHealth()` maps to loopback `GET /healthz`, asserting daemon liveness (`status = "ok"`).
+   - `checkReadiness()` maps to loopback `GET /readyz`, asserting daemon readiness (`status = "ready"`).
+   - `listAgents()` maps to `GET /api/v1/agents`, asserting required harness availability (`"agy"`).
+   - `getAgentReadiness(agentName)` maps to `GET /api/v1/agents/readiness`, asserting harness execution readiness.
+   - `getAPIContract()` retrieves the raw public OpenAPI schema from `GET /api/v1/openapi.yaml`. It serves strictly as an **API compatibility signal** (`OPENAPI_CONTRACT = API_COMPATIBILITY_SIGNAL_ONLY`). It does **not** prove daemon binary release identity (`RUNTIME_AO_RELEASE_VERSION_PUBLIC_FIELD = ABSENT`, `PINNED_RELEASE_IDENTITY = DEPLOYMENT_PROVENANCE`).
+
+2. **CDC Event Subscription Policy (P03 Baseline)**:
+   - Event streaming subscription methods (such as legacy CDC event subscriptions) are formally **removed** from the active canonical `IAOAdapter` interface.
+   - Upstream AO `/api/v1/events` is a global database change-data-capture (CDC) stream, not a session lifecycle authority, not a worker heartbeat, and not required for the V1 P03 baseline.
+   - `CDC Event Subscription = DEFERRED OPTIONAL FUTURE OPTIMIZATION` for future wake-up hints only.
+   - Baseline worker lifecycle observation remains strictly bounded snapshot polling via `getWorkerStatus(sessionId)` (`GET /api/v1/sessions/{id}`).
 
 ---
 

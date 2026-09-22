@@ -52,14 +52,14 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P03 CANONICAL RECONCILIATION COMPLETE / TASK-P03-001 RELEASE PENDING
+# SECTION 2: CURRENT PHASE RULES — P03 CANONICAL RECONCILIATION REVISION 3 / FINAL EXTERNAL REAUDIT
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
 > Phase P02 domain and state storage core implementation is **COMPLETE** and approved by External Supervisor final audit (`P02_FINAL_AUDIT = EXTERNAL_AUDIT_APPROVED`, baseline commit `b073a1969d0b64d151e96f0d9b59b005d4cf518a`, evidence commit `7375bbe0c0f17ac6cc50f87a319cb936caf64905`).
 > Core directions of `PROPOSAL-P03-001` are **EXTERNAL_APPROVED** by External Supervisor decision.
-> Canonical specifications (`docs/02`, `docs/12`, `docs/14`, `docs/17`, `docs/21`, `docs/22`, `docs/phases/P03_AO_INTEGRATION.md`) have been reconciled.
-> The active phase gate is **`EXTERNAL_SUPERVISOR_P03_CANONICAL_RECONCILIATION`**.
+> Canonical specifications (`docs/02`, `docs/12`, `docs/14`, `docs/17`, `docs/21`, `docs/22`, `docs/phases/P03_AO_INTEGRATION.md`) have been reconciled under Revision 3.
+> The active phase gate is **`EXTERNAL_SUPERVISOR_P03_CANONICAL_REAUDIT`**.
 > Production coding for Phase P03 remains strictly **HELD** pending release of the immutable `TASK-P03-001` Task Contract.
 
 1. **PHASE P03 CANONICAL RECONCILIATION GATE BOUNDARY**:
@@ -81,7 +81,7 @@ This document establishes immutable operational directives for all AI coding age
 
 3. **P03 PRODUCTION CODE AUTHORIZATION GUARD**:
    - Production P03 coding in this repository becomes authorized **ONLY** when:
-     1. External Supervisor audits canonical P03 reconciliation and approves exit from gate `EXTERNAL_SUPERVISOR_P03_CANONICAL_RECONCILIATION`;
+     1. External Supervisor audits canonical P03 reconciliation and approves exit from gate `EXTERNAL_SUPERVISOR_P03_CANONICAL_REAUDIT`;
      2. External Supervisor releases an immutable Task Contract for `TASK-P03-001`;
      3. `P03_CODE` is transitioned from `HELD` to `AUTHORIZED`.
    - Until all conditions are met, `P03_CODE` remains strictly **HELD**, and no application source files (`.go`) may be created or modified.
