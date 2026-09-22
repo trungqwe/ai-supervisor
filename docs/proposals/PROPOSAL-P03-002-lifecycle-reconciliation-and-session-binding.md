@@ -2,13 +2,14 @@
 
 > **Proposal ID**: `PROPOSAL-P03-002`
 > **Revision**: `6`
-> **Status**: `REVISION_6_PENDING_EXTERNAL_REAUDIT`
+> **Status**: `EXTERNAL_APPROVED`
 > **Task Binding**: `TASK-P03-003` (Lifecycle Reconciliation and State Transitions)
+> **Approved Commit**: `8709af4b6aaf8613c69a10514971e320e3f90048`
 > **Baseline Commit**: `fac2d5b3d763796077505f9f368a4b46056ec140`
 > **Pinned AO Authority**: `Untrivial-ai/agent-orchestrator` v0.13.0 (Commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`)
-> **Architecture Classification**: `P03_ARCHITECTURE_CHANGE = YES`, `P03_ADR_REQUIRED = YES`, `ADR_016 = NOT_AUTHORIZED_TO_DRAFT_YET`
-> **Implementation Guard**: `TASK_P03_003 = NOT_RELEASED`, `P03_CODE = HELD_FOR_TASK_P03_003_PRECODE_RECONCILIATION`
-> **Active Gate**: `EXTERNAL_SUPERVISOR_P03_TASK_003_PROPOSAL_REAUDIT_006`
+> **Architecture Classification**: `P03_ARCHITECTURE_CHANGE = YES`, `P03_ADR_REQUIRED = YES`, `ADR_016 = DRAFT_AUTHORIZED`
+> **Implementation Guard**: `TASK_P03_003 = NOT_RELEASED`, `P03_CODE = HELD_PENDING_ADR_016_APPROVAL`
+> **Active Gate**: `P03_ADR_016_DRAFT`
 
 ---
 
@@ -464,13 +465,13 @@ ADR_016 = NOT_AUTHORIZED_TO_DRAFT_YET
 ## 19. External Approval Gate
 
 ```text
-PROPOSAL_P03_002 = REVISION_6_PENDING_EXTERNAL_REAUDIT
+PROPOSAL_P03_002 = EXTERNAL_APPROVED
 P03_ARCHITECTURE_CHANGE = YES
 P03_ADR_REQUIRED = YES
-ADR_016 = NOT_AUTHORIZED_TO_DRAFT_YET
+ADR_016 = DRAFT_AUTHORIZED
 TASK_P03_003 = NOT_RELEASED
-P03_CODE = HELD_FOR_TASK_P03_003_PRECODE_RECONCILIATION
-ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_TASK_003_PROPOSAL_REAUDIT_006
+P03_CODE = HELD_PENDING_ADR_016_APPROVAL
+ACTIVE_GATE = P03_ADR_016_DRAFT
 ```
 
-Execution is halted awaiting independent External Supervisor re-audit of Proposal Revision 6.
+Proposal Revision 6 is frozen and approved by External Supervisor Re-Audit 006 (commit `8709af4b6aaf8613c69a10514971e320e3f90048`) as the authoritative input to ADR-016 drafting.
