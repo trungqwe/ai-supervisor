@@ -52,7 +52,7 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003 ADR-016 REVISION 6
+# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003 ADR-016 ACCEPTED — CANONICAL RECONCILIATION PLANNING
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
@@ -71,20 +71,22 @@ This document establishes immutable operational directives for all AI coding age
 > External re-audit 003 of ADR-016 Revision 3 (commit `ff5993970b0fcb97f6dccace9a377404958fca5c`) verified findings `ADR16R3-001` through `ADR16R3-010` CLOSED and recorded findings `ADR16R4-001` through `ADR16R4-008` with verdict `ADR_016 = REVISION_4_REQUIRED` in `docs/audits/P03_ADR_016_EXTERNAL_REAUDIT_003.md`.
 > External re-audit 004 of ADR-016 Revision 4 (commit `dedcd9324b77b07d76cf7af36b363510975dfeb2`) verified findings `ADR16R4-001` through `ADR16R4-007` CLOSED/SUBSTANTIVELY_CLOSED, `ADR16R4-008` NOT_CLOSED, and recorded findings `ADR16R5-001` through `ADR16R5-005` with verdict `ADR_016 = REVISION_5_REQUIRED` in `docs/audits/P03_ADR_016_EXTERNAL_REAUDIT_004.md`.
 > External re-audit 005 of ADR-016 Revision 5 (commit `68b3699cfdeb38a9ecb93771fe3a5f2823938a18`) verified findings `ADR16R5-004` and `ADR16R5-005` CLOSED, `ADR16R5-003` SUBSTANTIVELY_CLOSED, `ADR16R5-002` PARTIALLY_CLOSED, `ADR16R4-008` and `ADR16R5-001` NOT_CLOSED, and recorded findings `ADR16R6-001` through `ADR16R6-004` with verdict `ADR_016 = REVISION_6_REQUIRED` in `docs/audits/P03_ADR_016_EXTERNAL_REAUDIT_005.md`.
-> ADR-016 has been remediated to Revision 6 (`ADR_016 = REVISION_6_READY_FOR_EXTERNAL_REAUDIT`, `ADR_016_ACCEPTANCE = NOT_GRANTED`).
+> External re-audit 006 of ADR-016 Revision 6 (commit `40d51ffe9af4dab5545f060d5bee2ffd441b6109`) verified findings `ADR16R6-001` through `ADR16R6-004`, `ADR16R4-008`, `ADR16R5-001`, and `ADR16R5-002` CLOSED with verdict `ADR_016 = EXTERNAL_APPROVED` and `ADR_016_ACCEPTANCE = GRANTED` in `docs/audits/P03_ADR_016_EXTERNAL_REAUDIT_006.md`.
+> ADR-016 is formally **ACCEPTED** (`ADR_016 = EXTERNAL_APPROVED`, `ADR_016_ACCEPTANCE = GRANTED`).
 > Architecture classification established: `P03_ARCHITECTURE_CHANGE = YES`, `P03_ADR_REQUIRED = YES`.
-> Production coding remains strictly **`HELD_PENDING_ADR_016_APPROVAL`** (`TASK_P03_003 = NOT_RELEASED`).
-> The active phase gate is **`EXTERNAL_SUPERVISOR_P03_ADR_016_REAUDIT_006`**.
+> Production coding remains strictly **`HELD_PENDING_CANONICAL_RECONCILIATION_AND_TASK_CONTRACT`** (`TASK_P03_003 = NOT_RELEASED`).
+> The active phase gate is **`CANONICAL_SPEC_RECONCILIATION_PLANNING`**.
 
-1. **TASK-P03-003 ADR-016 REVISION 6 SCOPE**:
-   - Scope is strictly confined to ADR-016 Revision 6 surgical reconciliation and governance tracking.
+1. **CANONICAL SPECIFICATION RECONCILIATION PLANNING SCOPE**:
+   - The next approved action is formulating the reconciliation scope for canonical specifications (`docs/04`, `docs/05`, `docs/06`, `docs/08`, `docs/12`, `docs/14`, `docs/22`) pursuant to accepted ADR-016 and `docs/24_CHANGE_GOVERNANCE.md`.
+   - Absolutely ZERO modification to canonical specifications in this turn;
+   - Absolutely ZERO Task Contract creation or release;
    - Absolutely ZERO production code implementation (`internal/**/*.go`);
-   - Absolutely ZERO schema or database migration implementation;
-   - Absolutely ZERO canonical document mutation.
+   - Absolutely ZERO schema or database migration implementation.
 
 2. **TASK-P03-003 PRODUCTION CODE GUARD**:
    - Production coding of TASK-P03-003 remains strictly **HELD** (`TASK_P03_003 = NOT_RELEASED`).
-   - Implementation becomes authorized only upon formal External Supervisor acceptance of ADR-016, canonical specification reconciliation, and an immutable TASK-P03-003 Task Contract release.
+   - Implementation becomes authorized only upon formal External Supervisor approval of canonical specification reconciliation and an immutable TASK-P03-003 Task Contract release.
 
 3. **EXPLICITLY FORBIDDEN IN THIS STAGE**:
    - Absolutely NO polling loops, tickers, or background worker threads;
@@ -102,8 +104,8 @@ This document establishes immutable operational directives for all AI coding age
    - `PROPOSAL_P03_002 = EXTERNAL_APPROVED`
    - `P03_ARCHITECTURE_CHANGE = YES`
    - `P03_ADR_REQUIRED = YES`
-   - `ADR_016 = REVISION_6_READY_FOR_EXTERNAL_REAUDIT`
-   - `ADR_016_ACCEPTANCE = NOT_GRANTED`
+   - `ADR_016 = EXTERNAL_APPROVED`
+   - `ADR_016_ACCEPTANCE = GRANTED`
    - `TASK_P03_003 = NOT_RELEASED`
-   - `P03_CODE = HELD_PENDING_ADR_016_APPROVAL`
-   - `ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_ADR_016_REAUDIT_006`
+   - `P03_CODE = HELD_PENDING_CANONICAL_RECONCILIATION_AND_TASK_CONTRACT`
+   - `ACTIVE_GATE = CANONICAL_SPEC_RECONCILIATION_PLANNING`
