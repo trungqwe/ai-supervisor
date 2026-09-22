@@ -1,20 +1,23 @@
 # PROPOSAL-P03-002: Lifecycle Reconciliation, Durable Dispatch Saga, and Session Binding Specification
 
 > **Proposal ID**: `PROPOSAL-P03-002`
-> **Revision**: `5`
-> **Status**: `REVISION_5_PENDING_EXTERNAL_REAUDIT`
+> **Revision**: `6`
+> **Status**: `REVISION_6_PENDING_EXTERNAL_REAUDIT`
 > **Task Binding**: `TASK-P03-003` (Lifecycle Reconciliation and State Transitions)
-> **Baseline Commit**: `38154d7fa65888cbf25b0bc5206384198a9a8a40`
+> **Baseline Commit**: `fac2d5b3d763796077505f9f368a4b46056ec140`
 > **Pinned AO Authority**: `Untrivial-ai/agent-orchestrator` v0.13.0 (Commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`)
 > **Architecture Classification**: `P03_ARCHITECTURE_CHANGE = YES`, `P03_ADR_REQUIRED = YES`, `ADR_016 = NOT_AUTHORIZED_TO_DRAFT_YET`
 > **Implementation Guard**: `TASK_P03_003 = NOT_RELEASED`, `P03_CODE = HELD_FOR_TASK_P03_003_PRECODE_RECONCILIATION`
-> **Active Gate**: `EXTERNAL_SUPERVISOR_P03_TASK_003_PROPOSAL_REAUDIT_005`
+> **Active Gate**: `EXTERNAL_SUPERVISOR_P03_TASK_003_PROPOSAL_REAUDIT_006`
 
 ---
 
 ## 1. Executive Summary & Problem Statement
 
 This proposal establishes the architectural specifications, lifecycle reconciliation rules, durable dispatch saga mechanics, and restart recovery protocols for `TASK-P03-003` under pinned Agent Orchestrator (`AO`) v0.13.0 (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`).
+
+Revision 6 closes External Re-Audit finding `P03T3PR6-001` (`STALE_PROPOSAL_APPROVAL_GATE_TARGET`):
+- **Approval Gate Target Alignment (`P03T3PR6-001`)**: Current authorization gates now consistently target Proposal Revision 6. Historical Revision-4 references remain untouched where they describe actual prior audit history. All substantive Revision-5 closures (`P03T3PR5-001`, `P03T3PR5-002`, `P03T3PR5-003`) and earlier closures are strictly preserved.
 
 Revision 5 surgically addresses and resolves the internal consistency findings of External Re-Audit `P03T3PR5-001`, `P03T3PR5-002`, and `P03T3PR5-003`:
 1. **Quarantine Resolution Ledger Consistency (`P03T3PR5-001`)**: Formally establishes the semantic distinction between:
@@ -440,7 +443,7 @@ ADR_016 = NOT_AUTHORIZED_TO_DRAFT_YET
   2. Introduces `UNCERTAIN_DELIVERY_QUARANTINE` and pre-dispatch retry guards bound to original execution identity.
   3. Formally amends ADR-012 Section 10 to separate Pair Session Lifecycle Side Effects from Task Execution Side Effects.
   4. Amends domain persistence relationships (`Pair 1 o-- 1 WorkerSession`) and adds attempt execution snapshots (`terminal_generation`).
-- **ADR Authorization**: An Architecture Decision Record (`ADR-016`) is mandatory. Drafting remains **strictly unauthorized** until Proposal Revision 4 is independently reviewed and approved by the External Supervisor.
+- **ADR Authorization**: An Architecture Decision Record (`ADR-016`) is mandatory. Drafting remains **strictly unauthorized** until Proposal Revision 6 is independently reviewed and approved by the External Supervisor.
 
 ---
 
@@ -461,13 +464,13 @@ ADR_016 = NOT_AUTHORIZED_TO_DRAFT_YET
 ## 19. External Approval Gate
 
 ```text
-PROPOSAL_P03_002 = REVISION_5_PENDING_EXTERNAL_REAUDIT
+PROPOSAL_P03_002 = REVISION_6_PENDING_EXTERNAL_REAUDIT
 P03_ARCHITECTURE_CHANGE = YES
 P03_ADR_REQUIRED = YES
 ADR_016 = NOT_AUTHORIZED_TO_DRAFT_YET
 TASK_P03_003 = NOT_RELEASED
 P03_CODE = HELD_FOR_TASK_P03_003_PRECODE_RECONCILIATION
-ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_TASK_003_PROPOSAL_REAUDIT_005
+ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_TASK_003_PROPOSAL_REAUDIT_006
 ```
 
-Execution is halted awaiting independent External Supervisor re-audit of Proposal Revision 5.
+Execution is halted awaiting independent External Supervisor re-audit of Proposal Revision 6.
