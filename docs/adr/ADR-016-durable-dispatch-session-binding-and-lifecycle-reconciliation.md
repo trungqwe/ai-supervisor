@@ -1,7 +1,7 @@
-# ADR-016: Durable Worker Session Binding, Dispatch Saga, and Lifecycle Reconciliation (Revision 5)
+# ADR-016: Durable Worker Session Binding, Dispatch Saga, and Lifecycle Reconciliation (Revision 6)
 
-> **Status**: `PROPOSED  -  PENDING EXTERNAL REAUDIT` (Revision 5)
-> **Date**: 2026-09-22 (Revision 1: 2026-09-23, Revision 2: 2026-09-23, Revision 3: 2026-09-23, Revision 4: 2026-09-23, Revision 5: 2026-09-23)
+> **Status**: PROPOSED - PENDING EXTERNAL REAUDIT (Revision 6)
+> **Date**: 2026-09-22 (Revision 1: 2026-09-23, Revision 2: 2026-09-23, Revision 3: 2026-09-23, Revision 4: 2026-09-23, Revision 5: 2026-09-23, Revision 6: 2026-09-23)
 > **Authority**: Architecture Decision Record
 > **Proposal Authority**: `PROPOSAL-P03-002 Revision 6` (`EXTERNAL_APPROVED`, commit `8709af4b6aaf8613c69a10514971e320e3f90048`)
 > **Deciders**: External Supervisor, Engineering Team
@@ -24,7 +24,16 @@ During pre-code architectural analysis for `TASK-P03-003` (Lifecycle Reconciliat
 
 `PROPOSAL-P03-002 Revision 6` resolved these gaps through extensive architectural analysis and was formally approved by External Supervisor Re-Audit 006 (commit `8709af4b6aaf8613c69a10514971e320e3f90048`).
 
-Initial draft of ADR-016 (commit `928b0d1`) was audited in `docs/audits/P03_ADR_016_EXTERNAL_AUDIT.md` (findings `ADR16R1-001..009`). Revision 1 (commit `f5fadbe`) was re-audited in `docs/audits/P03_ADR_016_EXTERNAL_REAUDIT_001.md` (findings `ADR16R2-001..009`). Revision 2 (commit `11624f0`) was re-audited in `docs/audits/P03_ADR_016_EXTERNAL_REAUDIT_002.md` (findings `ADR16R3-001..010`). Revision 3 (commit `ff59939`) was re-audited in `docs/audits/P03_ADR_016_EXTERNAL_REAUDIT_003.md` (findings `ADR16R4-001..008`). Revision 4 (commit `dedcd93`) was re-audited in `docs/audits/P03_ADR_016_EXTERNAL_REAUDIT_004.md` (findings `ADR16R5-001..005` recorded, `ADR16R4-008` not closed). This document establishes **ADR-016 Revision 5**, delivering final literal-consistency, open-attempt closure at `HUMAN_REQUIRED`, stop transport ambiguity handling, and report integrity reconciliation.
+Initial draft of ADR-016 (commit `928b0d1`) was audited in `docs/audits/P03_ADR_016_EXTERNAL_AUDIT.md` (findings `ADR16R1-001..009`). Revision 1 (commit `f5fadbe`) was re-audited in `docs/audits/P03_ADR_016_EXTERNAL_REAUDIT_001.md` (findings `ADR16R2-001..009`). Revision 2 (commit `11624f0`) was re-audited in `docs/audits/P03_ADR_016_EXTERNAL_REAUDIT_002.md` (findings `ADR16R3-001..010`). Revision 3 (commit `ff59939`) was re-audited in `docs/audits/P03_ADR_016_EXTERNAL_REAUDIT_003.md` (findings `ADR16R4-001..008`). Revision 4 (commit `dedcd93`) was re-audited in `docs/audits/P03_ADR_016_EXTERNAL_REAUDIT_004.md` (findings `ADR16R5-001..005` recorded, `ADR16R4-008` not closed). This document was revised under **ADR-016 Revision 5** (commit `68b3699`), which reconciled honest TOCTOU stop provenance, `STOP_CALL_OUTCOME_UNKNOWN` transport ambiguity, atomic attempt closure on `BLOCKED -> HUMAN_REQUIRED`, and nullable worktree path.
+
+Following External Supervisor Re-Audit 005 (`docs/audits/P03_ADR_016_EXTERNAL_REAUDIT_005.md`), four critical literal safety and consistency findings were recorded:
+1. `ADR16R6-001` (CRITICAL): The crash window between `RUNNING -> BLOCKED` (which leaves `ended_at = NULL`) and `BLOCKED -> HUMAN_REQUIRED` was unrecovered because D13 startup recovery only enumerated `DISPATCHED` and `RUNNING` tasks. Without startup escalation recovery for `BLOCKED` tasks with open attempts, a power loss would orphan the attempt indefinitely because the canonical state graph contains no `BLOCKED -> RUNNING` edge.
+2. `ADR16R6-002` (HIGH): D12 defined atomic transactions only for terminal transitions (`DISPATCHED/RUNNING -> FAILED`) and non-closing transitions (`RUNNING -> BLOCKED`), omitting the atomic transaction specification for attempt-closing nonterminal workflow escalation (`BLOCKED -> HUMAN_REQUIRED`).
+3. `ADR16R6-003` (HIGH): The standalone D11 safety invariant for `WORKER_STOPPED` was too weak (permitting recording on `isTerminated == true` alone), regressing from finding R3. Positive intentional-stop provenance requires durably proven prior kill acceptance (`STOP_CALL_SUCCEEDED`) with matching execution identity.
+4. `ADR16R6-004` (HIGH): The D6 parenthetical for unresolved provisioning operations was logically reversed (`stage NOT IN ('PROVISION_REQUESTED', 'PROVISION_FAILED')` instead of `stage IN`).
+5. `ADR16R4-008` & `ADR16R5-001` / `002`: Residual token drift in the Lifecycle Observation Matrix (which still contained undeclared `PRE_SEND_BLOCKED`) and live governance contradictions in `AGENTS.md` required complete elimination.
+
+This document establishes **ADR-016 Revision 6**, executing this surgical, literal-safety reconciliation with ZERO production code, ZERO database migrations, and ZERO canonical specification mutation.
 
 ---
 
@@ -119,19 +128,19 @@ The thirteen core decisions (D1 through D13) established by this ADR are summari
 
 | Decision ID | Selected Proposed Decision | Primary Rationale | Rejected Alternative(s) | Persistence Impact | TaskState Impact | External Approval Status |
 |---|---|---|---|---|---|---|
-| **D1** | **Model A: Mutable Current Session with Nullable WorktreePath, Independent Quarantine State & 1:1 Enforcement** | Preserves canonical `Pair 1 o-- 1 WorkerSession` with `UNIQUE(session_id)`; `worktree_path TEXT NULL` acknowledges public AO unavailability; separates runtime lifecycle `status` from `quarantine_state`; immutable attempt snapshot columns guarantee historical auditability. | Model B (Historical table + active pointer); Model C (Join table); Mandatory worktree_path from unavailable field. | Adds snapshot columns to `task_attempts`; creates `worker_sessions` table with unique constraints on both `pair_id` and `session_id`. | None. | `PENDING_EXTERNAL_REAUDIT_005` |
-| **D2** | **Formally Amend ADR-012 Section 10** | Decouples Pair-scoped sandbox provisioning from task-scoped prompt dispatch; `/send` remains strictly post-`DISPATCHED`. | Retain strict post-dispatch session spawn. | None directly. | None. | `PENDING_EXTERNAL_REAUDIT_005` |
-| **D3** | **Fail-Closed Spawn Disposition with Explicit Session Exclusivity Guard (`CREATE_NEW_WORKER_SESSION_ALLOWED_IFF`) & Durable Provisioning Operations** | Pinned AO spawn exposes no caller correlation ID; pre-binding spawn crashes tracked durably in `pair_provisioning_operations`; spawn allowed ONLY if no current WorkerSession exists; unowned sessions cannot be proven owned and are not killed automatically. | Automatic orphan reaper; Blind spawn when WorkerSession exists; Ephemeral in-memory quarantine. | Creates table `pair_provisioning_operations` with partial unique index; locks Pair lane on unresolved crash. | None. | `PENDING_EXTERNAL_REAUDIT_005` |
-| **D4** | **Dedicated `dispatch_operations` Table with 1:1 Attempt Cardinality & Candidate TaskAttempt Extensions** | Tracks `DISPATCH_BOUND -> SEND_REQUESTED -> SEND_CONFIRMED`; enforces `UNIQUE(attempt_id)` (`# ONE_TASK_ATTEMPT = ONE_DISPATCH_OPERATION`); correctly references `task_attempts(attempt_id)`; defines candidate snapshot and quarantine fields on `task_attempts`. | Referencing non-existent `task_attempts(id)`; Permitting multiple dispatch sagas per attempt. | Creates `dispatch_operations` table with `UNIQUE(attempt_id)`. | None (TaskState remains `DISPATCHED`). | `PENDING_EXTERNAL_REAUDIT_005` |
-| **D5** | **Fail-Closed Terminal Failure (`DISPATCHED -> FAILED`) with Immediate Quarantine** | Pinned `/send` lacks delivery proof on crash; assuming failure and quarantining prevents split-brain execution; clearance requires Class A, Class B, or Class C resolution. | Blind resend; Silent continuation; Direct `DISPATCHED -> HUMAN_REQUIRED`. | Records `resolution_state` in dispatch operations and audit log; sets `quarantine_state = 'QUARANTINED'` on both session and attempt. | `DISPATCHED -> FAILED -> HUMAN_REQUIRED`. | `PENDING_EXTERNAL_REAUDIT_005` |
-| **D6** | **Option D: Double-Gated Quarantine with Dedicated Attempt Quarantine State** | Provides defense-in-depth across Pair lane and task attempt levels; separates independent safety gate (`task_attempts.quarantine_state`) from diagnostic outcome (`recovery_disposition`). | Single-level lane check; Conflating diagnostic disposition with quarantine safety truth. | `worker_sessions.quarantine_state` and dedicated `task_attempts.quarantine_state`. | Blocks `FAILED -> READY` while quarantined. | `PENDING_EXTERNAL_REAUDIT_005` |
-| **D7** | **Strict Whitelist Pre-Send Admissibility (`idle`, `waiting_input` only) via Approved Adapter Surface** | SessionGuard blocks writes on `blocked`/`exited`/`terminated`; `active` before send indicates foreign turn; `terminal_generation` is opaque string; inspects activity via approved `GetWorkerStatus`. | Permitting `active` before send; Raw transport calls. | Records rejection audit event. | Rejection halts dispatch or fails attempt. | `PENDING_EXTERNAL_REAUDIT_005` |
-| **D8** | **Option C: Persist Ambiguity Disposition (`MISSED_ACTIVE_WINDOW`) and Handoff Downstream with Verified Pre-Transition Check** | Respects task boundaries; verifies handoff capability prior to `DISPATCHED -> RUNNING`; fails `DISPATCHED -> FAILED` if unavailable at checkpoint; later failures use `RUNNING -> FAILED`. | Transition order contradiction; Immediate fail-closed; Predefining "no modified files = FAILED". | `task_attempts.recovery_disposition = 'MISSED_ACTIVE_WINDOW'`. | `DISPATCHED -> RUNNING` (or `DISPATCHED -> FAILED` if handoff unavailable). | `PENDING_EXTERNAL_REAUDIT_005` |
-| **D9** | **Preserve `RUNNING`, Emit Diagnostic Telemetry, Continue Polling** | `waiting_input` indicates worker is at empty prompt; does not indicate failure or permission blockage. | Transition to `BLOCKED`; Transition to `FAILED`. | Diagnostic audit telemetry only. | None (remains `RUNNING`). | `PENDING_EXTERNAL_REAUDIT_005` |
-| **D10** | **Graph-Compatible Blocked Handling: Preserve `RUNNING` with `AO_BLOCKED_DECISION`; Close Attempt at `BLOCKED -> HUMAN_REQUIRED` (`AO_BLOCKED_ESCALATED`)** | Canonical graph has NO `BLOCKED -> RUNNING` edge; AO `blocked` observation keeps TaskState `RUNNING` with open attempt; formal escalation `BLOCKED -> HUMAN_REQUIRED` atomically closes attempt (`ended_at = now`, `AO_BLOCKED_ESCALATED`) under invariant `HUMAN_REQUIRED_WITH_PRIOR_EXECUTION MUST_NOT_RETAIN_RESUMABLE_OPEN_ATTEMPT`. | Claiming `BLOCKED -> RUNNING` resumption; Retaining resumable open attempt after formal `HUMAN_REQUIRED` escalation. | `task_attempts.recovery_disposition = 'AO_BLOCKED_DECISION'` (observation) / `'AO_BLOCKED_ESCALATED'` (escalation). | Observation keeps `RUNNING`; formal escalation executes `RUNNING -> BLOCKED -> HUMAN_REQUIRED`. | `PENDING_EXTERNAL_REAUDIT_005` |
-| **D11** | **Purpose-Aware Stop Lifecycle with Generation Precheck, Restart-Stable Deadlines, Ambiguous Transport Handling & Preserved Provenance** | Pinned `/kill` lacks atomic generation fence (`PINNED_KILL_GENERATION_ATOMIC_FENCE = ABSENT`); stop operations bind explicit `purpose` (`RUNNING_ATTEMPT_STOP`, `QUARANTINE_CLEANUP`, `PAIR_MAINTENANCE`); `stage` preserves wire-effect facts; transport ambiguity recorded as `STOP_CALL_OUTCOME_UNKNOWN`; persists `confirmation_deadline_at`. | Claiming atomic kill fence; Erasing wire-effect stage provenance; Unconditional `RUNNING -> FAILED` for cleanup stops; Converting transport ambiguity to definite call failure. | Complete `stop_operations` table with `purpose`, `confirmation_deadline_at`, and `resolved_at`. | `PURPOSE_DEPENDENT` (`RUNNING -> FAILED` only for `RUNNING_ATTEMPT_STOP` on `RUNNING` tasks; ZERO transition for cleanup/maintenance). | `PENDING_EXTERNAL_REAUDIT_005` |
-| **D12** | **Unified StateStore Atomic Terminal Transition (`AtomicTerminalTransition`) without Undeclared Columns** | Ensures crash consistency: TaskState CAS, attempt `ended_at`, and `recovery_disposition` committed in one SQLite transaction; full error details logged in `audit_events.details_json`; zero undeclared columns. | Referencing nonexistent `terminal_error` on `task_attempts`; Non-transactional terminal updates. | Atomically updates `tasks`, `task_attempts`, `audit_events`. | Executes terminal failure transitions. | `PENDING_EXTERNAL_REAUDIT_005` |
-| **D13** | **Synchronous Startup Recovery Sweep Covering Provisioning, Dispatch, and Purpose-Aware Stops** | Enumerates `pair_provisioning_operations`, `dispatch_operations`, and in-flight `stop_operations`; prohibits automatic `/kill` reissue (`STOP_REISSUE_REQUIRES_HUMAN`); evaluates restart-stable `confirmation_deadline_at`; uses approved adapter methods. | Scanning `STOP_REQUESTED` only; Automatic reissue of kill without atomic fence; Resetting stop timeout on restart. | Recovery audit records. | Reconciles in-flight tasks and sagas. | `PENDING_EXTERNAL_REAUDIT_005` |
+| **D1** | **Model A: Mutable Current Session with Nullable WorktreePath, Independent Quarantine State & 1:1 Enforcement** | Preserves canonical `Pair 1 o-- 1 WorkerSession` with `UNIQUE(session_id)`; `worktree_path TEXT NULL` acknowledges public AO unavailability; separates runtime lifecycle `status` from `quarantine_state`; immutable attempt snapshot columns guarantee historical auditability. | Model B (Historical table + active pointer); Model C (Join table); Mandatory worktree_path from unavailable field. | Adds snapshot columns to `task_attempts`; creates `worker_sessions` table with unique constraints on both `pair_id` and `session_id`. | None. | `PENDING_EXTERNAL_REAUDIT_006` |
+| **D2** | **Formally Amend ADR-012 Section 10** | Decouples Pair-scoped sandbox provisioning from task-scoped prompt dispatch; `/send` remains strictly post-`DISPATCHED`. | Retain strict post-dispatch session spawn. | None directly. | None. | `PENDING_EXTERNAL_REAUDIT_006` |
+| **D3** | **Fail-Closed Spawn Disposition with Explicit Session Exclusivity Guard (`CREATE_NEW_WORKER_SESSION_ALLOWED_IFF`) & Durable Provisioning Operations** | Pinned AO spawn exposes no caller correlation ID; pre-binding spawn crashes tracked durably in `pair_provisioning_operations`; spawn allowed ONLY if no current WorkerSession exists; unowned sessions cannot be proven owned and are not killed automatically. | Automatic orphan reaper; Blind spawn when WorkerSession exists; Ephemeral in-memory quarantine. | Creates table `pair_provisioning_operations` with partial unique index; locks Pair lane on unresolved crash. | None. | `PENDING_EXTERNAL_REAUDIT_006` |
+| **D4** | **Dedicated `dispatch_operations` Table with 1:1 Attempt Cardinality & Candidate TaskAttempt Extensions** | Tracks `DISPATCH_BOUND -> SEND_REQUESTED -> SEND_CONFIRMED`; enforces `UNIQUE(attempt_id)` (`# ONE_TASK_ATTEMPT = ONE_DISPATCH_OPERATION`); correctly references `task_attempts(attempt_id)`; defines candidate snapshot and quarantine fields on `task_attempts`. | Referencing non-existent `task_attempts(id)`; Permitting multiple dispatch sagas per attempt. | Creates `dispatch_operations` table with `UNIQUE(attempt_id)`. | None (TaskState remains `DISPATCHED`). | `PENDING_EXTERNAL_REAUDIT_006` |
+| **D5** | **Fail-Closed Terminal Failure (`DISPATCHED -> FAILED`) with Immediate Quarantine** | Pinned `/send` lacks delivery proof on crash; assuming failure and quarantining prevents split-brain execution; clearance requires Class A, Class B, or Class C resolution. | Blind resend; Silent continuation; Direct `DISPATCHED -> HUMAN_REQUIRED`. | Records `resolution_state` in dispatch operations and audit log; sets `quarantine_state = 'QUARANTINED'` on both session and attempt. | `DISPATCHED -> FAILED -> HUMAN_REQUIRED`. | `PENDING_EXTERNAL_REAUDIT_006` |
+| **D6** | **Option D: Double-Gated Quarantine with Dedicated Attempt Quarantine State** | Provides defense-in-depth across Pair lane and task attempt levels; separates independent safety gate (`task_attempts.quarantine_state`) from diagnostic outcome (`recovery_disposition`). | Single-level lane check; Conflating diagnostic disposition with quarantine safety truth. | `worker_sessions.quarantine_state` and dedicated `task_attempts.quarantine_state`. | Blocks `FAILED -> READY` while quarantined. | `PENDING_EXTERNAL_REAUDIT_006` |
+| **D7** | **Strict Whitelist Pre-Send Admissibility (`idle`, `waiting_input` only) via Approved Adapter Surface** | SessionGuard blocks writes on `blocked`/`exited`/`terminated`; `active` before send indicates foreign turn; `terminal_generation` is opaque string; inspects activity via approved `GetWorkerStatus`. | Permitting `active` before send; Raw transport calls. | Records rejection audit event. | Rejection halts dispatch or fails attempt. | `PENDING_EXTERNAL_REAUDIT_006` |
+| **D8** | **Option C: Persist Ambiguity Disposition (`MISSED_ACTIVE_WINDOW`) and Handoff Downstream with Verified Pre-Transition Check** | Respects task boundaries; verifies handoff capability prior to `DISPATCHED -> RUNNING`; fails `DISPATCHED -> FAILED` if unavailable at checkpoint; later failures use `RUNNING -> FAILED`. | Transition order contradiction; Immediate fail-closed; Predefining "no modified files = FAILED". | `task_attempts.recovery_disposition = 'MISSED_ACTIVE_WINDOW'`. | `DISPATCHED -> RUNNING` (or `DISPATCHED -> FAILED` if handoff unavailable). | `PENDING_EXTERNAL_REAUDIT_006` |
+| **D9** | **Preserve `RUNNING`, Emit Diagnostic Telemetry, Continue Polling** | `waiting_input` indicates worker is at empty prompt; does not indicate failure or permission blockage. | Transition to `BLOCKED`; Transition to `FAILED`. | Diagnostic audit telemetry only. | None (remains `RUNNING`). | `PENDING_EXTERNAL_REAUDIT_006` |
+| **D10** | **Graph-Compatible Blocked Handling: Preserve `RUNNING` with `AO_BLOCKED_DECISION`; Close Attempt at `BLOCKED -> HUMAN_REQUIRED` (`AO_BLOCKED_ESCALATED`)** | Canonical graph has NO `BLOCKED -> RUNNING` edge; AO `blocked` observation keeps TaskState `RUNNING` with open attempt; formal escalation `BLOCKED -> HUMAN_REQUIRED` atomically closes attempt (`ended_at = now`, `AO_BLOCKED_ESCALATED`) under invariant `HUMAN_REQUIRED_WITH_PRIOR_EXECUTION MUST_NOT_RETAIN_RESUMABLE_OPEN_ATTEMPT`. | Claiming `BLOCKED -> RUNNING` resumption; Retaining resumable open attempt after formal `HUMAN_REQUIRED` escalation. | `task_attempts.recovery_disposition = 'AO_BLOCKED_DECISION'` (observation) / `'AO_BLOCKED_ESCALATED'` (escalation). | Observation keeps `RUNNING`; formal escalation executes `RUNNING -> BLOCKED -> HUMAN_REQUIRED`. | `PENDING_EXTERNAL_REAUDIT_006` |
+| **D11** | **Purpose-Aware Stop Lifecycle with Generation Precheck, Restart-Stable Deadlines, Ambiguous Transport Handling & Preserved Provenance** | Pinned `/kill` lacks atomic generation fence (`PINNED_KILL_GENERATION_ATOMIC_FENCE = ABSENT`); stop operations bind explicit `purpose` (`RUNNING_ATTEMPT_STOP`, `QUARANTINE_CLEANUP`, `PAIR_MAINTENANCE`); `stage` preserves wire-effect facts; transport ambiguity recorded as `STOP_CALL_OUTCOME_UNKNOWN`; persists `confirmation_deadline_at`. | Claiming atomic kill fence; Erasing wire-effect stage provenance; Unconditional `RUNNING -> FAILED` for cleanup stops; Converting transport ambiguity to definite call failure. | Complete `stop_operations` table with `purpose`, `confirmation_deadline_at`, and `resolved_at`. | `PURPOSE_DEPENDENT` (`RUNNING -> FAILED` only for `RUNNING_ATTEMPT_STOP` on `RUNNING` tasks; ZERO transition for cleanup/maintenance). | `PENDING_EXTERNAL_REAUDIT_006` |
+| **D12** | **Unified StateStore Atomic Terminal Transition (`AtomicTerminalTransition`) without Undeclared Columns** | Ensures crash consistency: TaskState CAS, attempt `ended_at`, and `recovery_disposition` committed in one SQLite transaction; full error details logged in `audit_events.details_json`; zero undeclared columns. | Referencing nonexistent `terminal_error` on `task_attempts`; Non-transactional terminal updates. | Atomically updates `tasks`, `task_attempts`, `audit_events`. | Executes terminal failure transitions. | `PENDING_EXTERNAL_REAUDIT_006` |
+| **D13** | **Synchronous Startup Recovery Sweep Covering Provisioning, Dispatch, Purpose-Aware Stops, and Mandatory Blocked Attempt Escalation (`# BLOCKED_WITH_OPEN_CURRENT_ATTEMPT MANDATORY_ESCALATION_RECOVERY`)** | Enumerates `pair_provisioning_operations`, `dispatch_operations`, and in-flight `stop_operations`; prohibits automatic `/kill` reissue (`STOP_REISSUE_REQUIRES_HUMAN`); evaluates restart-stable `confirmation_deadline_at`; uses approved adapter methods. | Scanning `STOP_REQUESTED` only; Automatic reissue of kill without atomic fence; Resetting stop timeout on restart. | Recovery audit records. | Reconciles in-flight tasks and sagas. | `PENDING_EXTERNAL_REAUDIT_006` |
 
 ---
 
@@ -573,7 +582,7 @@ YES.
    Prior to dispatching or retrying a task, the Supervisor verifies:
    - Target `worker_sessions.quarantine_state == 'CLEAN'`, AND
    - All prior attempts for the target task have `task_attempts.quarantine_state == 'CLEAN'`, AND
-   - Target Pair has no unresolved provisioning operations (`stage NOT IN ('PROVISION_REQUESTED', 'PROVISION_FAILED')`).
+   - Target Pair has no unresolved provisioning operations (there must exist ZERO rows for the target Pair where `stage IN ('PROVISION_REQUESTED', 'PROVISION_FAILED')`, evaluated via `SELECT COUNT(*) FROM pair_provisioning_operations WHERE pair_id = ? AND stage IN ('PROVISION_REQUESTED', 'PROVISION_FAILED') == 0`; Finding `ADR16R6-004`).
    If any check fails, dispatch is rejected with `ErrQuarantinedExecution`.
 4. **Clearance Protocol**:
    Quarantine is cleared in a single atomic SQLite transaction ONLY when governed Class A (physical kill confirmed) or Class B / Class C (operator administrative risk resolution) is formally executed:
@@ -681,7 +690,7 @@ YES.
 1. State Transition Ordering:
    When the Supervisor observes `idle` following `SEND_CONFIRMED` without having observed an intervening `active` state:
    - **Pre-Transition Check**: Prior to committing `DISPATCHED -> RUNNING`, the Supervisor verifies that downstream handoff capability is available (StateStore writable, handoff queue accessible).
-   - **If Handoff Capability is Unavailable at Pre-Transition**: The Supervisor fails closed using the legal canonical edge `DISPATCHED -> FAILED` (reason: `HANDOFF_UNAVAILABLE`).
+   - **If Handoff Capability is Unavailable at Pre-Transition**: The Supervisor fails closed using the legal canonical edge `DISPATCHED -> FAILED` with `recovery_disposition = 'MISSED_ACTIVE_WINDOW'` and emits audit event `MISSED_ACTIVE_WINDOW_HANDOFF_DOWNSTREAM` (recording unavailable downstream handoff in `details_json`).
    - **If Handoff Capability is Available**: The Supervisor commits canonical transition `DISPATCHED -> RUNNING` and marks `task_attempts.recovery_disposition = 'MISSED_ACTIVE_WINDOW'`.
    - **Post-Commit Failure Invariant**: Once `DISPATCHED -> RUNNING` has committed, any subsequent failure must strictly follow the canonical edge `RUNNING -> FAILED`. Under no circumstances is `DISPATCHED -> FAILED` ever attempted after `RUNNING` has been reached.
 2. Downstream Handoff Boundary:
@@ -789,13 +798,16 @@ YES.
   `RUNNING -> BLOCKED` followed by `BLOCKED -> HUMAN_REQUIRED`.
 - **`RUNNING -> BLOCKED`**: Atomically transitions TaskState to `BLOCKED`. `TaskAttempt.ended_at` remains `NULL` while in `BLOCKED` because `BLOCKED` is an intermediate non-terminal escalation state awaiting resolution or escalation.
 - **`BLOCKED -> HUMAN_REQUIRED`**: The canonical workflow graph defines NO `BLOCKED -> RUNNING` or `HUMAN_REQUIRED -> RUNNING` edge. From `HUMAN_REQUIRED`, the only allowed transitions are `HUMAN_REQUIRED -> DRAFT` or `HUMAN_REQUIRED -> CANCELLED`. Any future replanning (`DRAFT -> READY -> DISPATCHED`) invokes `PrepareDispatch`, which increments `current_attempt` and allocates a brand new `TaskAttempt`.
-- Therefore, transitioning `BLOCKED -> HUMAN_REQUIRED` **atomically closes the prior execution attempt**:
+- Therefore, transitioning `BLOCKED -> HUMAN_REQUIRED` **atomically closes the prior execution attempt** via the atomic transaction defined in D12 (`AtomicAttemptClosureTransition`, Finding `ADR16R6-002`):
   1. `tasks.state` CAS update (`BLOCKED -> HUMAN_REQUIRED`)
-  2. `task_attempts.ended_at = now`
-  3. `task_attempts.recovery_disposition = 'AO_BLOCKED_ESCALATED'`
-  4. append audit event `WORKER_BLOCKED_ESCALATED`
+  2. verify current matching open attempt (`ended_at IS NULL`)
+  3. `task_attempts.ended_at = now`
+  4. `task_attempts.recovery_disposition = 'AO_BLOCKED_ESCALATED'`
+  5. append audit event `WORKER_BLOCKED_ESCALATED`
+  6. commit single SQLite transaction (zero network calls inside)
 - The attempt is now permanently historical and must NEVER resume.
 - **Safety Invariant**: `HUMAN_REQUIRED_WITH_PRIOR_EXECUTION MUST_NOT_RETAIN_RESUMABLE_OPEN_ATTEMPT`.
+- **Crash Window Protection (Finding `ADR16R6-001`)**: If a host crash occurs after `RUNNING -> BLOCKED` is committed but before `BLOCKED -> HUMAN_REQUIRED` is executed, the startup recovery sweep in D13 deterministically identifies the open attempt and executes this exact atomic transaction (`# BLOCKED_WITH_OPEN_CURRENT_ATTEMPT MANDATORY_ESCALATION_RECOVERY`).
 - Under no circumstances does the Supervisor attempt a non-existent `BLOCKED -> RUNNING` transition.
 
 ### Rationale
@@ -805,6 +817,10 @@ Resolves Findings `ADR16R1-003` and `ADR16R5-003`. Strictly conforms to `interna
 - **Same-Attempt `BLOCKED -> RUNNING` Resumption**: Rejected under Finding `ADR16R1-003` as an illegal transition edge absent from the canonical state machine.
 - **Immediate Termination on Blocked Observation**: Aborts executions that merely require brief operator confirmation; rejected.
 - **Retaining Open Attempt Across `HUMAN_REQUIRED` Escalation**: Rejected under Finding `ADR16R5-003`; leaves execution attempts permanently open with `ended_at = NULL` even though they can never resume.
+- **Omitting `BLOCKED` Startup Recovery**: Rejected under Finding `ADR16R6-001`; leaves orphaned open attempts across host crashes.
+- **Inventing `BLOCKED -> RUNNING` on Restart**: Rejected as an illegal transition absent from `internal/workflow/state_machine.go`.
+- **Recording `WORKER_STOPPED` without Confirmed Kill Acceptance**: Rejected under Finding `ADR16R6-003` as unproven termination.
+- **Reversed Provisioning Guard Predicate (`stage NOT IN`)**: Rejected under Finding `ADR16R6-004`; must check for zero unresolved operations (`stage IN`).
 
 ### Safety Invariant
 1. The Supervisor never attempts a state transition that violates the canonical workflow state graph defined in `internal/workflow/state_machine.go`.
@@ -921,7 +937,7 @@ CREATE TABLE stop_operations (
 | `RUNNING_ATTEMPT_STOP` | `RUNNING` | `STOP_TERMINATION_CONFIRMED` | `RUNNING -> FAILED` (`WORKER_STOPPED`) | Set `now` via `AtomicTerminalTransition` | Clears attempt quarantine; Pair lane clean |
 | `RUNNING_ATTEMPT_STOP` | `RUNNING` | `STOP_TARGET_ABSENT` (404) | `RUNNING -> FAILED` (`SESSION_ABSENT`) | Set `now` via `AtomicTerminalTransition` | Quarantine remains ACTIVE on attempt & Pair |
 | `RUNNING_ATTEMPT_STOP` | `RUNNING` | `STOP_CONFIRMATION_TIMEOUT` | `RUNNING -> FAILED` (`STOP_CONFIRMATION_TIMEOUT`) | Set `now` via `AtomicTerminalTransition` | Quarantine remains ACTIVE on attempt & Pair |
-| `RUNNING_ATTEMPT_STOP` | `RUNNING` | `STOP_GENERATION_MISMATCH` | `RUNNING -> FAILED` (`GENERATION_MISMATCH`) | Set `now` via `AtomicTerminalTransition` | Quarantine remains ACTIVE on attempt & Pair |
+| `RUNNING_ATTEMPT_STOP` | `RUNNING` | `STOP_GENERATION_MISMATCH` | `RUNNING -> FAILED` (disposition: `STOP_GENERATION_MISMATCH`) | Set `now` via `AtomicTerminalTransition` | Quarantine remains ACTIVE on attempt & Pair |
 | `RUNNING_ATTEMPT_STOP` | `RUNNING` | `STOP_EFFECT_UNPROVEN_TARGET_ALREADY_TERMINATED` | `RUNNING -> FAILED` (`WORKER_TERMINATION_UNKNOWN`) | Set `now` via `AtomicTerminalTransition` | Quarantine remains ACTIVE on attempt & Pair |
 | `RUNNING_ATTEMPT_STOP` | `RUNNING` | `STOP_CALL_OUTCOME_UNKNOWN` | `RUNNING -> FAILED` (`STOP_CALL_OUTCOME_UNKNOWN`) | Set `now` via `AtomicTerminalTransition` | Quarantine remains ACTIVE on attempt & Pair |
 | `RUNNING_ATTEMPT_STOP` | `RUNNING` | `STOP_CALL_FAILED` | `RUNNING -> FAILED` (`WORKER_TERMINATION_UNKNOWN`) | Set `now` via `AtomicTerminalTransition` | Quarantine remains ACTIVE on attempt & Pair |
@@ -957,7 +973,21 @@ Resolves Findings `ADR16R1-006`, `ADR16R4-001`, `ADR16R4-003`, `ADR16R4-004`, `A
 - **Zero-Race Stop Claim**: Rejected under Finding `ADR16R5-005`; pinned `/kill` lacks atomic generation fence; objective truthfully framed as honest provenance and fail-closed handling under unavoidable session-scoped TOCTOU.
 
 ### Safety Invariant
-`WORKER_STOPPED` is recorded only after authoritative `isTerminated == true` is verified.
+`WORKER_STOPPED_ALLOWED_IFF` (Finding `ADR16R6-003`):
+`task_attempts.recovery_disposition = 'WORKER_STOPPED'` is permitted IF AND ONLY IF ALL of the following conditions are simultaneously met:
+1. `stop_operations.purpose == 'RUNNING_ATTEMPT_STOP'`; AND
+2. Positive prior kill call acceptance is durably proven (the stop operation stage reached `STOP_CALL_SUCCEEDED` prior to termination observation); AND
+3. Observed `session_id` matches `stop_operations.session_id`; AND
+4. Observed `terminal_generation` matches `stop_operations.terminal_generation`; AND
+5. Authoritative upstream termination is verified (`isTerminated == true`); AND
+6. The termination observation is demonstrably attributable to that stop lineage.
+
+Under ALL other circumstances, recording `WORKER_STOPPED` is strictly PROHIBITED:
+- `STOP_REQUESTED` + `isTerminated == true` without prior confirmed kill acceptance: record `resolution_state = 'STOP_EFFECT_UNPROVEN_TARGET_ALREADY_TERMINATED'`, `recovery_disposition = 'WORKER_TERMINATION_UNKNOWN'`.
+- Transport drop / socket error during kill call: record `resolution_state = 'STOP_CALL_OUTCOME_UNKNOWN'`, `recovery_disposition = 'STOP_CALL_OUTCOME_UNKNOWN'`.
+- Upstream HTTP 404 (Not Found): record `resolution_state = 'STOP_TARGET_ABSENT'`, `recovery_disposition = 'SESSION_ABSENT'`.
+- Generation mismatch: record `resolution_state = 'STOP_GENERATION_MISMATCH'`, `recovery_disposition = 'STOP_GENERATION_MISMATCH'`.
+- Confirmation deadline expired without exit: record `resolution_state = 'STOP_CONFIRMATION_TIMEOUT'`, `recovery_disposition = 'STOP_CONFIRMATION_TIMEOUT'`.
 
 ### Persistence Impact
 Creates table `stop_operations` with full relational provenance.
@@ -982,19 +1012,20 @@ YES.
 
 ---
 
-## 18. D12: Atomic Terminal Transition & ended_at Ownership
+## 18. D12: Atomic StateStore Transitions, Attempt Closure & ended_at Ownership
 
 ### Source / Canonical Facts
 - ADR-015 specifies SQLite engine and transactional audit log. Canonical auditability requires crash-consistent state transitions.
 - SQLite Invariant: Absolutely ZERO network calls inside database transactions.
+- Finding `ADR16R6-002`: D12 must define the atomic transaction shape for attempt-closing nonterminal workflow escalation (`BLOCKED -> HUMAN_REQUIRED`) to achieve unified architectural consistency with D10 and D13.
 
 ### Proposal Revision-6 Recommendation
-- Unified StateStore atomic transition method (`GIẢ ĐỊNH`).
+- Unified StateStore atomic transition architecture defining both `AtomicTerminalTransition` and `AtomicAttemptClosureTransition` (`GIẢ ĐỊNH`).
 
 ### Selected PROPOSED_DECISION
-**PROPOSED_DECISION: Implement Unified StateStore Atomic Terminal Transition Method (`AtomicTerminalTransition`) without Undeclared Columns**.
-1. For terminal failure transitions (`RUNNING -> FAILED`, `DISPATCHED -> FAILED`):
-   - Atomically committed in a single SQLite transaction:
+**PROPOSED_DECISION: Implement Unified StateStore Atomic Transition Architecture Defining Both `AtomicTerminalTransition` and `AtomicAttemptClosureTransition` without Undeclared Columns (Findings `ADR16R2-003`, `ADR16R5-003`, `ADR16R6-002`)**.
+1. **Terminal Failure Transitions (`RUNNING -> FAILED`, `DISPATCHED -> FAILED`)**:
+   - Atomically committed in a single SQLite transaction via `AtomicTerminalTransition`:
      ```text
      1. tasks.state CAS update (old_state -> FAILED)
      2. task_attempts.ended_at = now
@@ -1002,37 +1033,52 @@ YES.
      4. audit_events row append (TASK_STATE_TRANSITION with full error details in details_json)
      ```
    - **Schema Invariant (Finding `ADR16R2-003`)**: Neither the production `TaskAttempt` entity nor the SQLite `task_attempts` schema has a `terminal_error` or `failure_reason` column. All machine-readable failure dispositions are persisted strictly in `task_attempts.recovery_disposition`, while comprehensive diagnostic error payloads reside in append-only `audit_events.details_json`.
-2. Decoupling Observation from State CAS:
+2. **Attempt-Closing Nonterminal Workflow Escalation (`BLOCKED -> HUMAN_REQUIRED`)**:
+   - `HUMAN_REQUIRED` is NOT a terminal TaskState (the task can subsequently transition to `DRAFT` or `CANCELLED`).
+   - However, because the canonical state graph contains no `BLOCKED -> RUNNING` or `HUMAN_REQUIRED -> RUNNING` edge, transitioning to `HUMAN_REQUIRED` definitively concludes the execution of the prior attempt.
+   - Atomically committed in a single SQLite transaction via `AtomicAttemptClosureTransition` (Finding `ADR16R6-002`):
+     ```text
+     1. tasks.state CAS update (expected_state: BLOCKED -> target_state: HUMAN_REQUIRED)
+     2. verify current matching open attempt (ended_at IS NULL)
+     3. task_attempts.ended_at = now
+     4. task_attempts.recovery_disposition = 'AO_BLOCKED_ESCALATED'
+     5. audit_events row append (WORKER_BLOCKED_ESCALATED)
+     6. commit
+     ```
+   - Zero network operations inside transaction.
+   - This identical transaction is executed during live workflow escalation (D10) and during startup crash recovery (D13) to recover the crash window identified in `ADR16R6-001`.
+3. **Intermediate Nonterminal Transition (`RUNNING -> BLOCKED`)**:
+   - Atomically committed: TaskState CAS update from `RUNNING` to `BLOCKED` + append audit event `WORKER_BLOCKED_ON_DECISION`.
+   - `task_attempts.ended_at` remains `NULL` while in `BLOCKED` because `BLOCKED` is an intermediate escalation state awaiting resolution or formal human escalation.
+4. **Decoupling Observation from State CAS**:
    - Mere observation of transient activity states (such as `waiting_input` or `blocked` without formal escalation) does NOT trigger a TaskState CAS update.
    - Metadata dispositions (`task_attempts.recovery_disposition`) are updated without modifying `tasks.state` or `task_attempts.ended_at`.
-3. If formal escalation occurs (`RUNNING -> BLOCKED`):
-   - Atomically committed: TaskState CAS update to `BLOCKED` + audit event append.
-   - `task_attempts.ended_at` remains `NULL` because `BLOCKED` is non-terminal.
-4. Success Closure (`RUNNING -> REPORT_READY`):
+5. **Success Closure (`RUNNING -> REPORT_READY`)**:
    - Strictly NOT owned by TASK-P03-003. Owned exclusively by Phase P04 Evidence Collector upon report validation.
-5. Transaction Rule: All upstream AO queries occur *before* opening the SQLite transaction. The transaction performs only local SQLite writes and commits immediately.
+6. **Transaction Boundary Rule**: All upstream AO queries and network interactions occur *strictly before* opening SQLite transactions. Transactions perform only local SQLite reads/writes and commit immediately.
 
 ### Rationale
-Ensures crash consistency without risking SQLite database lock contention or introducing spurious state machine transitions for read-only observations.
+Ensures crash consistency without risking SQLite database lock contention or introducing spurious state machine transitions for read-only observations. Defining both terminal and non-terminal attempt-closing transactions closes the specification gap identified in Finding `ADR16R6-002`.
 
 ### Rejected Alternatives
 - **Separate Un-coordinated Store Calls**: Risks partial writes on crash; rejected.
 - **Network Calls Inside Transactions**: Violates ADR-015; strictly prohibited.
+- **Calling `HUMAN_REQUIRED` a Terminal State**: Incorrect; `HUMAN_REQUIRED` is non-terminal, but attempt closure is mandatory.
 
 ### Safety Invariant
 Zero network operations inside SQLite transaction blocks.
 
 ### Persistence Impact
-Adds unified method to `internal/store` API.
+Adds unified transition methods to `internal/store` API (`AtomicTerminalTransition`, `AtomicAttemptClosureTransition`).
 
 ### State-Machine Impact
-Executes all terminal state machine failures.
+Executes all terminal state machine failures and nonterminal attempt-closing workflow escalations.
 
 ### Restart Impact
 Partial writes are impossible; SQLite rollbacks on crash leave state completely clean.
 
 ### Auditability Impact
-Atomic pairing of state change and audit event guaranteed.
+Atomic pairing of state change, attempt closure, and audit event guaranteed.
 
 ### Implementation Ownership
 TASK-P03-003.
@@ -1045,18 +1091,20 @@ YES.
 ## 19. D13: Restart Scanner Architecture
 
 ### Source / Canonical Facts
-- Power loss leaves in-flight tasks in `DISPATCHED` or `RUNNING` with open attempts (`ended_at IS NULL`).
+- Power loss leaves in-flight tasks in `DISPATCHED`, `RUNNING`, or `BLOCKED` with open attempts (`ended_at IS NULL`).
 - Finding `ADR16R1-007`: Startup recovery must enumerate ALL non-terminal stop operations (`STOP_REQUESTED` and `STOP_CALL_SUCCEEDED`), not just `STOP_REQUESTED`.
 - Finding `ADR16R1-009`: No approved recovery retry policy exists. Recovery must use existing policy surfaces (`SUPERVISOR_ACTIVITY_POLL_INTERVAL`) without inventing new policies or numbers.
+- Finding `ADR16R6-001`: Crash between `RUNNING -> BLOCKED` (attempt open) and `BLOCKED -> HUMAN_REQUIRED` leaves open attempt orphaned because canonical graph lacks `BLOCKED -> RUNNING`. Startup recovery must mandate deterministic escalation to `HUMAN_REQUIRED`.
 
 ### Proposal Revision-6 Recommendation
-- Synchronous startup recovery sweep covering all in-flight tasks and non-terminal operations with existing poll cadence (`GIẢ ĐỊNH`).
+- Synchronous startup recovery sweep covering all in-flight tasks, blocked attempts, and non-terminal operations with existing poll cadence (`GIẢ ĐỊNH`).
 
 ### Selected PROPOSED_DECISION
-**PROPOSED_DECISION: Implement Synchronous Startup Recovery Sweep Covering Provisioning, Dispatch, and Purpose-Aware Generation-Prechecked Stops via Approved Adapter Methods**.
+**PROPOSED_DECISION: Implement Synchronous Startup Recovery Sweep Covering Provisioning, Dispatch, Blocked Escalation, and Purpose-Aware Generation-Prechecked Stops via Approved Adapter Methods**.
 1. **Startup Enumeration**:
    On Supervisor daemon startup, prior to accepting incoming client API requests:
    - Query all `pair_provisioning_operations` in `stage = 'PROVISION_REQUESTED'`. Mark as `PROVISION_FAILED`, locking affected Pair lanes against automatic dispatch.
+   - Query all tasks where `tasks.state = 'BLOCKED'` AND the current matching TaskAttempt has `ended_at IS NULL` (Finding `ADR16R6-001`).
    - Query all tasks in `DISPATCHED` or `RUNNING` state.
    - Query all non-terminal `dispatch_operations` (`stage = 'SEND_REQUESTED'`).
    - Query all non-terminal `stop_operations` (`stage IN ('STOP_REQUESTED', 'STOP_CALL_SUCCEEDED')`).
@@ -1067,16 +1115,34 @@ YES.
    Startup scanner identifies in-flight operations via `SELECT * FROM stop_operations WHERE resolution_state = 'IN_FLIGHT'`.
    - `STOP_REQUESTED`:
      - If alive with matching generation: Automatic `/kill` reissue is PROHIBITED (`PINNED_KILL_GENERATION_ATOMIC_FENCE = ABSENT`, Finding `ADR16R4-001`). Set `resolution_state = 'STOP_REISSUE_REQUIRES_HUMAN'`, `resolved_at = now`. Retain active quarantine; require human operator reconciliation.
-     - If `isTerminated == true`: Kill call was never confirmed transmitted/accepted. Retain `stage = 'STOP_REQUESTED'`, set `resolution_state = 'STOP_EFFECT_UNPROVEN_TARGET_ALREADY_TERMINATED'`, `resolved_at = now`. If `purpose == 'RUNNING_ATTEMPT_STOP'` and task is `RUNNING`: transition task `-> FAILED` (reason: `WORKER_TERMINATION_UNKNOWN`). Do NOT record `WORKER_STOPPED` (Finding `ADR16R3-004`). For cleanup/maintenance stops: ZERO TaskState transition.
-     - If generation mismatch: Retain `stage = 'STOP_REQUESTED'`, set `resolution_state = 'STOP_GENERATION_MISMATCH'`, `resolved_at = now`. If `purpose == 'RUNNING_ATTEMPT_STOP'` and task is `RUNNING`: transition task `-> FAILED`.
+     - If `isTerminated == true`: Kill call was never confirmed transmitted/accepted. Retain `stage = 'STOP_REQUESTED'`, set `resolution_state = 'STOP_EFFECT_UNPROVEN_TARGET_ALREADY_TERMINATED'`, `resolved_at = now`. If `purpose == 'RUNNING_ATTEMPT_STOP'` and task is `RUNNING`: transition task `-> FAILED` (reason: `WORKER_TERMINATION_UNKNOWN`). Do NOT record `WORKER_STOPPED` (Findings `ADR16R3-004`, `ADR16R6-003`). For cleanup/maintenance stops: ZERO TaskState transition.
+     - If generation mismatch: Retain `stage = 'STOP_REQUESTED'`, set `resolution_state = 'STOP_GENERATION_MISMATCH'`, `resolved_at = now`. If `purpose == 'RUNNING_ATTEMPT_STOP'` and task is `RUNNING`: transition task `-> FAILED` (disposition: `STOP_GENERATION_MISMATCH`).
      - If HTTP 404: Set `stage = 'STOP_TARGET_ABSENT'`, `resolution_state = 'STOP_TARGET_ABSENT'`, `resolved_at = now`. If `purpose == 'RUNNING_ATTEMPT_STOP'` and task is `RUNNING`: transition task `-> FAILED` (reason: `SESSION_ABSENT`). Do NOT mark `STOP_TERMINATION_CONFIRMED` (Finding `ADR16R3-006`).
    - `STOP_CALL_SUCCEEDED`:
      - Kill signal was already accepted upstream. Reissuing `/kill` is redundant and prohibited.
-     - If `isTerminated == true` with matching generation: Set `stage = 'STOP_TERMINATION_CONFIRMED'`, `resolution_state = 'TERMINATION_CONFIRMED'`, `resolved_at = now`. If `purpose == 'RUNNING_ATTEMPT_STOP'` and task is `RUNNING`: `ended_at = now`, record `WORKER_STOPPED`. For cleanup/maintenance: ZERO TaskState transition.
-     - If alive with matching generation: Evaluate restart-stable deadline `confirmation_deadline_at`. If `now < confirmation_deadline_at`: remain in `STOP_CALL_SUCCEEDED` and continue bounded observation until deadline. If `now >= confirmation_deadline_at`: set `resolution_state = 'STOP_CONFIRMATION_TIMEOUT'`, `resolved_at = now`. If `purpose == 'RUNNING_ATTEMPT_STOP'` and task is `RUNNING`: transition task `-> FAILED`, do NOT log `WORKER_STOPPED` (Findings `ADR16R3-009`, `ADR16R4-007`).
+     - If `isTerminated == true` with matching generation: Set `stage = 'STOP_TERMINATION_CONFIRMED'`, `resolution_state = 'TERMINATION_CONFIRMED'`, `resolved_at = now`. If `purpose == 'RUNNING_ATTEMPT_STOP'` and task is `RUNNING`: `ended_at = now`, record `WORKER_STOPPED` (under `WORKER_STOPPED_ALLOWED_IFF`, Finding `ADR16R6-003`). For cleanup/maintenance: ZERO TaskState transition.
+     - If alive with matching generation: Evaluate restart-stable deadline `confirmation_deadline_at`. If `now < confirmation_deadline_at`: remain in `STOP_CALL_SUCCEEDED` and continue bounded observation until deadline. If `now >= confirmation_deadline_at`: set `resolution_state = 'STOP_CONFIRMATION_TIMEOUT'`, `resolved_at = now`. If `purpose == 'RUNNING_ATTEMPT_STOP'` and task is `RUNNING`: transition task `-> FAILED` (disposition: `STOP_CONFIRMATION_TIMEOUT`), do NOT log `WORKER_STOPPED` (Findings `ADR16R3-009`, `ADR16R4-007`).
      - If generation mismatch: Retain `stage = 'STOP_CALL_SUCCEEDED'`, set `resolution_state = 'STOP_GENERATION_MISMATCH'`, `resolved_at = now`.
      - If HTTP 404: Set `stage = 'STOP_TARGET_ABSENT'`, `resolution_state = 'STOP_TARGET_ABSENT'`, `resolved_at = now`.
-4. **Dispatch & In-Flight Task Recovery**:
+4. **Blocked Escalation Crash Recovery Protocol (`# BLOCKED_WITH_OPEN_CURRENT_ATTEMPT MANDATORY_ESCALATION_RECOVERY`, Finding `ADR16R6-001`)**:
+   - **Crash Window**: If a host crash occurs after `RUNNING -> BLOCKED` is committed (leaving `task_attempts.ended_at = NULL`) but before live `BLOCKED -> HUMAN_REQUIRED` escalation executes, the task restarts in `BLOCKED` with an open attempt.
+   - **Absence of Return Edge**: The canonical state machine (`internal/workflow/state_machine.go`) defines NO `BLOCKED -> RUNNING` edge. That attempt can NEVER resume execution. Retaining `ended_at = NULL` would permanently orphan the attempt, violating invariant `HUMAN_REQUIRED_WITH_PRIOR_EXECUTION MUST_NOT_RETAIN_RESUMABLE_OPEN_ATTEMPT`.
+   - **Mandatory Escalation Execution**: On startup, the scanner queries:
+     ```sql
+     SELECT t.task_id, a.attempt_id
+     FROM tasks t
+     JOIN task_attempts a ON t.task_id = a.task_id AND a.attempt_number = t.current_attempt
+     WHERE t.state = 'BLOCKED' AND a.ended_at IS NULL;
+     ```
+   - For each matching task, the scanner immediately executes `AtomicAttemptClosureTransition` (D12):
+     1. Atomically CAS `tasks.state` from `BLOCKED` to `HUMAN_REQUIRED`;
+     2. Sets `task_attempts.ended_at = now`;
+     3. Sets `task_attempts.recovery_disposition = 'AO_BLOCKED_ESCALATED'`;
+     4. Appends audit event `WORKER_BLOCKED_ESCALATED`;
+     5. Commits single SQLite transaction.
+   - **Zero Network Calls Required**: This transition is a deterministic internal control-plane workflow escalation; no AO daemon calls are made.
+   - **Store Ground-Truth Note**: Production P02 store recovery currently scans `DISPATCHED` tasks only. This D13 specification defines the required TASK-P03-003 store expansion; it is NOT claiming that current P02 code already recovers `BLOCKED`. Future replanning from `HUMAN_REQUIRED` (`HUMAN_REQUIRED -> DRAFT -> READY -> DISPATCHED`) invokes `PrepareDispatch` which increments `current_attempt` and allocates a brand new `TaskAttempt`.
+5. **Dispatch & In-Flight Task Recovery**:
    - Probe AO daemon availability via approved `CheckHealth` / `CheckReadiness`.
    - **If AO is Reachable**:
      - Reconcile in-flight tasks against public `SessionView` via `GetWorkerStatus(ctx, sessionID)` using opaque string generation matching.
@@ -1092,26 +1158,29 @@ YES.
      - Do NOT introduce any new operational policies, retry counts, or backoff formulas.
 
 ### Rationale
-Resolves Findings `ADR16R1-007` and `ADR16R1-009`. Enumerating all non-terminal stop operations closes the crash window where kill was accepted but termination was unconfirmed. Using `SUPERVISOR_ACTIVITY_POLL_INTERVAL` leverages existing unhardcoded policy surfaces without inventing unapproved configuration parameters.
+Resolves Findings `ADR16R1-007`, `ADR16R1-009`, and `ADR16R6-001`. Enumerating all non-terminal stop operations closes the crash window where kill was accepted but termination was unconfirmed. Recovering crashed blocked tasks closes the attempt-orphaning window without inventing illegal graph transitions. Using `SUPERVISOR_ACTIVITY_POLL_INTERVAL` leverages existing unhardcoded policy surfaces without inventing unapproved configuration parameters.
 
 ### Rejected Alternatives
 - **Scanning `STOP_REQUESTED` only**: Rejected under Finding `ADR16R1-007`; misses operations in `STOP_CALL_SUCCEEDED`.
 - **Inventing New Recovery Policies**: Rejected under Finding `ADR16R1-009`; violates policy freeze.
+- **Omitting `BLOCKED` Startup Recovery**: Rejected under Finding `ADR16R6-001`; leaves orphaned open attempts across host crashes.
+- **Inventing `BLOCKED -> RUNNING` on Restart**: Rejected as an illegal transition absent from `internal/workflow/state_machine.go`.
 
 ### Safety Invariant
-No new task can be dispatched on a Pair until that Pair's in-flight task status has been reconciled against upstream reality.
+1. No new task can be dispatched on a Pair until that Pair's in-flight task status has been reconciled against upstream reality.
+2. `# BLOCKED_WITH_OPEN_CURRENT_ATTEMPT MANDATORY_ESCALATION_RECOVERY`: No task left in `BLOCKED` after a crash may retain an open attempt with `ended_at IS NULL`. All such tasks are deterministically escalated to `HUMAN_REQUIRED` with closed attempts upon startup.
 
 ### Persistence Impact
 Recovery audit events logged upon startup.
 
 ### State-Machine Impact
-Reconciles interrupted states to valid canonical destinations.
+Reconciles interrupted states to valid canonical destinations (`BLOCKED -> HUMAN_REQUIRED`, `DISPATCHED/RUNNING -> FAILED`).
 
 ### Restart Impact
-Governs the complete restart recovery lifecycle of the control plane.
+Governs the complete restart recovery lifecycle of the control plane across all in-flight and interrupted tasks.
 
 ### Auditability Impact
-Emits `STARTUP_RECOVERY_SWEEP_STARTED` and `STARTUP_RECOVERY_SWEEP_COMPLETED` audit events.
+Emits `STARTUP_RECOVERY_SWEEP_STARTED`, `STARTUP_RECOVERY_SWEEP_COMPLETED`, and `WORKER_BLOCKED_ESCALATED` audit events.
 
 ### Implementation Ownership
 TASK-P03-003.
@@ -1150,9 +1219,9 @@ The complete lifecycle evaluation matrix governing TASK-P03-003 under graph-comp
 |---|---|---|---|---|---|---|---|---|
 | `DISPATCHED` | `DISPATCH_BOUND` | `idle` | Match | Pre-send ready | Execution occurred | None | Keep NULL | None |
 | `DISPATCHED` | `DISPATCH_BOUND` | `waiting_input` | Match | Waiting input | Execution occurred | None | Keep NULL | None |
-| `DISPATCHED` | `DISPATCH_BOUND` | `active` | Match | Foreign/lingering turn | Current task sent | None | Keep NULL | `PRE_SEND_BLOCKED` |
-| `DISPATCHED` | `DISPATCH_BOUND` | `blocked` | Match | Dialog blocked | Current task sent | None | Keep NULL | `PRE_SEND_BLOCKED` |
-| `DISPATCHED` | `DISPATCH_BOUND` | `exited` | Match | Process exit signal | Termination/crash | None | Keep NULL | `PRE_SEND_BLOCKED` |
+| `DISPATCHED` | `DISPATCH_BOUND` | `active` | Match | Foreign/lingering turn | Current task sent | None | Keep NULL | Emit `PRE_SEND_ADMISSIBILITY_REJECTED` (attempt open; no dispatch send) |
+| `DISPATCHED` | `DISPATCH_BOUND` | `blocked` | Match | Dialog blocked | Current task sent | None | Keep NULL | Emit `PRE_SEND_ADMISSIBILITY_REJECTED` (attempt open; no dispatch send) |
+| `DISPATCHED` | `DISPATCH_BOUND` | `exited` | Match | Process exit signal | Termination/crash | None | Keep NULL | Emit `PRE_SEND_ADMISSIBILITY_REJECTED` (attempt open; no dispatch send) |
 | `DISPATCHED` | `DISPATCH_BOUND` | `isTerminated: true` | Match | Session dead | Cause of death | `-> FAILED` | Set `now` | None |
 | `DISPATCHED` | `SEND_REQUESTED` | Any | Match/Mismatch | Delivery unknown | Delivery success | `-> FAILED` | Set `now` | `task_attempts.quarantine_state = 'QUARANTINED'`, `recovery_disposition = 'UNCERTAIN_DELIVERY_CRASH'` |
 | `DISPATCHED` | `SEND_CONFIRMED` | `active` | Match | Upstream write accepted, active | Task completion | `-> RUNNING` | Keep NULL | None |
@@ -1185,6 +1254,7 @@ The complete lifecycle evaluation matrix governing TASK-P03-003 under graph-comp
 | **T5** | `SEND_REQUESTED` committed, crash during `/send` | Saga = `SEND_REQUESTED` | Delivery unknown | `-> FAILED`, `ended_at = now`, quarantine, `-> HUMAN_REQUIRED` |
 | **T6** | `SEND_CONFIRMED` committed | Saga = `SEND_CONFIRMED` | Write accepted | Check AO activity; resume observation |
 | **T7** | `RUNNING` state, daemon power loss | `tasks.state = RUNNING` | In-flight attempt | Reconcile via `GetWorkerStatus` against public SessionView |
+| **T7a** | `RUNNING -> BLOCKED` committed, crash before `BLOCKED -> HUMAN_REQUIRED` | `tasks.state = 'BLOCKED'`, current attempt `ended_at IS NULL` | Task in `BLOCKED` with open attempt | Execute atomic nonterminal escalation `BLOCKED -> HUMAN_REQUIRED`: set `ended_at = now`, `recovery_disposition = 'AO_BLOCKED_ESCALATED'`, emit `WORKER_BLOCKED_ESCALATED` (`# BLOCKED_WITH_OPEN_CURRENT_ATTEMPT MANDATORY_ESCALATION_RECOVERY`, Finding `ADR16R6-001`) |
 | **T8** | `STOP_REQUESTED` committed, crash before `/kill` | Saga = `STOP_REQUESTED` | Stop intent logged | Reconcile via `GetWorkerStatus`; if alive: auto-reissue prohibited (`PINNED_KILL_GENERATION_ATOMIC_FENCE = ABSENT`), advance to `STOP_REISSUE_REQUIRES_HUMAN`, retain quarantine; if dead: advance to `resolution_state = 'STOP_EFFECT_UNPROVEN_TARGET_ALREADY_TERMINATED'` (stage remains `STOP_REQUESTED`); if mismatch: `STOP_GENERATION_MISMATCH` |
 | **T8a** | `STOP_REQUESTED` committed, transport drop during `/kill` | Saga = `STOP_REQUESTED` | Delivery unknown | Reconcile via `GetWorkerStatus`; auto-reissue prohibited; advance to `resolution_state = 'STOP_CALL_OUTCOME_UNKNOWN'`, fail closed if live stop; if dead: `STOP_EFFECT_UNPROVEN_TARGET_ALREADY_TERMINATED`; if 404: `STOP_TARGET_ABSENT` |
 | **T9** | `STOP_CALL_SUCCEEDED` committed, crash before confirm | Saga = `STOP_CALL_SUCCEEDED` | Kill accepted | Observe within persisted `confirmation_deadline_at`; if `isTerminated == true` advance to `STOP_TERMINATION_CONFIRMED` (`TERMINATION_CONFIRMED`, `WORKER_STOPPED` if live stop); if 404 advance to `STOP_TARGET_ABSENT`; if deadline reached advance to `resolution_state = 'STOP_CONFIRMATION_TIMEOUT'` (stage remains `STOP_CALL_SUCCEEDED`) |
@@ -1197,8 +1267,9 @@ All operations adhere strictly to ADR-015:
 1. `PrepareDispatch`: Single SQLite transaction committing `tasks.state = DISPATCHED`, allocating `task_attempts`, binding `session_id`, and creating `dispatch_operations` in `DISPATCH_BOUND`.
 2. `RecordSendRequested`: Single SQLite transaction updating `dispatch_operations.stage = SEND_REQUESTED` immediately before network call.
 3. `RecordSendConfirmed`: Single SQLite transaction updating `dispatch_operations.stage = SEND_CONFIRMED` immediately after HTTP 200.
-4. `AtomicTerminalTransition`: Single SQLite transaction committing TaskState update, `task_attempts.ended_at`, error details, and audit log.
-5. Strict Boundary: No network call or AO interaction is ever permitted inside these transaction blocks.
+4. `AtomicTerminalTransition`: Single SQLite transaction committing terminal TaskState update (`old_state -> FAILED`), `task_attempts.ended_at = now`, `recovery_disposition`, error details in `audit_events.details_json`, and audit log.
+5. `AtomicAttemptClosureTransition` (Finding `ADR16R6-002`): Single SQLite transaction committing nonterminal workflow escalation (`tasks.state` CAS `BLOCKED -> HUMAN_REQUIRED`), `task_attempts.ended_at = now`, `task_attempts.recovery_disposition = 'AO_BLOCKED_ESCALATED'`, and audit event `WORKER_BLOCKED_ESCALATED`.
+6. Strict Boundary: No network call or AO interaction is ever permitted inside these transaction blocks.
 
 ---
 
@@ -1374,6 +1445,11 @@ Upon formal External Supervisor acceptance of ADR-016, the following canonical d
 - Enforces fail-closed automated duplicate dispatch prevention (`AUTOMATED_DUPLICATE_DISPATCH_PREVENTION = FAIL_CLOSED`), strictly preventing automated retries while execution state is unverified.
 - Truthfully models the absence of an atomic kill generation fence in pinned AO (`PINNED_KILL_GENERATION_ATOMIC_FENCE = ABSENT`), prohibiting automatic re-kill on restart and modeling ambiguous transport outcomes (`STOP_CALL_OUTCOME_UNKNOWN`).
 - Resolves execution attempt lifecycle across `BLOCKED -> HUMAN_REQUIRED` by atomically closing prior attempts under the invariant `HUMAN_REQUIRED_WITH_PRIOR_EXECUTION MUST_NOT_RETAIN_RESUMABLE_OPEN_ATTEMPT`.
+- Resolves the blocked escalation crash window (`ADR16R6-001`) via mandatory startup escalation recovery (`# BLOCKED_WITH_OPEN_CURRENT_ATTEMPT MANDATORY_ESCALATION_RECOVERY`).
+- Unifies atomic StateStore transitions in D12 across both terminal failures (`AtomicTerminalTransition`) and nonterminal attempt-closing escalations (`AtomicAttemptClosureTransition`, `ADR16R6-002`).
+- Enforces strict positive intentional-stop provenance under `WORKER_STOPPED_ALLOWED_IFF` (`ADR16R6-003`).
+- Reconciles provisioning guard predicate to zero unresolved operations (`ADR16R6-004`).
+- Eliminates undeclared tokens (`PRE_SEND_BLOCKED`) from Lifecycle Observation Matrix (`ADR16R4-008`).
 - Resolves relational domain contradictions without introducing cyclic foreign keys.
 - Decouples sandbox provisioning from task dispatch, enabling warm session reuse.
 - Strictly conforms to the canonical workflow state graph without inventing edges.
@@ -1422,6 +1498,10 @@ Upon formal External Supervisor acceptance of ADR-016, the following canonical d
 - **Restart-Resettable Stop Confirmation Timeout**: Rejected under Finding `ADR16R4-007`; absolute `confirmation_deadline_at` frozen in SQLite.
 - **Vocabulary Drift Across Sections**: Rejected under Finding `ADR16R4-008`; unified under Canonical Token Registry.
 - **Retaining Open Attempt Across `HUMAN_REQUIRED` Escalation**: Rejected under Finding `ADR16R5-003`; leaves execution attempts permanently open with `ended_at = NULL` even though they can never resume.
+- **Omitting `BLOCKED` Startup Recovery**: Rejected under Finding `ADR16R6-001`; leaves orphaned open attempts across host crashes.
+- **Inventing `BLOCKED -> RUNNING` on Restart**: Rejected as an illegal transition absent from `internal/workflow/state_machine.go`.
+- **Recording `WORKER_STOPPED` without Confirmed Kill Acceptance**: Rejected under Finding `ADR16R6-003` as unproven termination.
+- **Reversed Provisioning Guard Predicate (`stage NOT IN`)**: Rejected under Finding `ADR16R6-004`; must check for zero unresolved operations (`stage IN`).
 - **Classifying Ambiguous Transport as Definite Call Failure**: Rejected under Finding `ADR16R5-004`; transport errors after bytes transmitted leave delivery outcome unknown and must not be classified as `STOP_CALL_FAILED`.
 - **Zero-Race Stop Claim**: Rejected under Finding `ADR16R5-005`; pinned `/kill` lacks atomic generation fence; objective truthfully framed as honest provenance and fail-closed handling under unavoidable session-scoped TOCTOU.
 - **Numeric / Monotonic TerminalGeneration**: Rejected under Finding `ADR16R1-004` as contrary to upstream DTO contract.
@@ -1438,11 +1518,11 @@ Upon formal External Supervisor acceptance of ADR-016, the following canonical d
 
 ```text
 PROPOSAL_P03_002 = EXTERNAL_APPROVED
-ADR_016 = REVISION_5_READY_FOR_EXTERNAL_REAUDIT
+ADR_016 = REVISION_6_READY_FOR_EXTERNAL_REAUDIT
 ADR_016_ACCEPTANCE = NOT_GRANTED
 TASK_P03_003 = NOT_RELEASED
 P03_CODE = HELD_PENDING_ADR_016_APPROVAL
-ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_ADR_016_REAUDIT_005
+ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_ADR_016_REAUDIT_006
 ```
 
-Execution is halted awaiting independent External Supervisor re-audit of ADR-016 Revision 5.
+Execution is halted awaiting independent External Supervisor re-audit of ADR-016 Revision 6.
