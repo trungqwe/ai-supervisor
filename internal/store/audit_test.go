@@ -617,15 +617,21 @@ func TestStore_AuditSecretSanitization_DiskScan(t *testing.T) {
 		t.Fatalf("Open failed: %v", err)
 	}
 
-	// Synthetic secrets that must NEVER appear on disk
+	// Synthetic secrets in values that must NEVER appear on disk
 	syntheticBearer := "super-secret-synthetic-bearer-token-12345"
 	syntheticOpenAI := "sk-proj-testsyntheticopenai1234567890abcdef"
 	syntheticGH := "ghp_testsyntheticgithubtoken1234567890"
 	syntheticSession := "synthetic-session-secret-token-xyz-999"
 	syntheticPassword := "synthetic-master-password-value-456"
 
-	// Append event with embedded string patterns and structured keys
-	evt := domain.AuditEvent{
+	// Synthetic secrets in keys that must NEVER appear on disk
+	syntheticKeyBearer := "Authorization: Bearer secret-bearer-in-key-77777"
+	syntheticKeyGH := "ghp_secretkeygithubtoken8888888888"
+	syntheticKeyOpenAI := "sk-proj-secretkeyopenai9999999999"
+	syntheticNestedKey := "github_pat_nestedsecretkey1111111111"
+
+	// Event 1: Secrets in values
+	evt1 := domain.AuditEvent{
 		EventID:   "evt-disk-sec-01",
 		EventType: "pair.bound",
 		Actor:     fmt.Sprintf("worker Authorization: Bearer %s", syntheticBearer),
@@ -638,21 +644,54 @@ func TestStore_AuditSecretSanitization_DiskScan(t *testing.T) {
 		},
 	}
 
-	rec, err := s.AppendAuditEvent(ctx, evt)
+	rec1, err := s.AppendAuditEvent(ctx, evt1)
 	if err != nil {
-		t.Fatalf("AppendAuditEvent failed: %v", err)
+		t.Fatalf("AppendAuditEvent 1 failed: %v", err)
 	}
-
-	// In-memory inspection of returned record
-	if strings.Contains(rec.Event.Actor, syntheticBearer) {
+	if strings.Contains(rec1.Event.Actor, syntheticBearer) {
 		t.Errorf("returned record actor contains synthetic bearer")
 	}
-	if rec.Event.Details["session_token"] != "[REDACTED]" {
-		t.Errorf("returned record session_token not redacted: %v", rec.Event.Details["session_token"])
+	if rec1.Event.Details["session_token"] != "[REDACTED]" {
+		t.Errorf("returned record session_token not redacted: %v", rec1.Event.Details["session_token"])
+	}
+
+	// Event 2: Secrets in map keys (Finding R2-002 closeout)
+	evt2 := domain.AuditEvent{
+		EventID:   "evt-disk-sec-02",
+		EventType: "system.config",
+		Actor:     "config-loader",
+		Details: map[string]any{
+			syntheticKeyBearer: "value_for_bearer_key",
+			syntheticKeyGH:     "value_for_gh_key",
+			"nested": map[string]any{
+				syntheticNestedKey: "nested_value",
+			},
+		},
+	}
+
+	rec2, err := s.AppendAuditEvent(ctx, evt2)
+	if err != nil {
+		t.Fatalf("AppendAuditEvent 2 failed: %v", err)
+	}
+	if _, exists := rec2.Event.Details[syntheticKeyGH]; exists {
+		t.Errorf("returned record contains raw synthetic GH key")
+	}
+
+	// Event 3: OpenAI secret in key
+	evt3 := domain.AuditEvent{
+		EventID:   "evt-disk-sec-03",
+		EventType: "model.registered",
+		Actor:     "model-admin",
+		Details: map[string]any{
+			syntheticKeyOpenAI: "openai_val",
+		},
+	}
+	_, err = s.AppendAuditEvent(ctx, evt3)
+	if err != nil {
+		t.Fatalf("AppendAuditEvent 3 failed: %v", err)
 	}
 
 	// Flush and close database to inspect disk files
-	// Force SQLite checkpoint
 	_, _ = s.db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE);")
 	s.Close()
 
@@ -663,12 +702,16 @@ func TestStore_AuditSecretSanitization_DiskScan(t *testing.T) {
 		dbPath + "-shm",
 	}
 
-	secrets := []string{
+	allSecrets := []string{
 		syntheticBearer,
 		syntheticOpenAI,
 		syntheticGH,
 		syntheticSession,
 		syntheticPassword,
+		syntheticKeyBearer,
+		syntheticKeyGH,
+		syntheticKeyOpenAI,
+		syntheticNestedKey,
 	}
 
 	for _, fPath := range filesToCheck {
@@ -680,14 +723,109 @@ func TestStore_AuditSecretSanitization_DiskScan(t *testing.T) {
 			t.Fatalf("failed to read file %s: %v", fPath, err)
 		}
 
-		for _, sec := range secrets {
+		for _, sec := range allSecrets {
 			if bytes.Contains(data, []byte(sec)) {
 				t.Fatalf("RAW SECRET DISK LEAK: file %s contains raw secret %q", fPath, sec)
 			}
 		}
 	}
 
+	t.Logf("RAW_SECRET_VALUE_DISK_SCAN = PASS")
+	t.Logf("RAW_SECRET_KEY_DISK_SCAN = PASS")
 	t.Logf("RAW_SECRET_DISK_SCAN = PASS")
+}
+
+func TestStore_VerifyAuditChain_ConcurrentAppendSnapshot(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "concurrent_verify_snapshot.db")
+	cfg := Config{DBPath: dbPath, BusyTimeoutMs: 5000}
+
+	s, err := Open(ctx, cfg)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer s.Close()
+
+	const numEvents = 50
+	var wg sync.WaitGroup
+	errCh := make(chan error, 100)
+
+	writerDone := make(chan struct{})
+
+	// Writer goroutine
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(writerDone)
+		for i := 1; i <= numEvents; i++ {
+			evt := domain.AuditEvent{
+				EventID:   fmt.Sprintf("evt-snap-writer-%03d", i),
+				EventType: "stream.append",
+				Actor:     "stream-writer",
+				Details: map[string]any{
+					"seq": i,
+				},
+			}
+			if _, err := s.AppendAuditEvent(ctx, evt); err != nil {
+				errCh <- fmt.Errorf("writer append %d failed: %w", i, err)
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+
+	// Verifier goroutines
+	const numVerifiers = 4
+	for v := 0; v < numVerifiers; v++ {
+		wg.Add(1)
+		go func(vID int) {
+			defer wg.Done()
+			for {
+				select {
+				case <-writerDone:
+					// Final verify after writer is done
+					if err := s.VerifyAuditChain(ctx); err != nil {
+						errCh <- fmt.Errorf("verifier %d final VerifyAuditChain failed: %w", vID, err)
+					}
+					return
+				case <-ctx.Done():
+					return
+				default:
+					if err := s.VerifyAuditChain(ctx); err != nil {
+						errCh <- fmt.Errorf("verifier %d snapshot inconsistency: %w", vID, err)
+						return
+					}
+					time.Sleep(3 * time.Millisecond)
+				}
+			}
+		}(v)
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Fatalf("concurrent verify error: %v", err)
+	}
+
+	// Final verification on store
+	if err := s.VerifyAuditChain(ctx); err != nil {
+		t.Fatalf("final VerifyAuditChain failed: %v", err)
+	}
+
+	var headSeq int64
+	if err := s.db.QueryRowContext(ctx, "SELECT last_sequence FROM audit_chain_state WHERE id = 1").Scan(&headSeq); err != nil {
+		t.Fatalf("query headSeq failed: %v", err)
+	}
+	if headSeq != numEvents {
+		t.Fatalf("expected headSeq %d, got %d", numEvents, headSeq)
+	}
+
+	t.Logf("AUDIT_VERIFY_CONCURRENT_APPEND = PASS")
+	t.Logf("AUDIT_FINAL_CHAIN_VERIFY = PASS")
 }
 
 func TestStore_ListAuditEvents_Limits(t *testing.T) {

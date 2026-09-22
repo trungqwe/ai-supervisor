@@ -3,6 +3,7 @@ package audit
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -17,6 +18,9 @@ const (
 )
 
 var (
+	ErrSanitizedKeyCollision = errors.New("audit: sanitized map key collision")
+	ErrNonStringMapKey       = errors.New("audit: non-string map key is not supported")
+
 	// sensitiveKeys defines map keys that must be unconditionally redacted.
 	sensitiveKeys = map[string]struct{}{
 		"password":            {},
@@ -38,11 +42,11 @@ var (
 	}
 
 	// Embedded credential patterns
-	bearerRegex        = regexp.MustCompile(`(?i)\b(bearer\s+)[A-Za-z0-9._~+/-]+=*`)
-	githubTokenRegex   = regexp.MustCompile(`\b(gh[opurs]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,})\b`)
-	openAIRegex        = regexp.MustCompile(`\b(sk-(?:proj-)?[A-Za-z0-9_-]{16,})\b`)
-	awsKeyRegex        = regexp.MustCompile(`\b(AKIA[0-9A-Z]{16})\b`)
-	envAssignmentRegex = regexp.MustCompile(`(?i)\b(OPENAI_API_KEY|API_KEY|TOKEN|ACCESS_TOKEN|PASSWORD|CLIENT_SECRET)=([^\s,;]+)`)
+	bearerRegex        = regexp.MustCompile("(?i)\\b(bearer\\s+)[A-Za-z0-9._~+/-]+=*")
+	githubTokenRegex   = regexp.MustCompile("\\b(gh[opurs]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,})\\b")
+	openAIRegex        = regexp.MustCompile("\\b(sk-(?:proj-)?[A-Za-z0-9_-]{16,})\\b")
+	awsKeyRegex        = regexp.MustCompile("\\b(AKIA[0-9A-Z]{16})\\b")
+	envAssignmentRegex = regexp.MustCompile("(?i)\\b(OPENAI_API_KEY|API_KEY|TOKEN|ACCESS_TOKEN|PASSWORD|CLIENT_SECRET)=([^\\s,;]+)")
 )
 
 func normalizeKey(k string) string {
@@ -82,9 +86,10 @@ func ScrubString(s string) string {
 }
 
 // ScrubValue recursively deep-copies and scrubs a value.
-// It redacts sensitive map keys, scrubs strings for token patterns, converts raw []byte
-// to RedactedBinaryMarker, preserves numbers/booleans/null/json.Number, and ensures
-// the caller's original data structure is never mutated.
+// It sanitizes arbitrary string map keys via ScrubString, redacts sensitive map keys,
+// rejects post-scrub key collisions and non-string map keys, scrubs strings for token patterns,
+// converts raw []byte to RedactedBinaryMarker, preserves numbers/booleans/null/json.Number,
+// and ensures the caller's original data structure is never mutated.
 func ScrubValue(v any) (any, error) {
 	if v == nil {
 		return nil, nil
@@ -104,14 +109,25 @@ func ScrubValue(v any) (any, error) {
 	case map[string]any:
 		res := make(map[string]any, len(val))
 		for k, item := range val {
+			var outKey string
 			if IsSensitiveKey(k) {
-				res[k] = RedactedMarker
+				outKey = k
+			} else {
+				outKey = ScrubString(k)
+			}
+
+			if _, exists := res[outKey]; exists {
+				return nil, fmt.Errorf("%w: multiple input keys produced sanitized key %q", ErrSanitizedKeyCollision, outKey)
+			}
+
+			if IsSensitiveKey(k) {
+				res[outKey] = RedactedMarker
 			} else {
 				scrubbed, err := ScrubValue(item)
 				if err != nil {
 					return nil, err
 				}
-				res[k] = scrubbed
+				res[outKey] = scrubbed
 			}
 		}
 		return res, nil
@@ -129,18 +145,32 @@ func ScrubValue(v any) (any, error) {
 		rv := reflect.ValueOf(v)
 		switch rv.Kind() {
 		case reflect.Map:
+			if rv.Type().Key().Kind() != reflect.String {
+				return nil, fmt.Errorf("%w: map key type %v is not string", ErrNonStringMapKey, rv.Type().Key())
+			}
 			res := make(map[string]any, rv.Len())
 			iter := rv.MapRange()
 			for iter.Next() {
-				kStr := fmt.Sprintf("%v", iter.Key().Interface())
-				if IsSensitiveKey(kStr) {
-					res[kStr] = RedactedMarker
+				k := iter.Key().String()
+				var outKey string
+				if IsSensitiveKey(k) {
+					outKey = k
+				} else {
+					outKey = ScrubString(k)
+				}
+
+				if _, exists := res[outKey]; exists {
+					return nil, fmt.Errorf("%w: multiple input keys produced sanitized key %q", ErrSanitizedKeyCollision, outKey)
+				}
+
+				if IsSensitiveKey(k) {
+					res[outKey] = RedactedMarker
 				} else {
 					scrubbed, err := ScrubValue(iter.Value().Interface())
 					if err != nil {
 						return nil, err
 					}
-					res[kStr] = scrubbed
+					res[outKey] = scrubbed
 				}
 			}
 			return res, nil
@@ -204,7 +234,7 @@ func SanitizeDetails(details map[string]any) (map[string]any, string, error) {
 }
 
 // SanitizeAuditEvent returns a sanitized deep-copy of the input event and its canonical details_json.
-// Identity fields are preserved without mutation. Actor and Details are scrubbed.
+// Identity fields are preserved without mutation. Actor, Details values, and Details keys are scrubbed.
 // Timestamp is normalized to UTC. The original event is not modified.
 func SanitizeAuditEvent(event domain.AuditEvent) (domain.AuditEvent, string, error) {
 	sanitized := event
@@ -217,7 +247,7 @@ func SanitizeAuditEvent(event domain.AuditEvent) (domain.AuditEvent, string, err
 	// Scrub actor
 	sanitized.Actor = ScrubString(sanitized.Actor)
 
-	// Sanitize details
+	// Sanitize details (both keys and values)
 	scrubbedDetails, detailsJSON, err := SanitizeDetails(sanitized.Details)
 	if err != nil {
 		return domain.AuditEvent{}, "", err

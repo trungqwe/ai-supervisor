@@ -431,13 +431,25 @@ func (s *Store) ListAuditEvents(ctx context.Context, afterSequence int64, limit 
 }
 
 // VerifyAuditChain validates the tamper evidence of the append-only audit chain.
+// It establishes a consistent database transaction read snapshot, ensuring all verification
+// reads see mutually consistent chain state and events even under concurrent appends.
 // It verifies contiguous sequence numbers from 1, genesis hash, prev_hash linking,
 // exact event_hash recomputations, and alignment with persisted audit_chain_state head.
 func (s *Store) VerifyAuditChain(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		// Fallback to minimal transaction if ReadOnly option is rejected by driver
+		tx, err = s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("store: failed to begin verification snapshot transaction: %w", err)
+		}
+	}
+	defer tx.Rollback()
+
 	var headSeq int64
 	var headHash string
-	if err := s.db.QueryRowContext(ctx, "SELECT last_sequence, last_hash FROM audit_chain_state WHERE id = 1").Scan(&headSeq, &headHash); err != nil {
-		return fmt.Errorf("%w: failed to read audit_chain_state: %v", ErrAuditChainInvalid, err)
+	if err := tx.QueryRowContext(ctx, "SELECT last_sequence, last_hash FROM audit_chain_state WHERE id = 1").Scan(&headSeq, &headHash); err != nil {
+		return fmt.Errorf("store: failed to read audit_chain_state in snapshot: %w", err)
 	}
 
 	if headSeq == 0 {
@@ -445,8 +457,8 @@ func (s *Store) VerifyAuditChain(ctx context.Context) error {
 			return fmt.Errorf("%w: empty chain has invalid head_hash %q (expected %q)", ErrAuditChainInvalid, headHash, GenesisAuditHash)
 		}
 		var count int
-		if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM audit_events").Scan(&count); err != nil {
-			return fmt.Errorf("%w: failed to count audit_events: %v", ErrAuditChainInvalid, err)
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM audit_events").Scan(&count); err != nil {
+			return fmt.Errorf("store: failed to count audit_events in snapshot: %w", err)
 		}
 		if count != 0 {
 			return fmt.Errorf("%w: head_sequence is 0 but %d audit events exist", ErrAuditChainInvalid, count)
@@ -454,7 +466,7 @@ func (s *Store) VerifyAuditChain(ctx context.Context) error {
 		return nil
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := tx.QueryContext(ctx, `
 		SELECT sequence, event_id, event_type, timestamp,
 		       COALESCE(pair_id, ''), COALESCE(task_id, ''), COALESCE(contract_id, ''), COALESCE(attempt_id, ''),
 		       actor, details_json, prev_hash, event_hash
@@ -462,7 +474,7 @@ func (s *Store) VerifyAuditChain(ctx context.Context) error {
 		ORDER BY sequence ASC
 	`)
 	if err != nil {
-		return fmt.Errorf("%w: failed to query audit_events: %v", ErrAuditChainInvalid, err)
+		return fmt.Errorf("store: failed to query audit_events in snapshot: %w", err)
 	}
 	defer rows.Close()
 
@@ -488,7 +500,7 @@ func (s *Store) VerifyAuditChain(ctx context.Context) error {
 			&eventHash,
 		)
 		if err != nil {
-			return fmt.Errorf("%w: failed to scan audit event: %v", ErrAuditChainInvalid, err)
+			return fmt.Errorf("store: failed to scan audit event in snapshot: %w", err)
 		}
 
 		if seq != expectedSeq {
@@ -511,7 +523,7 @@ func (s *Store) VerifyAuditChain(ctx context.Context) error {
 	}
 
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("%w: rows iteration error: %v", ErrAuditChainInvalid, err)
+		return fmt.Errorf("store: rows iteration error in snapshot: %w", err)
 	}
 
 	actualCount := expectedSeq - 1

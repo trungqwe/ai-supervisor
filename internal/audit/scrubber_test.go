@@ -2,6 +2,7 @@ package audit
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -189,6 +190,126 @@ func TestScrubValue_StructuredKeys(t *testing.T) {
 	}
 
 	t.Logf("SECRET_STRUCTURED_KEY_SCRUB = PASS")
+}
+
+func TestScrubValue_SecretInKeys(t *testing.T) {
+	rawGHKey := "ghp_1234567890abcdefghijklmnopqrstuvwxyz"
+	rawOpenAIKey := "sk-proj-1234567890abcdefghijklmnopqrstuvwxyz"
+	rawBearerKey := "Authorization: Bearer super-secret-key-token-12345"
+	rawNestedKey := "github_pat_11ABCDEF_1234567890abcdefghijklmnopqrstuvwxyz"
+
+	input := map[string]any{
+		rawGHKey:     "val_1",
+		rawBearerKey: "val_2",
+		"nested": map[string]any{
+			rawNestedKey: "nested_val",
+		},
+		"session_token": "secret_sess",
+	}
+
+	scrubbed, err := ScrubValue(input)
+	if err != nil {
+		t.Fatalf("ScrubValue failed: %v", err)
+	}
+
+	resMap, ok := scrubbed.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any, got %T", scrubbed)
+	}
+
+	// Raw GH key must not exist in resMap
+	if _, exists := resMap[rawGHKey]; exists {
+		t.Errorf("raw GitHub token key was NOT scrubbed: %s", rawGHKey)
+	}
+	// Instead, scrubbed key [REDACTED] must exist with value "val_1"
+	if resMap[RedactedMarker] != "val_1" {
+		t.Errorf("expected key %s with val_1, got: %v", RedactedMarker, resMap[RedactedMarker])
+	}
+
+	// Raw Bearer key must not exist
+	if _, exists := resMap[rawBearerKey]; exists {
+		t.Errorf("raw Bearer key was NOT scrubbed: %s", rawBearerKey)
+	}
+	scrubbedBearerKey := "Authorization: Bearer [REDACTED]"
+	if resMap[scrubbedBearerKey] != "val_2" {
+		t.Errorf("expected scrubbed bearer key %s with val_2, got: %v", scrubbedBearerKey, resMap[scrubbedBearerKey])
+	}
+
+	// Structured key session_token retains key name and redacts value
+	if resMap["session_token"] != RedactedMarker {
+		t.Errorf("expected session_token to be %s, got: %v", RedactedMarker, resMap["session_token"])
+	}
+
+	// Check nested map
+	nestedMap, ok := resMap["nested"].(map[string]any)
+	if !ok {
+		t.Fatalf("nested is not map[string]any: %T", resMap["nested"])
+	}
+	if _, exists := nestedMap[rawNestedKey]; exists {
+		t.Errorf("raw nested key was NOT scrubbed: %s", rawNestedKey)
+	}
+	if nestedMap[RedactedMarker] != "nested_val" {
+		t.Errorf("expected nested %s with nested_val, got: %v", RedactedMarker, nestedMap[RedactedMarker])
+	}
+
+	// Verify caller input was NOT mutated
+	if _, exists := input[rawGHKey]; !exists {
+		t.Errorf("input map was mutated: key %s missing", rawGHKey)
+	}
+
+	// Also test OpenAI key in a separate map to avoid key collision with ghp_
+	inputOpenAI := map[string]any{
+		rawOpenAIKey: "val_openai",
+	}
+	scrubbedOpenAI, err := ScrubValue(inputOpenAI)
+	if err != nil {
+		t.Fatalf("ScrubValue failed on OpenAI key: %v", err)
+	}
+	resOpenAIMap := scrubbedOpenAI.(map[string]any)
+	if _, exists := resOpenAIMap[rawOpenAIKey]; exists {
+		t.Errorf("raw OpenAI key was NOT scrubbed: %s", rawOpenAIKey)
+	}
+	if resOpenAIMap[RedactedMarker] != "val_openai" {
+		t.Errorf("expected %s with val_openai, got: %v", RedactedMarker, resOpenAIMap[RedactedMarker])
+	}
+
+	t.Logf("SECRET_IN_JSON_KEY = REDACTED")
+	t.Logf("NESTED_SECRET_IN_JSON_KEY = REDACTED")
+}
+
+func TestScrubValue_KeyCollision(t *testing.T) {
+	// Two distinct keys that both scrub to [REDACTED]
+	input := map[string]any{
+		"ghp_1234567890abcdefghijklmnopqrstuvwxyz": "val_1",
+		"ghp_9999999999abcdefghijklmnopqrstuvwxyz": "val_2",
+	}
+
+	_, err := ScrubValue(input)
+	if err == nil {
+		t.Fatalf("expected error on sanitized key collision, got nil")
+	}
+	if !errors.Is(err, ErrSanitizedKeyCollision) {
+		t.Errorf("expected ErrSanitizedKeyCollision, got: %v", err)
+	}
+
+	t.Logf("SANITIZED_KEY_COLLISION = REJECTED")
+}
+
+func TestScrubValue_NonStringMapKey(t *testing.T) {
+	// Non-string map key (e.g. map[int]string)
+	input := map[int]string{
+		1: "bad_key",
+	}
+
+	_, err := ScrubValue(input)
+	if err == nil {
+		t.Fatalf("expected error on non-string map key, got nil")
+	}
+	if !errors.Is(err, ErrNonStringMapKey) {
+		t.Errorf("expected ErrNonStringMapKey, got: %v", err)
+	}
+
+	t.Logf("NON_STRING_MAP_KEY = REJECTED")
 }
 
 func TestScrubValue_NestedAndBinary(t *testing.T) {
