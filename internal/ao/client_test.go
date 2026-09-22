@@ -6,1029 +6,1324 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
 )
 
+// Helper to create a test client bound to an httptest.Server URL
+func newTestClient(t *testing.T, s *httptest.Server) (*Client, *http.Client) {
+	t.Helper()
+	baseHTTPClient := &http.Client{Timeout: 5 * time.Second}
+	client, err := NewClient(s.URL, baseHTTPClient)
+	if err != nil {
+		t.Fatalf("NewClient(%q) unexpected error: %v", s.URL, err)
+	}
+	return client, baseHTTPClient
+}
+
+// -----------------------------------------------------------------------------
+// 1. Constructor, Base URL & Loopback Security Tests (P03T1-002, P03T1-003, P03T1R1-005)
+// -----------------------------------------------------------------------------
 func TestNewClient_ConstructorAndLoopbackSecurity(t *testing.T) {
-	baseClient := &http.Client{
-		Timeout: 42 * time.Second,
-	}
+	validHTTPClient := &http.Client{Timeout: 2 * time.Second}
 
-	tests := []struct {
-		name       string
-		url        string
-		client     *http.Client
-		wantErr    error
-		errContain string
+	// 1.1 Nil httpClient MUST fail deterministically matching ErrNilHTTPClient and ErrBadRequest
+	t.Run("nil_http_client", func(t *testing.T) {
+		c, err := NewClient("http://127.0.0.1:3001", nil)
+		if c != nil {
+			t.Errorf("expected nil client, got %v", c)
+		}
+		if err == nil {
+			t.Fatal("expected error on nil httpClient, got nil")
+		}
+		if !errors.Is(err, ErrNilHTTPClient) {
+			t.Errorf("expected errors.Is(err, ErrNilHTTPClient), got: %v", err)
+		}
+		if !errors.Is(err, ErrBadRequest) {
+			t.Errorf("expected errors.Is(err, ErrBadRequest), got: %v", err)
+		}
+	})
+
+	// 1.2 Loopback base URL validation matrix
+	cases := []struct {
+		name        string
+		rawURL      string
+		expectPass  bool
+		expectedErr error
 	}{
-		// PASS cases
-		{
-			name:    "PASS: standard IPv4 loopback with port",
-			url:     "http://127.0.0.1:3001",
-			client:  baseClient,
-			wantErr: nil,
-		},
-		{
-			name:    "PASS: secondary IPv4 loopback with port",
-			url:     "http://127.0.0.2:8080",
-			client:  baseClient,
-			wantErr: nil,
-		},
-		{
-			name:    "PASS: IPv6 loopback with port",
-			url:     "http://[::1]:3001",
-			client:  baseClient,
-			wantErr: nil,
-		},
-		{
-			name:    "PASS: IPv4 loopback with root slash",
-			url:     "http://127.0.0.1:3001/",
-			client:  baseClient,
-			wantErr: nil,
-		},
+		// Valid cases
+		{name: "ipv4_loopback_standard", rawURL: "http://127.0.0.1:3001", expectPass: true},
+		{name: "ipv4_loopback_trailing_slash", rawURL: "http://127.0.0.1:3001/", expectPass: true},
+		{name: "ipv4_loopback_alternate_octets", rawURL: "http://127.0.0.2:8080", expectPass: true},
+		{name: "ipv6_loopback", rawURL: "http://[::1]:3001", expectPass: true},
+		{name: "ipv6_loopback_trailing_slash", rawURL: "http://[::1]:3001/", expectPass: true},
 
-		// FAIL cases per contract
-		{
-			name:       "FAIL: nil httpClient rejected",
-			url:        "http://127.0.0.1:3001",
-			client:     nil,
-			wantErr:    ErrBadRequest,
-			errContain: "httpClient must not be nil",
-		},
-		{
-			name:       "FAIL: empty URL rejected",
-			url:        "",
-			client:     baseClient,
-			wantErr:    ErrBadRequest,
-			errContain: "base URL cannot be empty",
-		},
-		{
-			name:       "FAIL: localhost hostname rejected",
-			url:        "http://localhost:3001",
-			client:     baseClient,
-			wantErr:    ErrNonLoopbackURL,
-			errContain: "hostnames forbidden",
-		},
-		{
-			name:       "FAIL: HTTPS scheme rejected",
-			url:        "https://127.0.0.1:3001",
-			client:     baseClient,
-			wantErr:    ErrNonLoopbackURL,
-			errContain: "must be http only",
-		},
-		{
-			name:       "FAIL: remote hostname rejected",
-			url:        "http://example.com:3001",
-			client:     baseClient,
-			wantErr:    ErrNonLoopbackURL,
-			errContain: "hostnames forbidden",
-		},
-		{
-			name:       "FAIL: remote IP rejected",
-			url:        "http://192.168.1.5:3001",
-			client:     baseClient,
-			wantErr:    ErrNonLoopbackURL,
-			errContain: "not a loopback address",
-		},
-		{
-			name:       "FAIL: wildcard 0.0.0.0 rejected",
-			url:        "http://0.0.0.0:3001",
-			client:     baseClient,
-			wantErr:    ErrNonLoopbackURL,
-			errContain: "not a loopback address",
-		},
-		{
-			name:       "FAIL: missing port rejected",
-			url:        "http://127.0.0.1",
-			client:     baseClient,
-			wantErr:    ErrNonLoopbackURL,
-			errContain: "explicit port required",
-		},
-		{
-			name:       "FAIL: invalid non-numeric port rejected",
-			url:        "http://127.0.0.1:abc",
-			client:     baseClient,
-			wantErr:    ErrNonLoopbackURL,
-			errContain: "invalid port",
-		},
-		{
-			name:       "FAIL: port 0 rejected",
-			url:        "http://127.0.0.1:0",
-			client:     baseClient,
-			wantErr:    ErrNonLoopbackURL,
-			errContain: "invalid port",
-		},
-		{
-			name:       "FAIL: port > 65535 rejected",
-			url:        "http://127.0.0.1:70000",
-			client:     baseClient,
-			wantErr:    ErrNonLoopbackURL,
-			errContain: "invalid port",
-		},
-		{
-			name:       "FAIL: userinfo rejected",
-			url:        "http://user:pass@127.0.0.1:3001",
-			client:     baseClient,
-			wantErr:    ErrNonLoopbackURL,
-			errContain: "userinfo in base URL is forbidden",
-		},
-		{
-			name:       "FAIL: non-root base path rejected",
-			url:        "http://127.0.0.1:3001/api",
-			client:     baseClient,
-			wantErr:    ErrNonLoopbackURL,
-			errContain: "non-root base path",
-		},
-		{
-			name:       "FAIL: query rejected",
-			url:        "http://127.0.0.1:3001?x=1",
-			client:     baseClient,
-			wantErr:    ErrNonLoopbackURL,
-			errContain: "query string in base URL is forbidden",
-		},
-		{
-			name:       "FAIL: fragment rejected",
-			url:        "http://127.0.0.1:3001#fragment",
-			client:     baseClient,
-			wantErr:    ErrNonLoopbackURL,
-			errContain: "fragment in base URL is forbidden",
-		},
+		// Prohibited hostnames & DNS resolution
+		{name: "localhost_forbidden", rawURL: "http://localhost:3001", expectPass: false, expectedErr: ErrNonLoopbackURL},
+		{name: "remote_hostname_forbidden", rawURL: "http://example.com:3001", expectPass: false, expectedErr: ErrNonLoopbackURL},
+
+		// Prohibited schemes
+		{name: "https_forbidden", rawURL: "https://127.0.0.1:3001", expectPass: false, expectedErr: ErrNonLoopbackURL},
+		{name: "ftp_forbidden", rawURL: "ftp://127.0.0.1:3001", expectPass: false, expectedErr: ErrNonLoopbackURL},
+
+		// Prohibited IP ranges
+		{name: "private_non_loopback_ip", rawURL: "http://192.168.1.5:3001", expectPass: false, expectedErr: ErrNonLoopbackURL},
+		{name: "wildcard_ip_forbidden", rawURL: "http://0.0.0.0:3001", expectPass: false, expectedErr: ErrNonLoopbackURL},
+		{name: "public_ip_forbidden", rawURL: "http://8.8.8.8:3001", expectPass: false, expectedErr: ErrNonLoopbackURL},
+
+		// Port validation
+		{name: "missing_port_forbidden", rawURL: "http://127.0.0.1", expectPass: false, expectedErr: ErrNonLoopbackURL},
+		{name: "non_numeric_port_forbidden", rawURL: "http://127.0.0.1:abc", expectPass: false, expectedErr: ErrNonLoopbackURL},
+		{name: "zero_port_forbidden", rawURL: "http://127.0.0.1:0", expectPass: false, expectedErr: ErrNonLoopbackURL},
+		{name: "port_out_of_range_forbidden", rawURL: "http://127.0.0.1:70000", expectPass: false, expectedErr: ErrNonLoopbackURL},
+
+		// Prohibited URL components
+		{name: "userinfo_forbidden", rawURL: "http://user:pass@127.0.0.1:3001", expectPass: false, expectedErr: ErrNonLoopbackURL},
+		{name: "non_root_base_path_forbidden", rawURL: "http://127.0.0.1:3001/api", expectPass: false, expectedErr: ErrNonLoopbackURL},
+		{name: "query_string_forbidden", rawURL: "http://127.0.0.1:3001?x=1", expectPass: false, expectedErr: ErrNonLoopbackURL},
+		{name: "fragment_forbidden", rawURL: "http://127.0.0.1:3001#fragment", expectPass: false, expectedErr: ErrNonLoopbackURL},
+
+		// Malformed & empty
+		{name: "empty_url", rawURL: "", expectPass: false, expectedErr: ErrBadRequest},
+		{name: "whitespace_url", rawURL: "   ", expectPass: false, expectedErr: ErrBadRequest},
+		{name: "malformed_url", rawURL: "http://127.0.0.1:3001%invalid", expectPass: false, expectedErr: ErrNonLoopbackURL},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, err := NewClient(tt.url, tt.client)
-			if tt.wantErr != nil {
-				if err == nil {
-					t.Fatalf("expected error, got nil")
-				}
-				if !errors.Is(err, tt.wantErr) {
-					t.Fatalf("error %v does not match wantErr %v", err, tt.wantErr)
-				}
-				if tt.errContain != "" && !strings.Contains(err.Error(), tt.errContain) {
-					t.Errorf("error %q does not contain %q", err.Error(), tt.errContain)
-				}
-			} else {
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := NewClient(tc.rawURL, validHTTPClient)
+			if tc.expectPass {
 				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
+					t.Fatalf("expected pass for %q, got error: %v", tc.rawURL, err)
 				}
 				if c == nil {
-					t.Fatalf("expected non-nil client")
+					t.Fatal("expected non-nil Client")
 				}
 				if strings.HasSuffix(c.BaseURL(), "/") {
-					t.Errorf("BaseURL() %q has trailing slash", c.BaseURL())
+					t.Errorf("normalized baseURL %q should not have trailing slash", c.BaseURL())
+				}
+			} else {
+				if err == nil {
+					t.Fatalf("expected failure for %q, got success", tc.rawURL)
+				}
+				if tc.expectedErr != nil && !errors.Is(err, tc.expectedErr) {
+					t.Errorf("expected errors.Is(err, %v), got %v", tc.expectedErr, err)
 				}
 			}
 		})
 	}
 }
 
+// -----------------------------------------------------------------------------
+// 2. Caller Object Preservation & Redirect Safety (P03T1-002, P03T1-003)
+// -----------------------------------------------------------------------------
 func TestClient_CallerObjectPreservationAndRedirectSafety(t *testing.T) {
-	callerTransport := &http.Transport{}
+	customTransport := &http.Transport{
+		MaxIdleConns: 42,
+	}
+	originalTimeout := 7 * time.Second
 	callerClient := &http.Client{
-		Transport: callerTransport,
-		Timeout:   27 * time.Second,
+		Transport: customTransport,
+		Timeout:   originalTimeout,
 	}
 
 	c, err := NewClient("http://127.0.0.1:3001", callerClient)
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("unexpected NewClient error: %v", err)
 	}
 
-	// Verify caller-owned client object is NOT mutated
-	if callerClient.Timeout != 27*time.Second {
-		t.Errorf("callerClient.Timeout mutated to %v", callerClient.Timeout)
+	// 2.1 Verify caller-owned client object was NOT mutated
+	if callerClient.Timeout != originalTimeout {
+		t.Errorf("caller client Timeout mutated: got %v, want %v", callerClient.Timeout, originalTimeout)
 	}
 	if callerClient.CheckRedirect != nil {
-		t.Errorf("callerClient.CheckRedirect was mutated")
+		t.Errorf("caller client CheckRedirect mutated: expected nil, got non-nil")
+	}
+	if callerClient.Transport != customTransport {
+		t.Errorf("caller client Transport mutated")
 	}
 
-	// Verify adapter client preserved Transport and Timeout
-	if c.httpClient.Timeout != 27*time.Second {
-		t.Errorf("adapter client timeout = %v, want 27s", c.httpClient.Timeout)
+	// 2.2 Verify adapter client preserved Transport and Timeout from caller
+	if c.httpClient.Timeout != originalTimeout {
+		t.Errorf("adapter client Timeout mismatch: got %v, want %v", c.httpClient.Timeout, originalTimeout)
 	}
-	if c.httpClient.Transport != callerTransport {
-		t.Errorf("adapter client Transport was not preserved")
+	if c.httpClient.Transport != customTransport {
+		t.Errorf("adapter client Transport mismatch")
+	}
+	if c.httpClient.CheckRedirect == nil {
+		t.Fatal("adapter client must install CheckRedirect policy")
 	}
 
-	// Redirect safety: loopback endpoint returns redirect to external host
-	externalDestinationHit := false
+	// 2.3 Verify redirect fail-closed: external redirection is blocked
 	externalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		externalDestinationHit = true
+		t.Errorf("external server was reached via redirect! Request: %s %s", r.Method, r.URL.Path)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer externalServer.Close()
 
-	loopbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, externalServer.URL+"/escaped", http.StatusFound)
+	redirectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, externalServer.URL+"/evil", http.StatusFound)
 	}))
-	defer loopbackServer.Close()
+	defer redirectServer.Close()
 
-	// Parse loopbackServer URL to extract IP and port
-	u, err := url.Parse(loopbackServer.URL)
-	if err != nil {
-		t.Fatalf("parse server URL: %v", err)
-	}
-	host, port, _ := net.SplitHostPort(u.Host)
-	loopbackURL := fmt.Sprintf("http://%s:%s", host, port)
-
-	adapter, err := NewClient(loopbackURL, callerClient)
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-
-	var dummy map[string]any
-	err = adapter.get(context.Background(), "/test-redirect", &dummy)
+	redirectClient, _ := newTestClient(t, redirectServer)
+	_, err = redirectClient.CheckHealth(context.Background())
 	if err == nil {
-		t.Fatalf("expected redirect error, got nil")
+		t.Fatal("expected redirect to fail closed, got nil error")
 	}
 	if !errors.Is(err, ErrRedirectAttempted) {
-		t.Errorf("expected ErrRedirectAttempted, got %v", err)
-	}
-	if externalDestinationHit {
-		t.Fatalf("SECURITY VIOLATION: redirect to external host was followed!")
+		t.Errorf("expected errors.Is(err, ErrRedirectAttempted), got %v", err)
 	}
 }
 
-func TestClient_CheckHealth(t *testing.T) {
-	// Success case
-	tsOK := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/healthz" {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status":  "ok",
-			"service": "agent-orchestrator-daemon",
-			"pid":     8888,
+// -----------------------------------------------------------------------------
+// 3. Exact Status Contract Tests (P03T1R1-001)
+// -----------------------------------------------------------------------------
+func TestClient_ExactSuccessStatusContract(t *testing.T) {
+	// Pinned endpoint contract requires exact status codes:
+	// GET /healthz -> 200
+	// GET /readyz -> 200
+	// GET /api/v1/agents -> 200
+	// GET /api/v1/agents/readiness -> 200
+	// GET /api/v1/openapi.yaml -> 200
+	// GET /api/v1/projects/{id} -> 200
+	// GET /api/v1/sessions/{id} -> 200
+	// POST /api/v1/projects -> 201
+
+	cases := []struct {
+		name       string
+		method     string
+		path       string
+		respStatus int
+		respBody   string
+		call       func(c *Client) error
+	}{
+		{
+			name:       "health_wrong_status_201",
+			method:     http.MethodGet,
+			path:       "/healthz",
+			respStatus: http.StatusCreated,
+			respBody:   `{"status":"ok","service":"agent-orchestrator-daemon","pid":1234}`,
+			call:       func(c *Client) error { _, err := c.CheckHealth(context.Background()); return err },
+		},
+		{
+			name:       "readiness_wrong_status_202",
+			method:     http.MethodGet,
+			path:       "/readyz",
+			respStatus: http.StatusAccepted,
+			respBody:   `{"status":"ready","service":"agent-orchestrator-daemon","pid":1234}`,
+			call:       func(c *Client) error { _, err := c.CheckReadiness(context.Background()); return err },
+		},
+		{
+			name:       "agents_wrong_status_201",
+			method:     http.MethodGet,
+			path:       "/api/v1/agents",
+			respStatus: http.StatusCreated,
+			respBody:   `{"supported":[],"installed":[],"authorized":[]}`,
+			call:       func(c *Client) error { _, err := c.ListAgents(context.Background()); return err },
+		},
+		{
+			name:       "agents_readiness_wrong_status_201",
+			method:     http.MethodGet,
+			path:       "/api/v1/agents/readiness",
+			respStatus: http.StatusCreated,
+			respBody:   `{"agents":[]}`,
+			call:       func(c *Client) error { _, err := c.GetAgentReadiness(context.Background(), "claude-code"); return err },
+		},
+		{
+			name:       "openapi_wrong_status_206",
+			method:     http.MethodGet,
+			path:       "/api/v1/openapi.yaml",
+			respStatus: http.StatusPartialContent,
+			respBody:   `openapi: 3.1.0`,
+			call:       func(c *Client) error { _, err := c.GetAPIContract(context.Background()); return err },
+		},
+		{
+			name:       "get_project_wrong_status_201",
+			method:     http.MethodGet,
+			path:       "/api/v1/projects/p1",
+			respStatus: http.StatusCreated,
+			respBody:   `{"status":"ok","project":{"id":"p1","name":"proj1","path":"/tmp"}}`,
+			call:       func(c *Client) error { _, err := c.GetProject(context.Background(), "p1"); return err },
+		},
+		{
+			name:       "get_worker_status_wrong_status_201",
+			method:     http.MethodGet,
+			path:       "/api/v1/sessions/s1",
+			respStatus: http.StatusCreated,
+			respBody:   `{"session":{"id":"s1","status":"working","activity":{"state":"active","lastActivityAt":"2026-09-22T10:00:00Z"}}}`,
+			call:       func(c *Client) error { _, err := c.GetWorkerStatus(context.Background(), "s1"); return err },
+		},
+		{
+			name:       "register_project_wrong_status_200",
+			method:     http.MethodPost,
+			path:       "/api/v1/projects",
+			respStatus: http.StatusOK,
+			respBody:   `{"project":{"id":"p1","name":"p1","path":"/tmp"}}`,
+			call:       func(c *Client) error { _, err := c.RegisterProject(context.Background(), "p1", "/tmp"); return err },
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.respStatus)
+				w.Write([]byte(tc.respBody))
+			}))
+			defer s.Close()
+
+			c, _ := newTestClient(t, s)
+			err := tc.call(c)
+			if err == nil {
+				t.Fatalf("expected ProtocolError on status %d, got nil", tc.respStatus)
+			}
+			if !errors.Is(err, ErrProtocolViolation) {
+				t.Errorf("expected errors.Is(err, ErrProtocolViolation), got %v", err)
+			}
+			var protoErr *ProtocolError
+			if !errors.As(err, &protoErr) {
+				t.Errorf("expected *ProtocolError, got %T: %v", err, err)
+			} else if protoErr.StatusCode != tc.respStatus {
+				t.Errorf("expected ProtocolError.StatusCode %d, got %d", tc.respStatus, protoErr.StatusCode)
+			}
 		})
-	}))
-	defer tsOK.Close()
-
-	c, err := NewClient(tsOK.URL, &http.Client{Timeout: 5 * time.Second})
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-
-	h, err := c.CheckHealth(context.Background())
-	if err != nil {
-		t.Fatalf("CheckHealth: %v", err)
-	}
-	if h.Status != "ok" || h.Service != "agent-orchestrator-daemon" || h.PID != 8888 {
-		t.Errorf("unexpected health status: %+v", h)
-	}
-
-	// Malformed JSON failure
-	tsBadJSON := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("{invalid-json"))
-	}))
-	defer tsBadJSON.Close()
-
-	cBadJSON, _ := NewClient(tsBadJSON.URL, &http.Client{Timeout: 5 * time.Second})
-	_, err = cBadJSON.CheckHealth(context.Background())
-	if err == nil || !errors.Is(err, ErrProtocolViolation) {
-		t.Errorf("expected ErrProtocolViolation on malformed JSON, got %v", err)
-	}
-
-	// Missing status failure
-	tsMissing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"service": "agent-orchestrator-daemon",
-		})
-	}))
-	defer tsMissing.Close()
-
-	cMissing, _ := NewClient(tsMissing.URL, &http.Client{Timeout: 5 * time.Second})
-	_, err = cMissing.CheckHealth(context.Background())
-	if err == nil || !errors.Is(err, ErrProtocolViolation) {
-		t.Errorf("expected ErrProtocolViolation on missing status, got %v", err)
-	}
-
-	// Wrong status failure
-	tsWrong := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status":  "degraded",
-			"service": "agent-orchestrator-daemon",
-		})
-	}))
-	defer tsWrong.Close()
-
-	cWrong, _ := NewClient(tsWrong.URL, &http.Client{Timeout: 5 * time.Second})
-	_, err = cWrong.CheckHealth(context.Background())
-	if err == nil || !errors.Is(err, ErrProtocolViolation) {
-		t.Errorf("expected ErrProtocolViolation on status != ok, got %v", err)
 	}
 }
 
-func TestClient_CheckReadiness(t *testing.T) {
-	// Success case
-	tsOK := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/readyz" {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status":  "ready",
-			"service": "agent-orchestrator-daemon",
-			"pid":     8888,
+// -----------------------------------------------------------------------------
+// 4. Preflight Daemon Identity Tests (P03T1-005, P03T1R1-002)
+// -----------------------------------------------------------------------------
+func TestClient_CheckHealthAndReadiness_DaemonIdentity(t *testing.T) {
+	cases := []struct {
+		name         string
+		probe        string // "health" or "readiness"
+		statusCode   int
+		body         string
+		expectPass   bool
+		expectedDesc string
+	}{
+		// Valid health
+		{
+			name:       "health_valid",
+			probe:      "health",
+			statusCode: http.StatusOK,
+			body:       `{"status":"ok","service":"agent-orchestrator-daemon","pid":12345,"executablePath":"/bin/ao"}`,
+			expectPass: true,
+		},
+		// Health failures
+		{
+			name:         "health_missing_service",
+			probe:        "health",
+			statusCode:   http.StatusOK,
+			body:         `{"status":"ok","service":"","pid":12345}`,
+			expectPass:   false,
+			expectedDesc: "service",
+		},
+		{
+			name:         "health_wrong_service",
+			probe:        "health",
+			statusCode:   http.StatusOK,
+			body:         `{"status":"ok","service":"rogue-daemon","pid":12345}`,
+			expectPass:   false,
+			expectedDesc: "service",
+		},
+		{
+			name:         "health_zero_pid",
+			probe:        "health",
+			statusCode:   http.StatusOK,
+			body:         `{"status":"ok","service":"agent-orchestrator-daemon","pid":0}`,
+			expectPass:   false,
+			expectedDesc: "pid",
+		},
+		{
+			name:         "health_negative_pid",
+			probe:        "health",
+			statusCode:   http.StatusOK,
+			body:         `{"status":"ok","service":"agent-orchestrator-daemon","pid":-1}`,
+			expectPass:   false,
+			expectedDesc: "pid",
+		},
+		{
+			name:         "health_missing_status",
+			probe:        "health",
+			statusCode:   http.StatusOK,
+			body:         `{"service":"agent-orchestrator-daemon","pid":12345}`,
+			expectPass:   false,
+			expectedDesc: "status",
+		},
+		{
+			name:         "health_wrong_status",
+			probe:        "health",
+			statusCode:   http.StatusOK,
+			body:         `{"status":"not_ok","service":"agent-orchestrator-daemon","pid":12345}`,
+			expectPass:   false,
+			expectedDesc: "status",
+		},
+		{
+			name:         "health_malformed_json",
+			probe:        "health",
+			statusCode:   http.StatusOK,
+			body:         `{invalid-json}`,
+			expectPass:   false,
+			expectedDesc: "malformed",
+		},
+
+		// Valid readiness
+		{
+			name:       "readiness_valid",
+			probe:      "readiness",
+			statusCode: http.StatusOK,
+			body:       `{"status":"ready","service":"agent-orchestrator-daemon","pid":54321}`,
+			expectPass: true,
+		},
+		// Readiness failures
+		{
+			name:         "readiness_missing_service",
+			probe:        "readiness",
+			statusCode:   http.StatusOK,
+			body:         `{"status":"ready","service":"","pid":54321}`,
+			expectPass:   false,
+			expectedDesc: "service",
+		},
+		{
+			name:         "readiness_wrong_service",
+			probe:        "readiness",
+			statusCode:   http.StatusOK,
+			body:         `{"status":"ready","service":"other-daemon","pid":54321}`,
+			expectPass:   false,
+			expectedDesc: "service",
+		},
+		{
+			name:         "readiness_zero_pid",
+			probe:        "readiness",
+			statusCode:   http.StatusOK,
+			body:         `{"status":"ready","service":"agent-orchestrator-daemon","pid":0}`,
+			expectPass:   false,
+			expectedDesc: "pid",
+		},
+		{
+			name:         "readiness_negative_pid",
+			probe:        "readiness",
+			statusCode:   http.StatusOK,
+			body:         `{"status":"ready","service":"agent-orchestrator-daemon","pid":-42}`,
+			expectPass:   false,
+			expectedDesc: "pid",
+		},
+		{
+			name:         "readiness_missing_status",
+			probe:        "readiness",
+			statusCode:   http.StatusOK,
+			body:         `{"service":"agent-orchestrator-daemon","pid":54321}`,
+			expectPass:   false,
+			expectedDesc: "status",
+		},
+		{
+			name:         "readiness_wrong_status",
+			probe:        "readiness",
+			statusCode:   http.StatusOK,
+			body:         `{"status":"ok","service":"agent-orchestrator-daemon","pid":54321}`,
+			expectPass:   false,
+			expectedDesc: "status",
+		},
+		{
+			name:         "readiness_malformed_json",
+			probe:        "readiness",
+			statusCode:   http.StatusOK,
+			body:         `{"status":`,
+			expectPass:   false,
+			expectedDesc: "malformed",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.statusCode)
+				w.Write([]byte(tc.body))
+			}))
+			defer s.Close()
+
+			c, _ := newTestClient(t, s)
+			var err error
+			if tc.probe == "health" {
+				res, hErr := c.CheckHealth(context.Background())
+				err = hErr
+				if tc.expectPass {
+					if err != nil {
+						t.Fatalf("unexpected CheckHealth error: %v", err)
+					}
+					if res.Status != "ok" || res.Service != DaemonServiceAO || res.PID <= 0 {
+						t.Errorf("unexpected health status result: %+v", res)
+					}
+				}
+			} else {
+				res, rErr := c.CheckReadiness(context.Background())
+				err = rErr
+				if tc.expectPass {
+					if err != nil {
+						t.Fatalf("unexpected CheckReadiness error: %v", err)
+					}
+					if res.Status != "ready" || res.Service != DaemonServiceAO || res.PID <= 0 {
+						t.Errorf("unexpected readiness status result: %+v", res)
+					}
+				}
+			}
+
+			if !tc.expectPass {
+				if err == nil {
+					t.Fatalf("expected error for %s, got nil", tc.name)
+				}
+				if !errors.Is(err, ErrProtocolViolation) {
+					t.Errorf("expected errors.Is(err, ErrProtocolViolation), got %v", err)
+				}
+			}
 		})
-	}))
-	defer tsOK.Close()
-
-	c, err := NewClient(tsOK.URL, &http.Client{Timeout: 5 * time.Second})
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-
-	r, err := c.CheckReadiness(context.Background())
-	if err != nil {
-		t.Fatalf("CheckReadiness: %v", err)
-	}
-	if r.Status != "ready" || r.PID != 8888 {
-		t.Errorf("unexpected readiness status: %+v", r)
-	}
-
-	// Wrong status failure
-	tsWrong := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status": "not_ready",
-		})
-	}))
-	defer tsWrong.Close()
-
-	cWrong, _ := NewClient(tsWrong.URL, &http.Client{Timeout: 5 * time.Second})
-	_, err = cWrong.CheckReadiness(context.Background())
-	if err == nil || !errors.Is(err, ErrProtocolViolation) {
-		t.Errorf("expected ErrProtocolViolation on wrong readyz status, got %v", err)
 	}
 }
 
-func TestClient_ListAgents(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/agents" {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+// -----------------------------------------------------------------------------
+// 5. Agent Catalog & Complete Readiness Observation (P03T1-006, P03T1R1-003)
+// -----------------------------------------------------------------------------
+func TestClient_AgentsAndReadiness(t *testing.T) {
+	now := time.Date(2026, 9, 22, 10, 0, 0, 0, time.UTC)
+	nowStr := now.Format(time.RFC3339)
+
+	t.Run("list_agents_success", func(t *testing.T) {
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet || r.URL.Path != "/api/v1/agents" {
+				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{
+				"supported":[{"id":"claude-code","label":"Claude Code"}],
+				"installed":[{"id":"claude-code","label":"Claude Code","authStatus":"authorized","usageCount":3}],
+				"authorized":[{"id":"claude-code","label":"Claude Code","authStatus":"authorized"}]
+			}`))
+		}))
+		defer s.Close()
+
+		c, _ := newTestClient(t, s)
+		inv, err := c.ListAgents(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected ListAgents error: %v", err)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(AgentInventory{
-			Supported: []AgentInfo{
-				{ID: "agy", Label: "Antigravity", AuthStatus: "authorized"},
-				{ID: "codex", Label: "Codex", AuthStatus: "authorized"},
-			},
-			Installed: []AgentInfo{
-				{ID: "agy", Label: "Antigravity", AuthStatus: "authorized"},
-			},
-			Authorized: []AgentInfo{
-				{ID: "agy", Label: "Antigravity", AuthStatus: "authorized"},
-			},
-		})
-	}))
-	defer ts.Close()
-
-	c, err := NewClient(ts.URL, &http.Client{Timeout: 5 * time.Second})
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-
-	inv, err := c.ListAgents(context.Background())
-	if err != nil {
-		t.Fatalf("ListAgents: %v", err)
-	}
-	if len(inv.Supported) != 2 || len(inv.Installed) != 1 || len(inv.Authorized) != 1 {
-		t.Errorf("unexpected agent inventory counts: %+v", inv)
-	}
-	if inv.Installed[0].ID != "agy" {
-		t.Errorf("installed agent ID = %q, want agy", inv.Installed[0].ID)
-	}
-}
-
-func TestClient_GetAgentReadiness(t *testing.T) {
-	postCalled := false
-	checkedAt := time.Now().UTC().Add(-1 * time.Minute).Truncate(time.Second)
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			postCalled = true
-			t.Errorf("FORBIDDEN: POST was called on readiness endpoint")
+		if len(inv.Supported) != 1 || inv.Supported[0].ID != "claude-code" {
+			t.Errorf("unexpected supported inventory: %+v", inv.Supported)
 		}
-		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/agents/readiness" {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		if len(inv.Installed) != 1 || inv.Installed[0].UsageCount != 3 {
+			t.Errorf("unexpected installed inventory: %+v", inv.Installed)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(rawAgentReadinessResponse{
-			Agents: []AgentReadinessSnapshot{
-				{
-					ID:    "agy",
-					Label: "Antigravity",
-					Installation: AgentInstallationObservation{
-						State:      "installed",
-						Freshness:  "fresh",
-						CheckedAt:  &checkedAt,
-						ReasonCode: "FOUND",
+		if len(inv.Authorized) != 1 || inv.Authorized[0].AuthStatus != "authorized" {
+			t.Errorf("unexpected authorized inventory: %+v", inv.Authorized)
+		}
+	})
+
+	t.Run("agent_readiness_full_coverage", func(t *testing.T) {
+		ensureCalled := false
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/v1/agents/readiness/ensure" {
+				ensureCalled = true
+				t.Errorf("POST /readiness/ensure MUST NOT be called in read-only task!")
+			}
+			if r.Method != http.MethodGet || r.URL.Path != "/api/v1/agents/readiness" {
+				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			// Return snapshots covering actual pinned values:
+			// Installation: installed, not_installed, unknown
+			// Authentication: authorized, unauthorized, unknown, not_applicable
+			// Freshness: fresh, stale, checking
+			// Effective: ready, not_ready, unknown
+			// Pinned style reason codes: installed, authorized, checking, not_installed, auth_not_applicable
+			w.Write([]byte(fmt.Sprintf(`{
+				"agents": [
+					{
+						"id": "claude-code",
+						"label": "Claude Code",
+						"installation": {
+							"state": "installed",
+							"freshness": "fresh",
+							"checkedAt": "%s",
+							"attemptedAt": "%s",
+							"reasonCode": "installed",
+							"reason": "binary located at /usr/local/bin/claude"
+						},
+						"authentication": {
+							"state": "authorized",
+							"freshness": "fresh",
+							"checkedAt": "%s",
+							"attemptedAt": "%s",
+							"reasonCode": "authorized",
+							"reason": "token verified"
+						},
+						"effectiveReadiness": "ready",
+						"usageCount": 12,
+						"lastUsedAt": "%s"
 					},
-					Authentication: AgentAuthenticationObservation{
-						State:     "authorized",
-						Freshness: "fresh",
-						CheckedAt: &checkedAt,
+					{
+						"id": "codex",
+						"label": "Codex",
+						"installation": {
+							"state": "not_installed",
+							"freshness": "stale",
+							"reasonCode": "not_installed",
+							"reason": "binary missing"
+						},
+						"authentication": {
+							"state": "unknown",
+							"freshness": "stale",
+							"reasonCode": "auth_skipped_not_installed"
+						},
+						"effectiveReadiness": "not_ready",
+						"usageCount": 0
 					},
-					EffectiveReadiness: "ready",
-					UsageCount:         10,
-				},
-				{
-					ID:    "claude",
-					Label: "Claude Code",
-					Installation: AgentInstallationObservation{
-						State:     "not_installed",
-						Freshness: "fresh",
-					},
-					Authentication: AgentAuthenticationObservation{
-						State:     "unknown",
-						Freshness: "stale",
-					},
-					EffectiveReadiness: "not_ready",
-				},
-			},
-		})
-	}))
-	defer ts.Close()
+					{
+						"id": "agy",
+						"label": "Antigravity CLI",
+						"installation": {
+							"state": "installed",
+							"freshness": "checking",
+							"reasonCode": "checking"
+						},
+						"authentication": {
+							"state": "not_applicable",
+							"freshness": "fresh",
+							"reasonCode": "auth_not_applicable"
+						},
+						"effectiveReadiness": "unknown",
+						"usageCount": 5
+					}
+				]
+			}`, nowStr, nowStr, nowStr, nowStr, nowStr)))
+		}))
+		defer s.Close()
 
-	c, err := NewClient(ts.URL, &http.Client{Timeout: 5 * time.Second})
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
+		c, _ := newTestClient(t, s)
 
-	// 1. Success matching agentID
-	snap, err := c.GetAgentReadiness(context.Background(), "agy")
-	if err != nil {
-		t.Fatalf("GetAgentReadiness('agy'): %v", err)
-	}
-	if snap.ID != "agy" || snap.EffectiveReadiness != "ready" {
-		t.Errorf("unexpected snapshot: %+v", snap)
-	}
-	if snap.Installation.State != "installed" || snap.Authentication.State != "authorized" {
-		t.Errorf("unexpected observation states: %+v", snap)
-	}
-	if snap.UsageCount != 10 {
-		t.Errorf("UsageCount = %d, want 10", snap.UsageCount)
-	}
+		// 5.1 Requesting claude-code: exact match and field preservation
+		snap, err := c.GetAgentReadiness(context.Background(), "claude-code")
+		if err != nil {
+			t.Fatalf("unexpected GetAgentReadiness error: %v", err)
+		}
+		if snap.ID != "claude-code" || snap.Label != "Claude Code" {
+			t.Errorf("unexpected agent identity: %+v", snap)
+		}
+		if snap.Installation.State != "installed" || snap.Installation.Freshness != "fresh" || snap.Installation.ReasonCode != "installed" {
+			t.Errorf("unexpected installation observation: %+v", snap.Installation)
+		}
+		if snap.Authentication.State != "authorized" || snap.Authentication.Freshness != "fresh" || snap.Authentication.ReasonCode != "authorized" {
+			t.Errorf("unexpected authentication observation: %+v", snap.Authentication)
+		}
+		if snap.EffectiveReadiness != "ready" || snap.UsageCount != 12 {
+			t.Errorf("unexpected effective readiness or usageCount: %+v", snap)
+		}
+		if snap.Installation.CheckedAt == nil || !snap.Installation.CheckedAt.Equal(now) {
+			t.Errorf("checkedAt timestamp not preserved: %v", snap.Installation.CheckedAt)
+		}
+		if snap.LastUsedAt == nil || !snap.LastUsedAt.Equal(now) {
+			t.Errorf("lastUsedAt timestamp not preserved: %v", snap.LastUsedAt)
+		}
 
-	// 2. Absent agent returns ErrAgentNotFound
-	_, err = c.GetAgentReadiness(context.Background(), "missing-agent")
-	if err == nil || !errors.Is(err, ErrAgentNotFound) {
-		t.Errorf("expected ErrAgentNotFound on missing agent, got %v", err)
-	}
+		// 5.2 Requesting codex: exact match
+		codexSnap, err := c.GetAgentReadiness(context.Background(), "codex")
+		if err != nil {
+			t.Fatalf("unexpected GetAgentReadiness(codex): %v", err)
+		}
+		if codexSnap.Installation.State != "not_installed" || codexSnap.EffectiveReadiness != "not_ready" {
+			t.Errorf("unexpected codex snapshot: %+v", codexSnap)
+		}
 
-	// 3. Empty agentID returns ErrBadRequest
-	_, err = c.GetAgentReadiness(context.Background(), "   ")
-	if err == nil || !errors.Is(err, ErrBadRequest) {
-		t.Errorf("expected ErrBadRequest on empty agentID, got %v", err)
-	}
+		// 5.3 Requesting agy: exact match
+		agySnap, err := c.GetAgentReadiness(context.Background(), "agy")
+		if err != nil {
+			t.Fatalf("unexpected GetAgentReadiness(agy): %v", err)
+		}
+		if agySnap.Authentication.State != "not_applicable" || agySnap.EffectiveReadiness != "unknown" {
+			t.Errorf("unexpected agy snapshot: %+v", agySnap)
+		}
 
-	// 4. Verify no POST was called
-	if postCalled {
-		t.Errorf("POST /readiness/ensure was called during readiness inspection")
-	}
+		// 5.4 Requesting absent agent returns ErrAgentNotFound
+		_, err = c.GetAgentReadiness(context.Background(), "nonexistent-agent")
+		if err == nil {
+			t.Fatal("expected ErrAgentNotFound, got nil")
+		}
+		if !errors.Is(err, ErrAgentNotFound) {
+			t.Errorf("expected errors.Is(err, ErrAgentNotFound), got %v", err)
+		}
+
+		// 5.5 Empty or whitespace agent ID returns ErrBadRequest
+		_, err = c.GetAgentReadiness(context.Background(), "")
+		if !errors.Is(err, ErrBadRequest) {
+			t.Errorf("expected ErrBadRequest on empty agentID, got %v", err)
+		}
+		_, err = c.GetAgentReadiness(context.Background(), "   ")
+		if !errors.Is(err, ErrBadRequest) {
+			t.Errorf("expected ErrBadRequest on whitespace agentID, got %v", err)
+		}
+
+		// Verify ensure was never called
+		if ensureCalled {
+			t.Errorf("ensureReadiness was unexpectedly called")
+		}
+	})
 }
 
+// -----------------------------------------------------------------------------
+// 6. OpenAPI Raw Contract & Representative Fixture (P03T1-006, P03T1R1-004)
+// -----------------------------------------------------------------------------
 func TestClient_GetAPIContract(t *testing.T) {
-	mockSchema := "openapi: 3.0.3\ninfo:\n  title: Agent Orchestrator\n  version: 0.13.0\n"
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Pinned source accurate fixture beginning with openapi: 3.1.0 and info.version: 0.1.0-route-shell
+	pinnedSchema := `openapi: 3.1.0
+info:
+  description: Loopback-only HTTP surface served by the Go daemon. Generated from Go (code-first) — do not edit by hand; run go generate ./...
+  title: Agent Orchestrator HTTP daemon
+  version: 0.1.0-route-shell
+servers:
+- description: Local daemon (loopback only)
+  url: http://127.0.0.1:3001
+paths:
+  /api/v1/agents:
+    get:
+      operationId: listAgents
+`
+
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/openapi.yaml" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/yaml")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(mockSchema))
+		w.Write([]byte(pinnedSchema))
 	}))
-	defer ts.Close()
+	defer s.Close()
 
-	c, err := NewClient(ts.URL, &http.Client{Timeout: 5 * time.Second})
+	c, _ := newTestClient(t, s)
+	schema, err := c.GetAPIContract(context.Background())
 	if err != nil {
-		t.Fatalf("NewClient: %v", err)
+		t.Fatalf("unexpected GetAPIContract error: %v", err)
 	}
 
-	contract, err := c.GetAPIContract(context.Background())
-	if err != nil {
-		t.Fatalf("GetAPIContract: %v", err)
-	}
-	if contract != mockSchema {
-		t.Errorf("contract = %q, want %q", contract, mockSchema)
+	if schema != pinnedSchema {
+		t.Errorf("GetAPIContract did not return raw schema unchanged")
 	}
 }
 
-func TestClient_RegisterProject(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/projects" {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+// -----------------------------------------------------------------------------
+// 7. Project Transport & Resource Identity Validation (P03T1-007, P03T1R1-004)
+// -----------------------------------------------------------------------------
+func TestClient_Projects_TransportAndResourceIdentity(t *testing.T) {
+	// 7.1 RegisterProject validation
+	t.Run("register_project_contract_and_identity", func(t *testing.T) {
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost || r.URL.Path != "/api/v1/projects" {
+				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+
+			body, _ := io.ReadAll(r.Body)
+			var rawMap map[string]any
+			if err := json.Unmarshal(body, &rawMap); err != nil {
+				t.Fatalf("failed to unmarshal request body: %v", err)
+			}
+
+			// Wire JSON key set must be EXACTLY: path, projectId
+			if len(rawMap) != 2 {
+				t.Errorf("expected exactly 2 keys in payload, got %d: %v", len(rawMap), rawMap)
+			}
+			if _, ok := rawMap["path"]; !ok {
+				t.Errorf("missing required 'path' key")
+			}
+			if _, ok := rawMap["projectId"]; !ok {
+				t.Errorf("missing required 'projectId' key")
+			}
+
+			// For out-of-contract key tests
+			for k := range rawMap {
+				if k != "path" && k != "projectId" {
+					t.Errorf("unauthorized key %q present in wire body", k)
+				}
+			}
+
+			// Mock response based on input
+			pID := rawMap["projectId"].(string)
+			switch pID {
+			case "empty-resp-id":
+				w.WriteHeader(http.StatusCreated)
+				w.Write([]byte(`{"project":{"id":"","path":"/tmp"}}`))
+			case "mismatched-resp-id":
+				w.WriteHeader(http.StatusCreated)
+				w.Write([]byte(`{"project":{"id":"different-id","path":"/tmp"}}`))
+			case "null-project":
+				w.WriteHeader(http.StatusCreated)
+				w.Write([]byte(`{"project":null}`))
+			case "empty-project":
+				w.WriteHeader(http.StatusCreated)
+				w.Write([]byte(`{"project":{}}`))
+			default:
+				w.WriteHeader(http.StatusCreated)
+				w.Write([]byte(fmt.Sprintf(`{"project":{"id":%q,"name":"my-proj","path":%q,"repo":"git@github.com:foo/bar","defaultBranch":"main"}}`, pID, rawMap["path"])))
+			}
+		}))
+		defer s.Close()
+
+		c, _ := newTestClient(t, s)
+
+		// Successful registration
+		p, err := c.RegisterProject(context.Background(), "my-proj-id", "/workspace/repo")
+		if err != nil {
+			t.Fatalf("unexpected RegisterProject error: %v", err)
+		}
+		if p.ID != "my-proj-id" || p.Path != "/workspace/repo" || p.Status != "ok" || p.IsDegraded {
+			t.Errorf("unexpected registered project: %+v", p)
 		}
 
-		bodyBytes, _ := io.ReadAll(r.Body)
-		var wireMap map[string]any
-		if err := json.Unmarshal(bodyBytes, &wireMap); err != nil {
-			t.Errorf("unmarshal request body: %v", err)
+		// Input validation: empty / whitespace rejected before network
+		if _, err := c.RegisterProject(context.Background(), "", "/tmp"); !errors.Is(err, ErrBadRequest) {
+			t.Errorf("expected ErrBadRequest on empty projectID, got %v", err)
+		}
+		if _, err := c.RegisterProject(context.Background(), "   ", "/tmp"); !errors.Is(err, ErrBadRequest) {
+			t.Errorf("expected ErrBadRequest on whitespace projectID, got %v", err)
+		}
+		if _, err := c.RegisterProject(context.Background(), "p1", ""); !errors.Is(err, ErrBadRequest) {
+			t.Errorf("expected ErrBadRequest on empty rootPath, got %v", err)
+		}
+		if _, err := c.RegisterProject(context.Background(), "p1", "   "); !errors.Is(err, ErrBadRequest) {
+			t.Errorf("expected ErrBadRequest on whitespace rootPath, got %v", err)
 		}
 
-		// Verify EXACT wire keys: path, projectId only
-		if len(wireMap) != 2 {
-			t.Errorf("wire payload has %d keys, want exactly 2 (path, projectId). Keys: %+v", len(wireMap), wireMap)
+		// Response identity validation: empty ID fails closed
+		_, err = c.RegisterProject(context.Background(), "empty-resp-id", "/tmp")
+		if !errors.Is(err, ErrProtocolViolation) {
+			t.Errorf("expected ErrProtocolViolation on empty response ID, got %v", err)
 		}
-		if _, ok := wireMap["path"]; !ok {
-			t.Errorf("missing path key")
+
+		// Response identity validation: mismatched ID fails closed
+		_, err = c.RegisterProject(context.Background(), "mismatched-resp-id", "/tmp")
+		if !errors.Is(err, ErrProtocolViolation) {
+			t.Errorf("expected ErrProtocolViolation on mismatched response ID, got %v", err)
 		}
-		if _, ok := wireMap["projectId"]; !ok {
-			t.Errorf("missing projectId key")
+
+		// Response identity validation: null project fails closed
+		_, err = c.RegisterProject(context.Background(), "null-project", "/tmp")
+		if !errors.Is(err, ErrProtocolViolation) {
+			t.Errorf("expected ErrProtocolViolation on null project, got %v", err)
 		}
-		if _, forbidden := wireMap["name"]; forbidden {
-			t.Errorf("forbidden key 'name' present in request")
+
+		// Response identity validation: empty project object fails closed
+		_, err = c.RegisterProject(context.Background(), "empty-project", "/tmp")
+		if !errors.Is(err, ErrProtocolViolation) {
+			t.Errorf("expected ErrProtocolViolation on empty project object, got %v", err)
 		}
-		if _, forbidden := wireMap["config"]; forbidden {
-			t.Errorf("forbidden key 'config' present in request")
+	})
+
+	// 7.2 GetProject validation & URL path segment escaping
+	t.Run("get_project_escaping_and_degraded", func(t *testing.T) {
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				t.Errorf("unexpected method: %s", r.Method)
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+
+			// Check exact RequestURI escaping
+			switch r.RequestURI {
+			case "/api/v1/projects/normal-proj":
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"status":"ok","project":{"id":"normal-proj","name":"Normal","path":"/path"}}`))
+			case "/api/v1/projects/degraded-proj":
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"status":"degraded","project":{"id":"degraded-proj","name":"Degraded","path":"/path","resolveError":"git config corrupt"}}`))
+			case "/api/v1/projects/degraded-missing-error":
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"status":"degraded","project":{"id":"degraded-missing-error","name":"Degraded","path":"/path"}}`))
+			case "/api/v1/projects/mismatched-id":
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"status":"ok","project":{"id":"other-id","name":"Mismatch","path":"/path"}}`))
+			case "/api/v1/projects/null-project":
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"status":"ok","project":null}`))
+			case "/api/v1/projects/unknown-discriminator":
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"status":"unsupported_state","project":{"id":"unknown-discriminator"}}`))
+			case "/api/v1/projects/proj%2Fslash":
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"status":"ok","project":{"id":"proj/slash","name":"Slash","path":"/path"}}`))
+			case "/api/v1/projects/proj%3Fquery":
+				if r.URL.RawQuery != "" {
+					t.Errorf("query string was injected! RawQuery=%q", r.URL.RawQuery)
+				}
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"status":"ok","project":{"id":"proj?query","name":"Query","path":"/path"}}`))
+			case "/api/v1/projects/proj%23frag":
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"status":"ok","project":{"id":"proj#frag","name":"Frag","path":"/path"}}`))
+			case "/api/v1/projects/proj%25pct":
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"status":"ok","project":{"id":"proj%pct","name":"Pct","path":"/path"}}`))
+			default:
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte(`{"error":"not_found","code":"PROJECT_NOT_FOUND","message":"project not found"}`))
+			}
+		}))
+		defer s.Close()
+
+		c, _ := newTestClient(t, s)
+
+		// Healthy project
+		p, err := c.GetProject(context.Background(), "normal-proj")
+		if err != nil {
+			t.Fatalf("unexpected GetProject error: %v", err)
+		}
+		if p.ID != "normal-proj" || p.Status != "ok" || p.IsDegraded || p.ResolveError != "" {
+			t.Errorf("unexpected healthy project: %+v", p)
+		}
+
+		// Degraded project
+		deg, err := c.GetProject(context.Background(), "degraded-proj")
+		if err != nil {
+			t.Fatalf("unexpected degraded GetProject error: %v", err)
+		}
+		if deg.ID != "degraded-proj" || deg.Status != "degraded" || !deg.IsDegraded || deg.ResolveError != "git config corrupt" {
+			t.Errorf("unexpected degraded project: %+v", deg)
+		}
+
+		// Degraded project missing ResolveError fails closed
+		_, err = c.GetProject(context.Background(), "degraded-missing-error")
+		if !errors.Is(err, ErrProtocolViolation) {
+			t.Errorf("expected ErrProtocolViolation when degraded project lacks resolveError, got %v", err)
+		}
+
+		// Mismatched ID fails closed
+		_, err = c.GetProject(context.Background(), "mismatched-id")
+		if !errors.Is(err, ErrProtocolViolation) {
+			t.Errorf("expected ErrProtocolViolation on mismatched ID, got %v", err)
+		}
+
+		// Null project fails closed
+		_, err = c.GetProject(context.Background(), "null-project")
+		if !errors.Is(err, ErrProtocolViolation) {
+			t.Errorf("expected ErrProtocolViolation on null project, got %v", err)
+		}
+
+		// Unknown discriminator fails closed
+		_, err = c.GetProject(context.Background(), "unknown-discriminator")
+		if !errors.Is(err, ErrProtocolViolation) {
+			t.Errorf("expected ErrProtocolViolation on unknown discriminator, got %v", err)
+		}
+
+		// URL path segment escaping for /, ?, #, %
+		escapedCases := []string{
+			"proj/slash",
+			"proj?query",
+			"proj#frag",
+			"proj%pct",
+		}
+		for _, id := range escapedCases {
+			proj, err := c.GetProject(context.Background(), id)
+			if err != nil {
+				t.Fatalf("GetProject(%q) failed: %v", id, err)
+			}
+			if proj.ID != id {
+				t.Errorf("expected project ID %q, got %q", id, proj.ID)
+			}
+		}
+
+		// 404 PROJECT_NOT_FOUND classification
+		_, err = c.GetProject(context.Background(), "nonexistent")
+		if !errors.Is(err, ErrProjectNotFound) {
+			t.Errorf("expected errors.Is(err, ErrProjectNotFound), got %v", err)
+		}
+		if !errors.Is(err, ErrNotFound) {
+			t.Errorf("expected errors.Is(err, ErrNotFound), got %v", err)
+		}
+	})
+}
+
+// -----------------------------------------------------------------------------
+// 8. Session Read Model & Activity State Validation (P03T1-008, P03T1R1-004)
+// -----------------------------------------------------------------------------
+func TestClient_Sessions_ReadModelAndActivityValidation(t *testing.T) {
+	now := time.Date(2026, 9, 22, 11, 0, 0, 0, time.UTC)
+	nowStr := now.Format(time.RFC3339)
+
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected method: %s", r.Method)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated) // HTTP 201
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"project": map[string]any{
-				"id":            wireMap["projectId"],
-				"name":          "My Project",
-				"kind":          "single_repo",
-				"path":          wireMap["path"],
-				"repo":          "my-repo",
-				"defaultBranch": "main",
-			},
-		})
-	}))
-	defer ts.Close()
 
-	c, err := NewClient(ts.URL, &http.Client{Timeout: 5 * time.Second})
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-
-	// 1. Success case
-	p, err := c.RegisterProject(context.Background(), "proj-1", "/work/proj-1")
-	if err != nil {
-		t.Fatalf("RegisterProject: %v", err)
-	}
-	if p.ID != "proj-1" || p.Path != "/work/proj-1" || p.IsDegraded {
-		t.Errorf("unexpected registered project: %+v", p)
-	}
-
-	// 2. Reject empty projectID
-	_, err = c.RegisterProject(context.Background(), "  ", "/work/proj-1")
-	if err == nil || !errors.Is(err, ErrBadRequest) {
-		t.Errorf("expected ErrBadRequest on empty projectID, got %v", err)
-	}
-
-	// 3. Reject empty rootPath
-	_, err = c.RegisterProject(context.Background(), "proj-1", "   ")
-	if err == nil || !errors.Is(err, ErrBadRequest) {
-		t.Errorf("expected ErrBadRequest on empty rootPath, got %v", err)
-	}
-}
-
-func TestClient_GetProject(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Errorf("unexpected method: %s", r.Method)
-		}
-
-		reqURI := r.URL.RequestURI()
-
-		switch {
-		case strings.HasPrefix(reqURI, "/api/v1/projects/healthy-proj"):
-			w.Header().Set("Content-Type", "application/json")
+		switch r.RequestURI {
+		case "/api/v1/sessions/sess-active":
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status": "ok",
-				"project": map[string]any{
-					"id":            "healthy-proj",
-					"name":          "Healthy Project",
-					"path":          "/repo/healthy",
-					"defaultBranch": "main",
-					"folderMissing": false,
-				},
-			})
-
-		case strings.HasPrefix(reqURI, "/api/v1/projects/degraded-proj"):
-			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(fmt.Sprintf(`{"session":{"id":"sess-active","projectId":"p1","status":"working","isTerminated":false,"branch":"feat/x","activity":{"state":"active","lastActivityAt":%q}}}`, nowStr)))
+		case "/api/v1/sessions/sess-idle":
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status": "degraded",
-				"project": map[string]any{
-					"id":           "degraded-proj",
-					"name":         "Degraded Project",
-					"path":         "/repo/missing",
-					"resolveError": "git repository folder missing from disk",
-				},
-			})
-
-		case strings.HasPrefix(reqURI, "/api/v1/projects/unknown-status"):
-			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(fmt.Sprintf(`{"session":{"id":"sess-idle","projectId":"p1","status":"idle","isTerminated":false,"activity":{"state":"idle","lastActivityAt":%q}}}`, nowStr)))
+		case "/api/v1/sessions/sess-waiting-input":
+			// Pinned AO derives ActivityWaitingInput -> status "needs_input"
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status": "pending_validation",
-				"project": map[string]any{
-					"id": "unknown-status",
-				},
-			})
-
-		case strings.HasPrefix(reqURI, "/api/v1/projects/missing-proj"):
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(APIError{
-				ErrorType: "not_found",
-				Code:      "PROJECT_NOT_FOUND",
-				Message:   "project missing-proj does not exist",
-			})
-
-		case strings.HasPrefix(reqURI, "/api/v1/projects/complex%2Fname%3Fwith%23chars"):
-			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(fmt.Sprintf(`{"session":{"id":"sess-waiting-input","projectId":"p1","status":"needs_input","isTerminated":false,"activity":{"state":"waiting_input","lastActivityAt":%q}}}`, nowStr)))
+		case "/api/v1/sessions/sess-blocked":
+			// Pinned AO derives ActivityBlocked -> status "needs_input"
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status": "ok",
-				"project": map[string]any{
-					"id":   "complex/name?with#chars",
-					"name": "Escaped Project",
-					"path": "/repo/complex",
-				},
-			})
-
+			w.Write([]byte(fmt.Sprintf(`{"session":{"id":"sess-blocked","projectId":"p1","status":"needs_input","isTerminated":false,"activity":{"state":"blocked","lastActivityAt":%q}}}`, nowStr)))
+		case "/api/v1/sessions/sess-exited":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(fmt.Sprintf(`{"session":{"id":"sess-exited","projectId":"p1","status":"exited","isTerminated":true,"activity":{"state":"exited","lastActivityAt":%q}}}`, nowStr)))
+		case "/api/v1/sessions/sess-unknown-state":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(fmt.Sprintf(`{"session":{"id":"sess-unknown-state","projectId":"p1","status":"working","activity":{"state":"sleeping","lastActivityAt":%q}}}`, nowStr)))
+		case "/api/v1/sessions/sess-mismatch":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(fmt.Sprintf(`{"session":{"id":"other-sess","projectId":"p1","status":"working","activity":{"state":"active","lastActivityAt":%q}}}`, nowStr)))
+		case "/api/v1/sessions/sess-null":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"session":null}`))
+		case "/api/v1/sessions/sess%2Fslash":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(fmt.Sprintf(`{"session":{"id":"sess/slash","projectId":"p1","status":"working","activity":{"state":"active","lastActivityAt":%q}}}`, nowStr)))
+		case "/api/v1/sessions/sess%3Fquery":
+			if r.URL.RawQuery != "" {
+				t.Errorf("query string injected! RawQuery=%q", r.URL.RawQuery)
+			}
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(fmt.Sprintf(`{"session":{"id":"sess?query","projectId":"p1","status":"working","activity":{"state":"active","lastActivityAt":%q}}}`, nowStr)))
+		case "/api/v1/sessions/sess%23frag":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(fmt.Sprintf(`{"session":{"id":"sess#frag","projectId":"p1","status":"working","activity":{"state":"active","lastActivityAt":%q}}}`, nowStr)))
+		case "/api/v1/sessions/sess%25pct":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(fmt.Sprintf(`{"session":{"id":"sess%%pct","projectId":"p1","status":"working","activity":{"state":"active","lastActivityAt":%q}}}`, nowStr)))
 		default:
-			t.Errorf("unhandled route: %s (Raw: %s)", r.URL.Path, reqURI)
 			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"error":"not_found","code":"SESSION_NOT_FOUND","message":"session not found"}`))
 		}
 	}))
-	defer ts.Close()
+	defer s.Close()
 
-	c, err := NewClient(ts.URL, &http.Client{Timeout: 5 * time.Second})
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
+	c, _ := newTestClient(t, s)
 
-	// 1. Healthy project
-	p, err := c.GetProject(context.Background(), "healthy-proj")
-	if err != nil {
-		t.Fatalf("GetProject healthy: %v", err)
-	}
-	if p.Status != "ok" || p.IsDegraded || p.FolderMissing {
-		t.Errorf("healthy project unexpectedly degraded: %+v", p)
-	}
-
-	// 2. Degraded project: visibly degraded with ResolveError
-	deg, err := c.GetProject(context.Background(), "degraded-proj")
-	if err != nil {
-		t.Fatalf("GetProject degraded: %v", err)
-	}
-	if deg.Status != "degraded" || !deg.IsDegraded {
-		t.Errorf("degraded project not marked degraded: %+v", deg)
-	}
-	if deg.ResolveError == "" {
-		t.Errorf("degraded project missing ResolveError: %+v", deg)
-	}
-
-	// 3. Unknown discriminator fails closed
-	_, err = c.GetProject(context.Background(), "unknown-status")
-	if err == nil || !errors.Is(err, ErrProtocolViolation) {
-		t.Errorf("expected ErrProtocolViolation on unknown status, got %v", err)
-	}
-
-	// 4. Missing project (404)
-	_, err = c.GetProject(context.Background(), "missing-proj")
-	if err == nil || !errors.Is(err, ErrProjectNotFound) {
-		t.Errorf("expected ErrProjectNotFound on 404, got %v", err)
-	}
-	if !errors.Is(err, ErrNotFound) {
-		t.Errorf("expected ErrNotFound matching, got %v", err)
-	}
-
-	// 5. Safe path segment escaping
-	esc, err := c.GetProject(context.Background(), "complex/name?with#chars")
-	if err != nil {
-		t.Fatalf("GetProject with special chars: %v", err)
-	}
-	if esc.ID != "complex/name?with#chars" {
-		t.Errorf("ID = %q, want complex/name?with#chars", esc.ID)
-	}
-}
-
-func TestClient_GetWorkerStatus(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Second)
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			t.Errorf("unexpected method: %s", r.Method)
-		}
-
-		reqURI := r.URL.RequestURI()
-
-		switch {
-		case strings.HasPrefix(reqURI, "/api/v1/sessions/session-active"):
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"session": map[string]any{
-					"id":        "session-active",
-					"projectId": "proj-1",
-					"status":    "working",
-					"activity": map[string]any{
-						"state":          "active",
-						"lastActivityAt": now,
-					},
-					"harness":      "agy",
-					"branch":       "feat/new-task",
-					"isTerminated": false,
-				},
-			})
-
-		case strings.HasPrefix(reqURI, "/api/v1/sessions/session-idle"):
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"session": map[string]any{
-					"id":     "session-idle",
-					"status": "idle",
-					"activity": map[string]any{
-						"state":          "idle",
-						"lastActivityAt": now,
-					},
-					"isTerminated": false,
-				},
-			})
-
-		case strings.HasPrefix(reqURI, "/api/v1/sessions/session-waiting"):
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"session": map[string]any{
-					"id":     "session-waiting",
-					"status": "needs_input",
-					"activity": map[string]any{
-						"state":          "waiting_input",
-						"lastActivityAt": now,
-					},
-					"isTerminated": false,
-				},
-			})
-
-		case strings.HasPrefix(reqURI, "/api/v1/sessions/session-blocked"):
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"session": map[string]any{
-					"id":     "session-blocked",
-					"status": "blocked",
-					"activity": map[string]any{
-						"state":          "blocked",
-						"lastActivityAt": now,
-					},
-					"isTerminated": false,
-				},
-			})
-
-		case strings.HasPrefix(reqURI, "/api/v1/sessions/session-exited"):
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"session": map[string]any{
-					"id":     "session-exited",
-					"status": "exited",
-					"activity": map[string]any{
-						"state":          "exited",
-						"lastActivityAt": now,
-					},
-					"isTerminated": true,
-				},
-			})
-
-		case strings.HasPrefix(reqURI, "/api/v1/sessions/session-unknown-state"):
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"session": map[string]any{
-					"id": "session-unknown-state",
-					"activity": map[string]any{
-						"state":          "hyperspace_running",
-						"lastActivityAt": now,
-					},
-				},
-			})
-
-		case strings.HasPrefix(reqURI, "/api/v1/sessions/missing-session"):
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(APIError{
-				ErrorType: "not_found",
-				Code:      "SESSION_NOT_FOUND",
-				Message:   "session missing-session not found",
-			})
-
-		case strings.HasPrefix(reqURI, "/api/v1/sessions/sess%2Fspecial%3Fpath"):
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"session": map[string]any{
-					"id": "sess/special?path",
-					"activity": map[string]any{
-						"state":          "active",
-						"lastActivityAt": now,
-					},
-				},
-			})
-
-		default:
-			t.Errorf("unhandled session route: %s", reqURI)
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer ts.Close()
-
-	c, err := NewClient(ts.URL, &http.Client{Timeout: 5 * time.Second})
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
-
-	// 1. All 5 canonical activity states
+	// Test 5 canonical activity states
 	canonicalStates := []struct {
-		id        string
-		wantState ActivityState
-		wantTerm  bool
+		id            string
+		expectedState ActivityState
+		expectedTerm  bool
 	}{
-		{"session-active", ActivityStateActive, false},
-		{"session-idle", ActivityStateIdle, false},
-		{"session-waiting", ActivityStateWaitingInput, false},
-		{"session-blocked", ActivityStateBlocked, false},
-		{"session-exited", ActivityStateExited, true},
+		{"sess-active", ActivityStateActive, false},
+		{"sess-idle", ActivityStateIdle, false},
+		{"sess-waiting-input", ActivityStateWaitingInput, false},
+		{"sess-blocked", ActivityStateBlocked, false},
+		{"sess-exited", ActivityStateExited, true},
 	}
 
-	for _, cs := range canonicalStates {
-		status, err := c.GetWorkerStatus(context.Background(), cs.id)
-		if err != nil {
-			t.Fatalf("GetWorkerStatus(%q): %v", cs.id, err)
-		}
-		if status.Activity.State != cs.wantState {
-			t.Errorf("status %q state = %q, want %q", cs.id, status.Activity.State, cs.wantState)
-		}
-		if status.IsTerminated != cs.wantTerm {
-			t.Errorf("status %q IsTerminated = %v, want %v", cs.id, status.IsTerminated, cs.wantTerm)
-		}
+	for _, tc := range canonicalStates {
+		t.Run(string(tc.expectedState), func(t *testing.T) {
+			st, err := c.GetWorkerStatus(context.Background(), tc.id)
+			if err != nil {
+				t.Fatalf("unexpected GetWorkerStatus(%q) error: %v", tc.id, err)
+			}
+			if st.ID != tc.id {
+				t.Errorf("expected session ID %q, got %q", tc.id, st.ID)
+			}
+			if st.Activity.State != tc.expectedState {
+				t.Errorf("expected activity state %q, got %q", tc.expectedState, st.Activity.State)
+			}
+			if st.IsTerminated != tc.expectedTerm {
+				t.Errorf("expected isTerminated %v, got %v", tc.expectedTerm, st.IsTerminated)
+			}
+			if !st.Activity.LastActivityAt.Equal(now) {
+				t.Errorf("lastActivityAt not preserved: %v", st.Activity.LastActivityAt)
+			}
+		})
 	}
 
-	// 2. Unknown activity state fails closed
-	_, err = c.GetWorkerStatus(context.Background(), "session-unknown-state")
-	if err == nil || !errors.Is(err, ErrProtocolViolation) {
+	// Unknown activity state fails closed
+	_, err := c.GetWorkerStatus(context.Background(), "sess-unknown-state")
+	if !errors.Is(err, ErrProtocolViolation) {
 		t.Errorf("expected ErrProtocolViolation on unknown activity state, got %v", err)
 	}
 
-	// 3. Missing session (404)
-	_, err = c.GetWorkerStatus(context.Background(), "missing-session")
-	if err == nil || !errors.Is(err, ErrSessionNotFound) {
-		t.Errorf("expected ErrSessionNotFound on 404, got %v", err)
+	// Mismatched session ID fails closed
+	_, err = c.GetWorkerStatus(context.Background(), "sess-mismatch")
+	if !errors.Is(err, ErrProtocolViolation) {
+		t.Errorf("expected ErrProtocolViolation on mismatched session ID, got %v", err)
+	}
+
+	// Null session fails closed
+	_, err = c.GetWorkerStatus(context.Background(), "sess-null")
+	if !errors.Is(err, ErrProtocolViolation) {
+		t.Errorf("expected ErrProtocolViolation on null session, got %v", err)
+	}
+
+	// Input validation: empty session ID fails
+	if _, err := c.GetWorkerStatus(context.Background(), ""); !errors.Is(err, ErrBadRequest) {
+		t.Errorf("expected ErrBadRequest on empty sessionID, got %v", err)
+	}
+	if _, err := c.GetWorkerStatus(context.Background(), "   "); !errors.Is(err, ErrBadRequest) {
+		t.Errorf("expected ErrBadRequest on whitespace sessionID, got %v", err)
+	}
+
+	// Path segment escaping for /, ?, #, %
+	escapedIDs := []string{
+		"sess/slash",
+		"sess?query",
+		"sess#frag",
+		"sess%pct",
+	}
+	for _, id := range escapedIDs {
+		st, err := c.GetWorkerStatus(context.Background(), id)
+		if err != nil {
+			t.Fatalf("GetWorkerStatus(%q) failed: %v", id, err)
+		}
+		if st.ID != id {
+			t.Errorf("expected session ID %q, got %q", id, st.ID)
+		}
+	}
+
+	// 404 SESSION_NOT_FOUND matches ErrSessionNotFound and ErrNotFound
+	_, err = c.GetWorkerStatus(context.Background(), "nonexistent")
+	if !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("expected errors.Is(err, ErrSessionNotFound), got %v", err)
 	}
 	if !errors.Is(err, ErrNotFound) {
-		t.Errorf("expected ErrNotFound matching, got %v", err)
-	}
-
-	// 4. Safe URL escaping
-	esc, err := c.GetWorkerStatus(context.Background(), "sess/special?path")
-	if err != nil {
-		t.Fatalf("GetWorkerStatus escaped: %v", err)
-	}
-	if esc.ID != "sess/special?path" {
-		t.Errorf("ID = %q, want sess/special?path", esc.ID)
-	}
-
-	// 5. Empty sessionID
-	_, err = c.GetWorkerStatus(context.Background(), "   ")
-	if err == nil || !errors.Is(err, ErrBadRequest) {
-		t.Errorf("expected ErrBadRequest on empty sessionID, got %v", err)
+		t.Errorf("expected errors.Is(err, ErrNotFound), got %v", err)
 	}
 }
 
+// -----------------------------------------------------------------------------
+// 9. Error Envelope, Sanitization & Transport Cause Preservation (P03T1-004, P03T1R1-005)
+// -----------------------------------------------------------------------------
 func TestClient_ErrorHandlingAndSanitization(t *testing.T) {
-	// 1. Structured AO API errors (400, 404, 500, 503)
-	tests := []struct {
-		status    int
-		errorType string
-		code      string
-		msg       string
-		reqID     string
-		wantErr   error
-	}{
-		{400, "bad_request", "INVALID_PARAMS", "param missing", "req-1", ErrBadRequest},
-		{404, "not_found", "ROUTE_NOT_FOUND", "route not found", "req-2", ErrNotFound},
-		{503, "unavailable", "SERVICE_UNAVAILABLE", "daemon busy", "req-3", ErrDaemonUnavailable},
-		{500, "internal", "INTERNAL_ERROR", "internal server error", "req-4", nil},
-	}
+	// 9.1 Structured AO API Error Envelope preservation
+	t.Run("structured_api_errors", func(t *testing.T) {
+		cases := []struct {
+			name           string
+			statusCode     int
+			body           string
+			expectedTarget error
+			checkCode      string
+		}{
+			{
+				name:           "bad_request_400",
+				statusCode:     http.StatusBadRequest,
+				body:           `{"error":"bad_request","code":"INVALID_PROMPT","message":"prompt exceeds max length","requestId":"req-123"}`,
+				expectedTarget: ErrBadRequest,
+				checkCode:      "INVALID_PROMPT",
+			},
+			{
+				name:           "session_not_found_404",
+				statusCode:     http.StatusNotFound,
+				body:           `{"error":"not_found","code":"SESSION_NOT_FOUND","message":"session does not exist"}`,
+				expectedTarget: ErrSessionNotFound,
+				checkCode:      "SESSION_NOT_FOUND",
+			},
+			{
+				name:           "project_not_found_404",
+				statusCode:     http.StatusNotFound,
+				body:           `{"error":"not_found","code":"PROJECT_NOT_FOUND","message":"project does not exist"}`,
+				expectedTarget: ErrProjectNotFound,
+				checkCode:      "PROJECT_NOT_FOUND",
+			},
+			{
+				name:           "project_folder_missing_404",
+				statusCode:     http.StatusNotFound,
+				body:           `{"error":"not_found","code":"PROJECT_FOLDER_MISSING","message":"repo folder deleted from disk"}`,
+				expectedTarget: ErrProjectNotFound,
+				checkCode:      "PROJECT_FOLDER_MISSING",
+			},
+			{
+				name:           "service_unavailable_503",
+				statusCode:     http.StatusServiceUnavailable,
+				body:           `{"error":"unavailable","code":"SERVICE_UNAVAILABLE","message":"daemon database locked"}`,
+				expectedTarget: ErrDaemonUnavailable,
+				checkCode:      "SERVICE_UNAVAILABLE",
+			},
+		}
 
-	for _, tt := range tests {
-		t.Run(fmt.Sprintf("HTTP_%d_%s", tt.status, tt.code), func(t *testing.T) {
-			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(tt.status)
-				_ = json.NewEncoder(w).Encode(APIError{
-					ErrorType: tt.errorType,
-					Code:      tt.code,
-					Message:   tt.msg,
-					RequestID: tt.reqID,
-				})
-			}))
-			defer ts.Close()
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(tc.statusCode)
+					w.Write([]byte(tc.body))
+				}))
+				defer s.Close()
 
-			c, _ := NewClient(ts.URL, &http.Client{Timeout: 5 * time.Second})
-			var dummy map[string]any
-			err := c.get(context.Background(), "/test-err", &dummy)
-			if err == nil {
-				t.Fatalf("expected error, got nil")
+				c, _ := newTestClient(t, s)
+				_, err := c.CheckHealth(context.Background())
+				if err == nil {
+					t.Fatalf("expected error on status %d, got nil", tc.statusCode)
+				}
+
+				if !errors.Is(err, tc.expectedTarget) {
+					t.Errorf("expected errors.Is(err, %v), got: %v", tc.expectedTarget, err)
+				}
+
+				var apiErr *APIError
+				if !errors.As(err, &apiErr) {
+					t.Fatalf("expected *APIError, got %T: %v", err, err)
+				}
+				if apiErr.Code != tc.checkCode {
+					t.Errorf("expected APIError.Code %q, got %q", tc.checkCode, apiErr.Code)
+				}
+			})
+		}
+	})
+
+	// 9.2 Verification that free-text substring does NOT classify error
+	t.Run("no_substring_classification", func(t *testing.T) {
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			// Notice: Code is ROUTE_NOT_FOUND, but message contains the words "session" and "project"
+			w.Write([]byte(`{"error":"not_found","code":"ROUTE_NOT_FOUND","message":"route /api/v1/session/xyz is not found for project abc"}`))
+		}))
+		defer s.Close()
+
+		c, _ := newTestClient(t, s)
+		_, err := c.CheckHealth(context.Background())
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+
+		// Must match generic ErrNotFound (404)
+		if !errors.Is(err, ErrNotFound) {
+			t.Errorf("expected errors.Is(err, ErrNotFound), got %v", err)
+		}
+		// MUST NOT match ErrSessionNotFound merely because message contains "session"
+		if errors.Is(err, ErrSessionNotFound) {
+			t.Errorf("violates contract: 404 ROUTE_NOT_FOUND matched ErrSessionNotFound based on message substring!")
+		}
+		// MUST NOT match ErrProjectNotFound merely because message contains "project"
+		if errors.Is(err, ErrProjectNotFound) {
+			t.Errorf("violates contract: 404 ROUTE_NOT_FOUND matched ErrProjectNotFound based on message substring!")
+		}
+	})
+
+	// 9.3 Incomplete envelope missing required fields fails closed to sanitized ProtocolError
+	t.Run("incomplete_envelope_fails_closed", func(t *testing.T) {
+		incompleteCases := []struct {
+			name string
+			body string
+		}{
+			{"missing_error_field", `{"code":"FAIL","message":"something failed"}`},
+			{"missing_code_field", `{"error":"internal","message":"something failed"}`},
+			{"missing_message_field", `{"error":"internal","code":"FAIL"}`},
+		}
+
+		for _, tc := range incompleteCases {
+			t.Run(tc.name, func(t *testing.T) {
+				s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write([]byte(tc.body))
+				}))
+				defer s.Close()
+
+				c, _ := newTestClient(t, s)
+				_, err := c.CheckHealth(context.Background())
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !errors.Is(err, ErrProtocolViolation) {
+					t.Errorf("expected errors.Is(err, ErrProtocolViolation), got %v", err)
+				}
+				var protoErr *ProtocolError
+				if !errors.As(err, &protoErr) {
+					t.Errorf("expected *ProtocolError, got %T: %v", err, err)
+				}
+			})
+		}
+	})
+
+	// 9.4 Sanitization: malformed JSON and arbitrary HTML/plaintext do NOT leak into error string
+	t.Run("sanitized_error_does_not_leak_raw_body", func(t *testing.T) {
+		secretText := "SECRET_AWS_KEY=AKIAIOSFODNN7EXAMPLE_DO_NOT_LEAK"
+		htmlBody := fmt.Sprintf("<html><body><h1>502 Bad Gateway</h1><p>%s</p></body></html>", secretText)
+
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusBadGateway)
+			w.Write([]byte(htmlBody))
+		}))
+		defer s.Close()
+
+		c, _ := newTestClient(t, s)
+		_, err := c.CheckHealth(context.Background())
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+
+		errStr := err.Error()
+		if strings.Contains(errStr, secretText) {
+			t.Fatalf("SECURITY VIOLATION: upstream error body leaked in error string: %s", errStr)
+		}
+		if strings.Contains(errStr, "<html>") {
+			t.Fatalf("SECURITY VIOLATION: raw HTML leaked in error string: %s", errStr)
+		}
+
+		if !errors.Is(err, ErrProtocolViolation) {
+			t.Errorf("expected errors.Is(err, ErrProtocolViolation), got %v", err)
+		}
+	})
+
+	// 9.5 Transport Error cause preservation & unwrap chaining
+	t.Run("transport_error_unwrap_chain", func(t *testing.T) {
+		// Server that immediately closes connection
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hj, ok := w.(http.Hijacker)
+			if ok {
+				conn, _, _ := hj.Hijack()
+				conn.Close()
+				return
 			}
+		}))
+		defer s.Close()
 
-			if tt.wantErr != nil && !errors.Is(err, tt.wantErr) {
-				t.Errorf("expected matching %v, got %v", tt.wantErr, err)
-			}
+		c, _ := newTestClient(t, s)
 
-			var apiErr *APIError
-			if !errors.As(err, &apiErr) {
-				t.Fatalf("expected *APIError, got %T: %v", err, err)
-			}
-			if apiErr.StatusCode != tt.status || apiErr.Code != tt.code || apiErr.RequestID != tt.reqID {
-				t.Errorf("apiErr mismatch: %+v", apiErr)
-			}
-		})
-	}
+		// 9.5.1 Network failure is distinguishable from API error and matches ErrDaemonUnavailable
+		_, netErr := c.CheckHealth(context.Background())
+		if netErr == nil {
+			t.Fatal("expected network error, got nil")
+		}
+		var transportErr *TransportError
+		if !errors.As(netErr, &transportErr) {
+			t.Fatalf("expected *TransportError, got %T: %v", netErr, netErr)
+		}
+		if !errors.Is(netErr, ErrDaemonUnavailable) {
+			t.Errorf("expected transport error to match ErrDaemonUnavailable")
+		}
 
-	// 2. Malformed JSON or HTML error body does NOT leak into error string
-	sensitiveLeakSecret := "TOP_SECRET_INTERNAL_DATABASE_PASSWORD_XYZ"
-	tsHTML := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte("<html><body>Fatal crash: " + sensitiveLeakSecret + "</body></html>"))
-	}))
-	defer tsHTML.Close()
+		// 9.5.2 Context cancellation is discoverable via errors.Is(err, context.Canceled)
+		cancelCtx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel immediately
 
-	cHTML, _ := NewClient(tsHTML.URL, &http.Client{Timeout: 5 * time.Second})
-	var dummy map[string]any
-	err := cHTML.get(context.Background(), "/html-error", &dummy)
-	if err == nil {
-		t.Fatalf("expected error on HTML 500, got nil")
-	}
-	if !errors.Is(err, ErrProtocolViolation) {
-		t.Errorf("expected ErrProtocolViolation on non-conforming error envelope, got %v", err)
-	}
-	if strings.Contains(err.Error(), sensitiveLeakSecret) {
-		t.Fatalf("SECURITY VIOLATION: raw upstream HTML error was leaked in error message: %s", err.Error())
-	}
+		_, cancelErr := c.CheckHealth(cancelCtx)
+		if cancelErr == nil {
+			t.Fatal("expected error on cancelled context, got nil")
+		}
+		if !errors.Is(cancelErr, context.Canceled) {
+			t.Errorf("expected errors.Is(cancelErr, context.Canceled) == true, got: %v", cancelErr)
+		}
 
-	// 3. Transport error cause preservation (context.Canceled & context.DeadlineExceeded)
-	// Deadline exceeded
-	ctxTimeout, cancelTimeout := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancelTimeout()
+		// 9.5.3 Context deadline exceeded is discoverable via errors.Is(err, context.DeadlineExceeded)
+		deadlineCtx, dCancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		defer dCancel()
 
-	tsSleep := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(100 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer tsSleep.Close()
-
-	cSleep, _ := NewClient(tsSleep.URL, &http.Client{Timeout: 5 * time.Second})
-	err = cSleep.get(ctxTimeout, "/sleep", &dummy)
-	if err == nil {
-		t.Fatalf("expected deadline exceeded error, got nil")
-	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("expected errors.Is(err, context.DeadlineExceeded) == true, got %v", err)
-	}
-	if !errors.Is(err, ErrDaemonUnavailable) {
-		t.Errorf("expected errors.Is(err, ErrDaemonUnavailable) == true, got %v", err)
-	}
-
-	// Context canceled
-	ctxCancel, cancelNow := context.WithCancel(context.Background())
-	cancelNow()
-
-	err = cSleep.get(ctxCancel, "/cancel", &dummy)
-	if err == nil {
-		t.Fatalf("expected canceled error, got nil")
-	}
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("expected errors.Is(err, context.Canceled) == true, got %v", err)
-	}
-	if !errors.Is(err, ErrDaemonUnavailable) {
-		t.Errorf("expected errors.Is(err, ErrDaemonUnavailable) == true, got %v", err)
-	}
+		_, deadlineErr := c.CheckHealth(deadlineCtx)
+		if deadlineErr == nil {
+			t.Fatal("expected error on expired context, got nil")
+		}
+		if !errors.Is(deadlineErr, context.DeadlineExceeded) {
+			t.Errorf("expected errors.Is(deadlineErr, context.DeadlineExceeded) == true, got: %v", deadlineErr)
+		}
+	})
 }

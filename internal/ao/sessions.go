@@ -6,44 +6,48 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 )
-
-type rawSessionWireResponse struct {
-	Session struct {
-		ID            string `json:"id"`
-		ProjectID     string `json:"projectId,omitempty"`
-		Status        string `json:"status"`
-		DisplayStatus string `json:"displayStatus,omitempty"`
-		IsTerminated  bool   `json:"isTerminated"`
-		Activity      struct {
-			State          string    `json:"state"`
-			LastActivityAt time.Time `json:"lastActivityAt"`
-		} `json:"activity"`
-		Harness            string `json:"harness,omitempty"`
-		Branch             string `json:"branch,omitempty"`
-		Model              string `json:"model,omitempty"`
-		TerminalGeneration string `json:"terminalGeneration,omitempty"`
-		PreviewURL         string `json:"previewUrl,omitempty"`
-	} `json:"session"`
-}
 
 // GetWorkerStatus queries GET /api/v1/sessions/{sessionId} to retrieve the authoritative read model of an AO session.
 // sessionID is safely URL-path escaped.
 // Activity states are strictly validated against canonical states (active, idle, waiting_input, blocked, exited).
 // An unknown activity state causes fail-closed protocol rejection.
 func (c *Client) GetWorkerStatus(ctx context.Context, sessionID string) (*WorkerStatus, error) {
-	trimmedID := strings.TrimSpace(sessionID)
-	if trimmedID == "" {
-		return nil, fmt.Errorf("%w: sessionID cannot be empty", ErrBadRequest)
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, fmt.Errorf("%w: sessionID cannot be empty or whitespace", ErrBadRequest)
 	}
 
-	escapedID := url.PathEscape(trimmedID)
+	escapedID := url.PathEscape(sessionID)
 	path := "/api/v1/sessions/" + escapedID
 
-	var wire rawSessionWireResponse
-	if err := c.get(ctx, path, &wire); err != nil {
+	var wire wireSessionResponse
+	if err := c.get(ctx, path, http.StatusOK, &wire); err != nil {
 		return nil, err
+	}
+
+	if wire.Session == nil {
+		return nil, &ProtocolError{
+			StatusCode: http.StatusOK,
+			Method:     http.MethodGet,
+			Path:       path,
+			Reason:     "session response is null or missing session object",
+		}
+	}
+	if wire.Session.ID == "" {
+		return nil, &ProtocolError{
+			StatusCode: http.StatusOK,
+			Method:     http.MethodGet,
+			Path:       path,
+			Reason:     "session response contains empty session ID",
+		}
+	}
+	if wire.Session.ID != sessionID {
+		return nil, &ProtocolError{
+			StatusCode: http.StatusOK,
+			Method:     http.MethodGet,
+			Path:       path,
+			Reason:     fmt.Sprintf("returned session ID %q does not match requested sessionID %q", wire.Session.ID, sessionID),
+		}
 	}
 
 	// Validate activity state fail-closed against canonical specification
@@ -62,26 +66,11 @@ func (c *Client) GetWorkerStatus(ctx context.Context, sessionID string) (*Worker
 	default:
 		return nil, &ProtocolError{
 			StatusCode: http.StatusOK,
-			Method:     "GET",
+			Method:     http.MethodGet,
 			Path:       path,
 			Reason:     fmt.Sprintf("unknown activity state %q (must be active, idle, waiting_input, blocked, or exited)", wire.Session.Activity.State),
 		}
 	}
 
-	return &WorkerStatus{
-		ID:            wire.Session.ID,
-		ProjectID:     wire.Session.ProjectID,
-		Status:        wire.Session.Status,
-		DisplayStatus: wire.Session.DisplayStatus,
-		IsTerminated:  wire.Session.IsTerminated,
-		Activity: ActivitySnapshot{
-			State:          state,
-			LastActivityAt: wire.Session.Activity.LastActivityAt,
-		},
-		Harness:            wire.Session.Harness,
-		Branch:             wire.Session.Branch,
-		Model:              wire.Session.Model,
-		TerminalGeneration: wire.Session.TerminalGeneration,
-		PreviewURL:         wire.Session.PreviewURL,
-	}, nil
+	return toNormalizedWorkerStatus(&wire, state), nil
 }

@@ -52,7 +52,7 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-001 REVISION 1
+# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-001 REVISION 2
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
@@ -60,7 +60,7 @@ This document establishes immutable operational directives for all AI coding age
 > Core directions of `PROPOSAL-P03-001` are **EXTERNAL_APPROVED** by External Supervisor decision.
 > Canonical specifications (`docs/02`, `docs/12`, `docs/14`, `docs/17`, `docs/21`, `docs/22`, `docs/phases/P03_AO_INTEGRATION.md`) have been reconciled under Revision 3 and approved by External Supervisor (`P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED`).
 > The active phase gate is **`EXTERNAL_SUPERVISOR_P03_TASK_001_REAUDIT`**.
-> Production coding is **`HELD_FOR_EXTERNAL_AUDIT`** (`TASK_P03_001 = REVISION_1_READY_FOR_EXTERNAL_AUDIT`, `TASK_P03_002 = NOT_RELEASED`).
+> Production coding is **`HELD_FOR_EXTERNAL_AUDIT`** (`TASK_P03_001 = REVISION_2_READY_FOR_EXTERNAL_AUDIT`, `TASK_P03_002 = NOT_RELEASED`).
 
 1. **TASK-P03-001 SCOPE & BOUNDARY**:
    - Scope is strictly confined to implementing the AO Transport Foundation & Compatibility Read Model in `internal/ao`.
@@ -87,8 +87,8 @@ This document establishes immutable operational directives for all AI coding age
    - Session mutation and lifecycle command implementation remains strictly **HELD** (`TASK_P03_002 = NOT_RELEASED`).
    - Implementation of `TASK-P03-002` becomes authorized only upon formal audit approval and task contract release by External Supervisor.
 
-4. **FINAL REVISION-1 GOVERNANCE STATE**:
+4. **FINAL REVISION-2 GOVERNANCE STATE**:
    - `P03_CODE = HELD_FOR_EXTERNAL_AUDIT`
-   - `TASK_P03_001 = REVISION_1_READY_FOR_EXTERNAL_AUDIT`
+   - `TASK_P03_001 = REVISION_2_READY_FOR_EXTERNAL_AUDIT`
    - `TASK_P03_002 = NOT_RELEASED`
    - `ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_TASK_001_REAUDIT`

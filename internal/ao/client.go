@@ -27,7 +27,7 @@ type Client struct {
 // A non-nil httpClient must be explicitly provided by the caller; no implicit default client or timeout is created.
 func NewClient(rawBaseURL string, httpClient *http.Client) (*Client, error) {
 	if httpClient == nil {
-		return nil, fmt.Errorf("%w: %v", ErrBadRequest, ErrNilHTTPClient)
+		return nil, fmt.Errorf("%w: %w", ErrBadRequest, ErrNilHTTPClient)
 	}
 
 	trimmed := strings.TrimSpace(rawBaseURL)
@@ -112,8 +112,8 @@ func (c *Client) buildURL(relPath string) string {
 	return strings.TrimRight(c.baseURL.String(), "/") + "/" + strings.TrimLeft(relPath, "/")
 }
 
-// get performs an HTTP GET request and decodes the JSON response into target.
-func (c *Client) get(ctx context.Context, relPath string, target any) error {
+// get performs an HTTP GET request requiring exact expectedStatus and decodes the JSON response into wireTarget.
+func (c *Client) get(ctx context.Context, relPath string, expectedStatus int, wireTarget any) error {
 	reqURL := c.buildURL(relPath)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
@@ -121,11 +121,11 @@ func (c *Client) get(ctx context.Context, relPath string, target any) error {
 	}
 	req.Header.Set("Accept", "application/json")
 
-	return c.do(req, target)
+	return c.do(req, expectedStatus, wireTarget)
 }
 
-// getRaw performs an HTTP GET request and returns the raw response body.
-func (c *Client) getRaw(ctx context.Context, relPath string, acceptHeader string) (string, error) {
+// getRaw performs an HTTP GET request requiring exact expectedStatus and returns the raw response body.
+func (c *Client) getRaw(ctx context.Context, relPath string, expectedStatus int, acceptHeader string) (string, error) {
 	reqURL := c.buildURL(relPath)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
@@ -141,8 +141,16 @@ func (c *Client) getRaw(ctx context.Context, relPath string, acceptHeader string
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", c.decodeError(req, resp)
+	if resp.StatusCode != expectedStatus {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return "", c.decodeError(req, resp)
+		}
+		return "", &ProtocolError{
+			StatusCode: resp.StatusCode,
+			Method:     req.Method,
+			Path:       req.URL.Path,
+			Reason:     fmt.Sprintf("expected HTTP %d, got %d", expectedStatus, resp.StatusCode),
+		}
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -152,63 +160,51 @@ func (c *Client) getRaw(ctx context.Context, relPath string, acceptHeader string
 	return string(body), nil
 }
 
-// post performs an HTTP POST request and decodes the JSON response into target.
-func (c *Client) post(ctx context.Context, relPath string, body any, target any) (int, error) {
+// post performs an HTTP POST request requiring exact expectedStatus and decodes the JSON response into wireTarget.
+func (c *Client) post(ctx context.Context, relPath string, expectedStatus int, body any, wireTarget any) error {
 	reqURL := c.buildURL(relPath)
 
 	var bodyReader io.Reader
 	if body != nil {
 		payload, err := json.Marshal(body)
 		if err != nil {
-			return 0, fmt.Errorf("marshal request body failed: %w", err)
+			return fmt.Errorf("marshal request body failed: %w", err)
 		}
 		bodyReader = bytes.NewReader(payload)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bodyReader)
 	if err != nil {
-		return 0, fmt.Errorf("create POST request failed: %w", err)
+		return fmt.Errorf("create POST request failed: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return 0, &TransportError{Op: req.Method, URL: req.URL.String(), Err: err}
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return resp.StatusCode, c.decodeError(req, resp)
-	}
-
-	if target != nil {
-		if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
-			return resp.StatusCode, &ProtocolError{
-				StatusCode: resp.StatusCode,
-				Method:     req.Method,
-				Path:       req.URL.Path,
-				Reason:     "malformed JSON response payload",
-			}
-		}
-	}
-	return resp.StatusCode, nil
+	return c.do(req, expectedStatus, wireTarget)
 }
 
-// do dispatches an HTTP request, checks for success, and decodes the target.
-func (c *Client) do(req *http.Request, target any) error {
+// do dispatches an HTTP request, checks for exact expectedStatus, and decodes the wireTarget.
+func (c *Client) do(req *http.Request, expectedStatus int, wireTarget any) error {
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return &TransportError{Op: req.Method, URL: req.URL.String(), Err: err}
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return c.decodeError(req, resp)
+	if resp.StatusCode != expectedStatus {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return c.decodeError(req, resp)
+		}
+		return &ProtocolError{
+			StatusCode: resp.StatusCode,
+			Method:     req.Method,
+			Path:       req.URL.Path,
+			Reason:     fmt.Sprintf("expected HTTP %d, got %d", expectedStatus, resp.StatusCode),
+		}
 	}
 
-	if target != nil {
-		if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+	if wireTarget != nil {
+		if err := json.NewDecoder(resp.Body).Decode(wireTarget); err != nil {
 			return &ProtocolError{
 				StatusCode: resp.StatusCode,
 				Method:     req.Method,
@@ -221,8 +217,8 @@ func (c *Client) do(req *http.Request, target any) error {
 }
 
 // decodeError reads up to maxErrorBodyBytes and decodes the AO APIError envelope.
-// If the payload does not match the canonical envelope, it returns a sanitized ProtocolError
-// without copying raw response body text.
+// If the payload does not match the canonical envelope (including missing required fields),
+// it returns a sanitized ProtocolError without copying raw response body text.
 func (c *Client) decodeError(req *http.Request, resp *http.Response) error {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 	if err != nil {
@@ -234,10 +230,17 @@ func (c *Client) decodeError(req *http.Request, resp *http.Response) error {
 		}
 	}
 
-	var apiErr APIError
-	if jsonErr := json.Unmarshal(body, &apiErr); jsonErr == nil && apiErr.ErrorType != "" && apiErr.Code != "" {
-		apiErr.StatusCode = resp.StatusCode
-		return &apiErr
+	var wire wireAPIError
+	if jsonErr := json.Unmarshal(body, &wire); jsonErr == nil && wire.Error != "" && wire.Code != "" && wire.Message != "" {
+		return &APIError{
+			StatusCode:     resp.StatusCode,
+			ErrorType:      wire.Error,
+			Code:           wire.Code,
+			Message:        wire.Message,
+			RequestID:      wire.RequestID,
+			Details:        wire.Details,
+			ReportingOwner: wire.ReportingOwner,
+		}
 	}
 
 	return &ProtocolError{

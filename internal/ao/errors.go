@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 )
 
 var (
@@ -44,13 +43,13 @@ var (
 
 // APIError represents the structured error response returned by the Agent Orchestrator REST API.
 type APIError struct {
-	StatusCode     int            `json:"-"`
-	ErrorType      string         `json:"error"`
-	Code           string         `json:"code"`
-	Message        string         `json:"message"`
-	RequestID      string         `json:"requestId,omitempty"`
-	Details        map[string]any `json:"details,omitempty"`
-	ReportingOwner string         `json:"reporting_owner,omitempty"`
+	StatusCode     int
+	ErrorType      string
+	Code           string
+	Message        string
+	RequestID      string
+	Details        map[string]any
+	ReportingOwner string
 }
 
 // Error formats the API error into a human-readable string.
@@ -67,7 +66,7 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("ao api error (status %d)", e.StatusCode)
 }
 
-// Is enables errors.Is matching against common sentinel errors.
+// Is enables errors.Is matching against stable error classifications without free-text heuristics.
 func (e *APIError) Is(target error) bool {
 	if e == nil {
 		return false
@@ -76,9 +75,9 @@ func (e *APIError) Is(target error) bool {
 	case ErrNotFound:
 		return e.StatusCode == http.StatusNotFound
 	case ErrSessionNotFound:
-		return e.StatusCode == http.StatusNotFound && (e.Code == "SESSION_NOT_FOUND" || strings.Contains(strings.ToLower(e.Message), "session"))
+		return e.StatusCode == http.StatusNotFound && e.Code == "SESSION_NOT_FOUND"
 	case ErrProjectNotFound:
-		return e.StatusCode == http.StatusNotFound && (e.Code == "PROJECT_NOT_FOUND" || e.Code == "PROJECT_FOLDER_MISSING" || strings.Contains(strings.ToLower(e.Message), "project"))
+		return e.StatusCode == http.StatusNotFound && (e.Code == "PROJECT_NOT_FOUND" || e.Code == "PROJECT_FOLDER_MISSING")
 	case ErrBadRequest:
 		return e.StatusCode == http.StatusBadRequest
 	case ErrDaemonUnavailable:
