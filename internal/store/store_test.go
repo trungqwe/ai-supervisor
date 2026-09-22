@@ -58,8 +58,8 @@ func TestStore_OpenAndPragmas(t *testing.T) {
 	if ep.BusyTimeout != 5000 {
 		t.Errorf("expected busy_timeout 5000, got %d", ep.BusyTimeout)
 	}
-	if ep.UserVersion != 1 {
-		t.Errorf("expected user_version 1, got %d", ep.UserVersion)
+	if ep.UserVersion != 2 {
+		t.Errorf("expected user_version 2, got %d", ep.UserVersion)
 	}
 }
 
@@ -84,8 +84,8 @@ func TestStore_MigrationIdempotentAndFuture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EffectivePragmas failed: %v", err)
 	}
-	if ep.UserVersion != 1 {
-		t.Errorf("expected user_version 1, got %d", ep.UserVersion)
+	if ep.UserVersion != 2 {
+		t.Errorf("expected user_version 2, got %d", ep.UserVersion)
 	}
 	s2.Close()
 

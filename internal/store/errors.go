@@ -30,4 +30,10 @@ var (
 	// Revision 3 additions
 	ErrReadyContractRequired = errors.New("store: ready state requires governing task contract")
 	ErrContractInsertState   = errors.New("store: contract cannot be inserted in current task lifecycle state")
+
+	// TASK-P02-004 Audit Core additions
+	ErrAuditChainInvalid   = errors.New("store: audit chain is invalid")
+	ErrInvalidAuditLineage = errors.New("store: invalid audit event lineage")
+	ErrInvalidLimit        = errors.New("store: invalid limit")
+	ErrAuditEventNotFound  = errors.New("store: audit event not found")
 )

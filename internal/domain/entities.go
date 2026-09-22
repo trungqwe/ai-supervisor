@@ -144,12 +144,13 @@ type ReviewDecision struct {
 
 // AuditEvent represents an append-only audit trail entry.
 type AuditEvent struct {
-	EventID   string         `json:"event_id"`
-	EventType string         `json:"event_type"`
-	Timestamp time.Time      `json:"timestamp"`
-	TaskID    string         `json:"task_id,omitempty"`
-	AttemptID string         `json:"attempt_id,omitempty"`
-	PairID    string         `json:"pair_id,omitempty"`
-	Actor     string         `json:"actor"`
-	Details   map[string]any `json:"details,omitempty"`
+	EventID    string         `json:"event_id"`
+	EventType  string         `json:"event_type"`
+	Timestamp  time.Time      `json:"timestamp"`
+	TaskID     string         `json:"task_id,omitempty"`
+	ContractID string         `json:"contract_id,omitempty"`
+	AttemptID  string         `json:"attempt_id,omitempty"`
+	PairID     string         `json:"pair_id,omitempty"`
+	Actor      string         `json:"actor"`
+	Details    map[string]any `json:"details,omitempty"`
 }

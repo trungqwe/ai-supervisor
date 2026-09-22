@@ -7,7 +7,8 @@ import (
 )
 
 const (
-	CurrentSchemaVersion = 1
+	CurrentSchemaVersion = 2
+	GenesisAuditHash     = "0000000000000000000000000000000000000000000000000000000000000000"
 )
 
 const v1Schema = `
@@ -86,7 +87,84 @@ CREATE TABLE IF NOT EXISTS task_attempts (
 );
 `
 
+const v2Schema = `
+CREATE TABLE IF NOT EXISTS audit_events (
+    sequence INTEGER PRIMARY KEY,
+    event_id TEXT UNIQUE NOT NULL,
+    event_type TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    pair_id TEXT,
+    task_id TEXT,
+    contract_id TEXT,
+    attempt_id TEXT,
+    actor TEXT NOT NULL,
+    details_json TEXT NOT NULL,
+    prev_hash TEXT NOT NULL,
+    event_hash TEXT UNIQUE NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_events_task_id ON audit_events(task_id);
+CREATE INDEX IF NOT EXISTS idx_audit_events_contract_id ON audit_events(contract_id);
+CREATE INDEX IF NOT EXISTS idx_audit_events_attempt_id ON audit_events(attempt_id);
+CREATE INDEX IF NOT EXISTS idx_audit_events_pair_id ON audit_events(pair_id);
+CREATE INDEX IF NOT EXISTS idx_audit_events_event_type ON audit_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp ON audit_events(timestamp);
+
+CREATE TABLE IF NOT EXISTS audit_chain_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    last_sequence INTEGER NOT NULL,
+    last_hash TEXT NOT NULL
+);
+
+INSERT OR IGNORE INTO audit_chain_state (id, last_sequence, last_hash)
+VALUES (1, 0, '0000000000000000000000000000000000000000000000000000000000000000');
+
+CREATE TRIGGER IF NOT EXISTS trg_audit_events_prevent_update
+BEFORE UPDATE ON audit_events
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'cannot update audit events: append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_audit_events_prevent_delete
+BEFORE DELETE ON audit_events
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'cannot delete audit events: append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_audit_events_prevent_replace
+BEFORE INSERT ON audit_events
+FOR EACH ROW
+WHEN EXISTS (
+    SELECT 1 FROM audit_events
+    WHERE sequence = NEW.sequence OR event_id = NEW.event_id
+)
+BEGIN
+    SELECT RAISE(ABORT, 'cannot replace existing audit event');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_audit_chain_state_prevent_delete
+BEFORE DELETE ON audit_chain_state
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'cannot delete audit chain state');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_audit_chain_state_prevent_insert
+BEFORE INSERT ON audit_chain_state
+FOR EACH ROW
+WHEN EXISTS (SELECT 1 FROM audit_chain_state WHERE id = NEW.id)
+BEGIN
+    SELECT RAISE(ABORT, 'cannot insert duplicate audit chain state');
+END;
+`
+
 func migrate(ctx context.Context, db *sql.DB) error {
+	return migrateWithSchemas(ctx, db, v1Schema, v2Schema)
+}
+
+func migrateWithSchemas(ctx context.Context, db *sql.DB, v1DDL, v2DDL string) error {
 	var userVersion int
 	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&userVersion); err != nil {
 		return fmt.Errorf("store: failed to read PRAGMA user_version: %w", err)
@@ -101,22 +179,43 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		return nil
 	}
 
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("store: failed to begin migration transaction: %w", err)
+	// Apply V1 if fresh DB
+	if userVersion < 1 {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("store: failed to begin v1 migration transaction: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, v1DDL); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("store: failed to execute v1 migration DDL: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "PRAGMA user_version = 1"); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("store: failed to set PRAGMA user_version = 1: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("store: failed to commit v1 migration: %w", err)
+		}
+		userVersion = 1
 	}
-	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, v1Schema); err != nil {
-		return fmt.Errorf("store: failed to execute v1 migration DDL: %w", err)
-	}
-
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", CurrentSchemaVersion)); err != nil {
-		return fmt.Errorf("store: failed to set PRAGMA user_version: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("store: failed to commit migration: %w", err)
+	// Apply V2 if userVersion is 1
+	if userVersion < 2 {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("store: failed to begin v2 migration transaction: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, v2DDL); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("store: failed to execute v2 migration DDL: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "PRAGMA user_version = 2"); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("store: failed to set PRAGMA user_version = 2: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("store: failed to commit v2 migration: %w", err)
+		}
 	}
 
 	return nil
