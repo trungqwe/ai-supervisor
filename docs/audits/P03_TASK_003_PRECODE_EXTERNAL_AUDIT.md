@@ -30,7 +30,7 @@ These findings establish that persistent session binding, recovery classificatio
 | `P03T3-PRE-004` | `WAITING_BLOCKED_TERMINATION_MAPPING_UNDEFINED` | Pinned AO `backend/internal/domain/activity.go` | `internal/ao/sessions.go`, `internal/domain/task_state.go` | **BLOCKER** | **HELD** |
 | `P03T3-PRE-005` | `INTENTIONAL_STOP_PROVENANCE_NOT_DURABLY_DEFINED` | `docs/02_REQUIREMENTS.md` (FR-006) | `internal/ao/session_commands.go`, `internal/store/` | **BLOCKER** | **HELD** |
 | `P03T3-PRE-006` | `TASK_ATTEMPT_END_SEMANTICS_UNDEFINED` | `docs/05_DOMAIN_MODEL.md`, ADR-012 | `internal/store/dispatch.go`, `internal/store/migrations.go` | **BLOCKER** | **HELD** |
-| `P03T3-PRE-007` | `POLL_AND_DEADLINE_POLICY_VALUES_UNSET` | `docs/12_UPSTREAM_INTEGRATION.md`, NFR-005 | `docs/18_CURRENT_STATE.md` | **BLOCKER** | **HELD** |
+| `P03T3-PRE-007` | `POLL_AND_DEADLINE_POLICY_VALUES_UNSET` | `docs/12_UPSTREAM_INTEGRATION.md`, `docs/phases/P03_AO_INTEGRATION.md`, FR-006 | `docs/18_CURRENT_STATE.md` | **BLOCKER** | **HELD** |
 
 ---
 
@@ -128,7 +128,7 @@ These findings establish that persistent session binding, recovery classificatio
   - `internal/ao`: Contains zero hard-coded timeout numbers or polling interval loops.
   - `docs/18_CURRENT_STATE.md`: Records `SUPERVISOR_ACTIVITY_POLL_INTERVAL = UNSET` and `SUPERVISOR_EXECUTION_DEADLINE = UNSET`.
 - **Canonical Evidence**:
-  - NFR-005 & `docs/12_UPSTREAM_INTEGRATION.md`: Mandates bounded polling and task execution deadlines.
+  - `docs/12_UPSTREAM_INTEGRATION.md`, `docs/phases/P03_AO_INTEGRATION.md`, approved `PROPOSAL-P03-001`, and FR-006: Govern bounded GET-session snapshot polling and execution timeouts (NFR-005 mandates Upstream Decoupling / anti-corruption adapters).
 - **Conflict / Gap**:
   Operational policy values remain unset by governance. Implementing TASK-P03-003 cannot invent arbitrary numbers. The observation and reconciliation engine must be designed with strict policy injection (options pattern / caller configuration) and fail-fast validation, paired with virtual tickers for deterministic test coverage.
 - **Severity**: **BLOCKER**.
@@ -138,4 +138,6 @@ These findings establish that persistent session binding, recovery classificatio
 
 ## 3. Mandatory Governance Conclusion
 
-Production coding for TASK-P03-003 is **PROHIBITED** until the accompanying proposal [`PROPOSAL-P03-002-lifecycle-reconciliation-and-session-binding.md`](../proposals/PROPOSAL-P03-002-lifecycle-reconciliation-and-session-binding.md) is reviewed and approved by the External Supervisor.
+Production coding for TASK-P03-003 is **PROHIBITED** until the accompanying proposal [`PROPOSAL-P03-002-lifecycle-reconciliation-and-session-binding.md`](../proposals/PROPOSAL-P03-002-lifecycle-reconciliation-and-session-binding.md) is reviewed, remediated, and approved by the External Supervisor.
+
+See also: [`P03_TASK_003_PROPOSAL_EXTERNAL_AUDIT.md`](P03_TASK_003_PROPOSAL_EXTERNAL_AUDIT.md) recording findings `P03T3PR1-001` through `P03T3PR1-010` and establishing `P03_ARCHITECTURE_CHANGE = YES`, `P03_ADR_REQUIRED = YES`, and `ADR_016 = NOT_AUTHORIZED_TO_DRAFT_YET`.

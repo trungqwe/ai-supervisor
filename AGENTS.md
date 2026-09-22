@@ -52,7 +52,7 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003 PRE-CODE RECONCILIATION
+# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003 PROPOSAL REVISION 1
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
@@ -61,20 +61,21 @@ This document establishes immutable operational directives for all AI coding age
 > Canonical specifications (`docs/02`, `docs/12`, `docs/14`, `docs/17`, `docs/21`, `docs/22`, `docs/phases/P03_AO_INTEGRATION.md`) have been reconciled under Revision 3 and approved by External Supervisor (`P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED`).
 > Task TASK-P03-001 is **EXTERNAL_AUDIT_APPROVED** (`docs/audits/P03_TASK_001_EXTERNAL_REAUDIT_002.md`, commit `e5d3337772f4243ca0f85b4105430d1aa9329bd3`).
 > Task TASK-P03-002 is **EXTERNAL_AUDIT_APPROVED** (`docs/audits/P03_TASK_002_EXTERNAL_REAUDIT_001.md`, commit `b85ddf686b7432f087ef776444eaabe183176e67`), and finding `P03T2R1-001` is **CLOSED**.
-> Seven pre-code findings (`P03T3-PRE-001` through `P03T3-PRE-007`) are recorded in `docs/audits/P03_TASK_003_PRECODE_EXTERNAL_AUDIT.md`.
-> Proposal `PROPOSAL-P03-002` has been prepared and submitted as `PENDING_EXTERNAL_APPROVAL`.
+> External audit of `PROPOSAL-P03-002` (commit `3c07db4`) recorded findings `P03T3PR1-001` through `P03T3PR1-010` in `docs/audits/P03_TASK_003_PROPOSAL_EXTERNAL_AUDIT.md`.
+> Proposal `PROPOSAL-P03-002` has been revised to Revision 1 (`REVISION_1_PENDING_EXTERNAL_REAUDIT`).
+> Architecture classification established: `P03_ARCHITECTURE_CHANGE = YES`, `P03_ADR_REQUIRED = YES`, `ADR_016 = NOT_AUTHORIZED_TO_DRAFT_YET`.
 > Production coding is strictly **`HELD_FOR_TASK_P03_003_PRECODE_RECONCILIATION`** (`TASK_P03_003 = NOT_RELEASED`).
-> The active phase gate is **`EXTERNAL_SUPERVISOR_P03_TASK_003_PRECODE_AUDIT`**.
+> The active phase gate is **`EXTERNAL_SUPERVISOR_P03_TASK_003_PROPOSAL_REAUDIT`**.
 
-1. **TASK-P03-003 PRE-CODE RECONCILIATION SCOPE**:
-   - Scope is strictly confined to architectural analysis, pre-code audit recording, and change-governance proposal creation.
+1. **TASK-P03-003 PROPOSAL REVISION 1 SCOPE**:
+   - Scope is strictly confined to architectural analysis, pre-code contract corrections, and proposal revision.
    - Absolutely ZERO production code implementation (`internal/**/*.go`);
    - Absolutely ZERO schema or database migration implementation;
-   - Absolutely ZERO ADR implementation (ADR remains required, to be drafted upon proposal approval).
+   - Absolutely ZERO ADR implementation (`ADR_016 = NOT_AUTHORIZED_TO_DRAFT_YET`).
 
 2. **TASK-P03-003 PRODUCTION CODE GUARD**:
    - Production coding of TASK-P03-003 remains strictly **HELD** (`TASK_P03_003 = NOT_RELEASED`).
-   - Implementation becomes authorized only upon formal External Supervisor approval of `PROPOSAL-P03-002`, subsequent ADR acceptance, and Task Contract release.
+   - Implementation becomes authorized only upon formal External Supervisor approval of `PROPOSAL-P03-002 Revision 1`, subsequent ADR authorization/acceptance, and Task Contract release.
 
 3. **EXPLICITLY FORBIDDEN IN THIS STAGE**:
    - Absolutely NO polling loops, tickers, or background worker threads;
@@ -85,11 +86,14 @@ This document establishes immutable operational directives for all AI coding age
    - Absolutely NO workspace file fetching or WorkerReport handling;
    - Absolutely NO canonical doc mutation.
 
-4. **FINAL PRE-CODE RECONCILIATION GOVERNANCE STATE**:
+4. **FINAL GOVERNANCE STATE**:
    - `P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED`
    - `TASK_P03_001 = EXTERNAL_AUDIT_APPROVED`
    - `TASK_P03_002 = EXTERNAL_AUDIT_APPROVED`
-   - `P03_CODE = HELD_FOR_TASK_P03_003_PRECODE_RECONCILIATION`
+   - `PROPOSAL_P03_002 = REVISION_1_PENDING_EXTERNAL_REAUDIT`
+   - `P03_ARCHITECTURE_CHANGE = YES`
+   - `P03_ADR_REQUIRED = YES`
+   - `ADR_016 = NOT_AUTHORIZED_TO_DRAFT_YET`
    - `TASK_P03_003 = NOT_RELEASED`
-   - `PROPOSAL_P03_002 = PENDING_EXTERNAL_APPROVAL`
-   - `ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_TASK_003_PRECODE_AUDIT`
+   - `P03_CODE = HELD_FOR_TASK_P03_003_PRECODE_RECONCILIATION`
+   - `ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_TASK_003_PROPOSAL_REAUDIT`
