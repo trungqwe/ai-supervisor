@@ -105,23 +105,63 @@ type wireProjectDegraded struct {
 	ResolveError string `json:"resolveError"`
 }
 
+// wireSessionView is the shared private projection of an AO public session view,
+// reused across GetWorkerStatus, CreateWorkerSession, and ResumeWorker.
+type wireSessionView struct {
+	ID            string `json:"id"`
+	ProjectID     string `json:"projectId,omitempty"`
+	Kind          string `json:"kind,omitempty"`
+	Harness       string `json:"harness,omitempty"`
+	Status        string `json:"status"`
+	DisplayStatus string `json:"displayStatus,omitempty"`
+	IsTerminated  bool   `json:"isTerminated"`
+	Activity      struct {
+		State          string    `json:"state"`
+		LastActivityAt time.Time `json:"lastActivityAt"`
+	} `json:"activity"`
+	Branch             string `json:"branch,omitempty"`
+	Model              string `json:"model,omitempty"`
+	TerminalGeneration string `json:"terminalGeneration,omitempty"`
+	PreviewURL         string `json:"previewUrl,omitempty"`
+}
+
 type wireSessionResponse struct {
-	Session *struct {
-		ID            string `json:"id"`
-		ProjectID     string `json:"projectId,omitempty"`
-		Status        string `json:"status"`
-		DisplayStatus string `json:"displayStatus,omitempty"`
-		IsTerminated  bool   `json:"isTerminated"`
-		Activity      struct {
-			State          string    `json:"state"`
-			LastActivityAt time.Time `json:"lastActivityAt"`
-		} `json:"activity"`
-		Harness            string `json:"harness,omitempty"`
-		Branch             string `json:"branch,omitempty"`
-		Model              string `json:"model,omitempty"`
-		TerminalGeneration string `json:"terminalGeneration,omitempty"`
-		PreviewURL         string `json:"previewUrl,omitempty"`
-	} `json:"session"`
+	Session *wireSessionView `json:"session"`
+}
+
+type wireSpawnWorkerRequest struct {
+	ProjectID string `json:"projectId"`
+	Kind      string `json:"kind"`
+	Harness   string `json:"harness"`
+}
+
+type wireSpawnSessionResponse struct {
+	Session           *wireSessionView `json:"session"`
+	PromptBytes       *int             `json:"promptBytes"`
+	SystemPromptBytes *int             `json:"systemPromptBytes"`
+}
+
+type wireSendSessionMessageRequest struct {
+	Message string `json:"message"`
+}
+
+type wireSendSessionMessageResponse struct {
+	OK        bool   `json:"ok"`
+	SessionID string `json:"sessionId"`
+	Message   string `json:"message"`
+}
+
+type wireKillSessionResponse struct {
+	OK        bool   `json:"ok"`
+	SessionID string `json:"sessionId"`
+	Freed     bool   `json:"freed"`
+}
+
+type wireRestoreSessionResponse struct {
+	OK          bool             `json:"ok"`
+	SessionID   string           `json:"sessionId"`
+	RestoreMode string           `json:"restoreMode"`
+	Session     *wireSessionView `json:"session"`
 }
 
 type wireAPIError struct {
@@ -265,12 +305,11 @@ func toNormalizedProjectDegraded(w *wireProjectDegraded) *Project {
 	}
 }
 
-func toNormalizedWorkerStatus(w *wireSessionResponse, state ActivityState) *WorkerStatus {
-	if w == nil || w.Session == nil {
-		return nil
+func toNormalizedWorkerStatusFromView(s *wireSessionView, state ActivityState) WorkerStatus {
+	if s == nil {
+		return WorkerStatus{}
 	}
-	s := w.Session
-	return &WorkerStatus{
+	return WorkerStatus{
 		ID:            s.ID,
 		ProjectID:     s.ProjectID,
 		Status:        s.Status,
@@ -285,5 +324,31 @@ func toNormalizedWorkerStatus(w *wireSessionResponse, state ActivityState) *Work
 		Model:              s.Model,
 		TerminalGeneration: s.TerminalGeneration,
 		PreviewURL:         s.PreviewURL,
+	}
+}
+
+func toNormalizedWorkerStatus(w *wireSessionResponse, state ActivityState) *WorkerStatus {
+	if w == nil || w.Session == nil {
+		return nil
+	}
+	res := toNormalizedWorkerStatusFromView(w.Session, state)
+	return &res
+}
+
+func toNormalizedCreateWorkerSessionResult(resp *wireSpawnSessionResponse, state ActivityState) *CreateWorkerSessionResult {
+	if resp == nil {
+		return nil
+	}
+	var promptBytes, systemPromptBytes int
+	if resp.PromptBytes != nil {
+		promptBytes = *resp.PromptBytes
+	}
+	if resp.SystemPromptBytes != nil {
+		systemPromptBytes = *resp.SystemPromptBytes
+	}
+	return &CreateWorkerSessionResult{
+		Session:           toNormalizedWorkerStatusFromView(resp.Session, state),
+		PromptBytes:       promptBytes,
+		SystemPromptBytes: systemPromptBytes,
 	}
 }

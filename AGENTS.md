@@ -52,27 +52,30 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-001 REVISION 2
+# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-002 IMPLEMENTATION
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
 > Phase P02 domain and state storage core implementation is **COMPLETE** and approved by External Supervisor final audit (`P02_FINAL_AUDIT = EXTERNAL_AUDIT_APPROVED`, baseline commit `b073a1969d0b64d151e96f0d9b59b005d4cf518a`, evidence commit `7375bbe0c0f17ac6cc50f87a319cb936caf64905`).
 > Core directions of `PROPOSAL-P03-001` are **EXTERNAL_APPROVED** by External Supervisor decision.
 > Canonical specifications (`docs/02`, `docs/12`, `docs/14`, `docs/17`, `docs/21`, `docs/22`, `docs/phases/P03_AO_INTEGRATION.md`) have been reconciled under Revision 3 and approved by External Supervisor (`P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED`).
-> The active phase gate is **`EXTERNAL_SUPERVISOR_P03_TASK_001_REAUDIT`**.
-> Production coding is **`HELD_FOR_EXTERNAL_AUDIT`** (`TASK_P03_001 = REVISION_2_READY_FOR_EXTERNAL_AUDIT`, `TASK_P03_002 = NOT_RELEASED`).
+> Task TASK-P03-001 is **EXTERNAL_AUDIT_APPROVED** (`docs/audits/P03_TASK_001_EXTERNAL_REAUDIT_002.md`, commit `e5d3337772f4243ca0f85b4105430d1aa9329bd3`).
+> The active phase gate is **`EXTERNAL_SUPERVISOR_P03_TASK_002_AUDIT`**.
+> Production coding is **`HELD_FOR_EXTERNAL_AUDIT`** (`TASK_P03_002 = READY_FOR_EXTERNAL_AUDIT`, `TASK_P03_003 = NOT_RELEASED`).
 
-1. **TASK-P03-001 SCOPE & BOUNDARY**:
-   - Scope is strictly confined to implementing the AO Transport Foundation & Compatibility Read Model in `internal/ao`.
-   - Allowed operations: Loopback HTTP client (`http://127.0.0.1:{port}` or `http://[::1]:{port}`), IP literal loopback validation with explicit port, caller-supplied `*http.Client` injection without default timeouts, redirect fail-closed enforcement, preflight health/readiness checks (`/healthz`, `/readyz`), agent harness inventory & named readiness (`/api/v1/agents`, `/api/v1/agents/readiness`), OpenAPI schema signal (`/api/v1/openapi.yaml`), project registration & retrieval with safe URL escaping and degraded projection (`POST /api/v1/projects`, `GET /api/v1/projects/{id}`), read-only session inspection (`GET /api/v1/sessions/{id}`) with canonical activity state validation, sanitized protocol error reporting, and transport error cause preservation.
+1. **TASK-P03-002 SCOPE & BOUNDARY**:
+   - Scope is strictly confined to implementing the AO session lifecycle and dispatch transport in `internal/ao`.
+   - Allowed operations:
+     - `CreateWorkerSession(ctx, projectID, harness)` via `POST /api/v1/sessions` (exact HTTP 201, minimal wire contract);
+     - `DispatchTaskContract(ctx, sessionID, message)` via `POST /api/v1/sessions/{id}/send` (exact HTTP 200, immutable message transmission);
+     - `StopWorker(ctx, sessionID)` via `POST /api/v1/sessions/{id}/kill` (exact HTTP 200, honest `freed` outcome reporting);
+     - `ResumeWorker(ctx, sessionID)` via `POST /api/v1/sessions/{id}/restore` (exact HTTP 200, valid `restoreMode` and activity state validation).
 
-2. **EXPLICITLY FORBIDDEN IN TASK-P03-001**:
-   - Absolutely NO session spawn/mutation (`POST /api/v1/sessions` belongs to `TASK-P03-002`);
-   - Absolutely NO session prompt dispatch (`POST /api/v1/sessions/{id}/send` belongs to `TASK-P03-002`);
-   - Absolutely NO session termination or restore (`POST /api/v1/sessions/{id}/kill`, `POST /api/v1/sessions/{id}/restore` belong to `TASK-P03-002`);
+2. **EXPLICITLY FORBIDDEN IN TASK-P03-002**:
    - Absolutely NO session activity polling loop (`TASK-P03-003`);
    - Absolutely NO raw session workspace file fetch (`TASK-P03-004`);
    - Absolutely NO `StateStore` dependency or direct SQLite access inside `internal/ao` (`AOADAPTER_STATESTORE_DEPENDENCY = FORBIDDEN`);
+   - Absolutely NO Task attempt allocation, task state transition, or lifecycle event classification (`DISPATCHED`, `RUNNING`, `worker.started`, `worker.stopped`, etc.);
    - Absolutely NO modification of `internal/domain`, `internal/workflow`, `internal/store`, `internal/contract`, `internal/audit`;
    - Absolutely NO dependency additions (`go.mod`, `go.sum`);
    - Absolutely NO direct Antigravity CLI (`agy`) invocation code;
@@ -83,12 +86,14 @@ This document establishes immutable operational directives for all AI coding age
    - Absolutely NO synthetic worker heartbeat generation;
    - Absolutely NO default operational timeout decisions (the 8 Supervisor operational policy values remain UNSET).
 
-3. **TASK-P03-002 CODE GUARD**:
-   - Session mutation and lifecycle command implementation remains strictly **HELD** (`TASK_P03_002 = NOT_RELEASED`).
-   - Implementation of `TASK-P03-002` becomes authorized only upon formal audit approval and task contract release by External Supervisor.
+3. **TASK-P03-003 CODE GUARD**:
+   - Lifecycle polling and authoritative activity loop implementation remains strictly **HELD** (`TASK_P03_003 = NOT_RELEASED`).
+   - Implementation of `TASK-P03-003` becomes authorized only upon formal audit approval and task contract release by External Supervisor.
 
-4. **FINAL REVISION-2 GOVERNANCE STATE**:
+4. **FINAL TASK-P03-002 GOVERNANCE STATE**:
+   - `P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED`
+   - `TASK_P03_001 = EXTERNAL_AUDIT_APPROVED`
    - `P03_CODE = HELD_FOR_EXTERNAL_AUDIT`
-   - `TASK_P03_001 = REVISION_2_READY_FOR_EXTERNAL_AUDIT`
-   - `TASK_P03_002 = NOT_RELEASED`
-   - `ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_TASK_001_REAUDIT`
+   - `TASK_P03_002 = READY_FOR_EXTERNAL_AUDIT`
+   - `TASK_P03_003 = NOT_RELEASED`
+   - `ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_TASK_002_AUDIT`

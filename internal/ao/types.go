@@ -117,3 +117,38 @@ type WorkerStatus struct {
 	TerminalGeneration string
 	PreviewURL         string
 }
+
+// CreateWorkerSessionResult represents the normalized result of a successful worker session creation.
+type CreateWorkerSessionResult struct {
+	Session           WorkerStatus
+	PromptBytes       int
+	SystemPromptBytes int
+}
+
+// DispatchTaskResult represents the normalized confirmation of an immutable task message dispatch.
+type DispatchTaskResult struct {
+	SessionID string
+	Message   string
+}
+
+// StopWorkerResult represents the normalized outcome of an intentional worker stop/kill request.
+type StopWorkerResult struct {
+	SessionID string
+	Freed     bool
+}
+
+// RestoreMode indicates the provider continuation mode used when restoring a session.
+type RestoreMode string
+
+const (
+	RestoreModeNative      RestoreMode = "native"
+	RestoreModeSavedPrompt RestoreMode = "saved_prompt"
+	RestoreModeFresh       RestoreMode = "fresh"
+)
+
+// ResumeWorkerResult represents the normalized outcome of restoring a terminated worker session.
+type ResumeWorkerResult struct {
+	SessionID   string
+	RestoreMode RestoreMode
+	Session     WorkerStatus
+}

@@ -8,6 +8,29 @@ import (
 	"strings"
 )
 
+// validateCanonicalActivityState validates raw state string fail-closed against canonical specification.
+func validateCanonicalActivityState(rawState string, method string, path string) (ActivityState, error) {
+	switch rawState {
+	case string(ActivityStateActive):
+		return ActivityStateActive, nil
+	case string(ActivityStateIdle):
+		return ActivityStateIdle, nil
+	case string(ActivityStateWaitingInput):
+		return ActivityStateWaitingInput, nil
+	case string(ActivityStateBlocked):
+		return ActivityStateBlocked, nil
+	case string(ActivityStateExited):
+		return ActivityStateExited, nil
+	default:
+		return "", &ProtocolError{
+			StatusCode: http.StatusOK,
+			Method:     method,
+			Path:       path,
+			Reason:     fmt.Sprintf("unknown activity state %q (must be active, idle, waiting_input, blocked, or exited)", rawState),
+		}
+	}
+}
+
 // GetWorkerStatus queries GET /api/v1/sessions/{sessionId} to retrieve the authoritative read model of an AO session.
 // sessionID is safely URL-path escaped.
 // Activity states are strictly validated against canonical states (active, idle, waiting_input, blocked, exited).
@@ -50,26 +73,9 @@ func (c *Client) GetWorkerStatus(ctx context.Context, sessionID string) (*Worker
 		}
 	}
 
-	// Validate activity state fail-closed against canonical specification
-	var state ActivityState
-	switch wire.Session.Activity.State {
-	case string(ActivityStateActive):
-		state = ActivityStateActive
-	case string(ActivityStateIdle):
-		state = ActivityStateIdle
-	case string(ActivityStateWaitingInput):
-		state = ActivityStateWaitingInput
-	case string(ActivityStateBlocked):
-		state = ActivityStateBlocked
-	case string(ActivityStateExited):
-		state = ActivityStateExited
-	default:
-		return nil, &ProtocolError{
-			StatusCode: http.StatusOK,
-			Method:     http.MethodGet,
-			Path:       path,
-			Reason:     fmt.Sprintf("unknown activity state %q (must be active, idle, waiting_input, blocked, or exited)", wire.Session.Activity.State),
-		}
+	state, err := validateCanonicalActivityState(wire.Session.Activity.State, http.MethodGet, path)
+	if err != nil {
+		return nil, err
 	}
 
 	return toNormalizedWorkerStatus(&wire, state), nil
