@@ -52,16 +52,18 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P03 PRE-CODE UPSTREAM CONTRACT AUDIT
+# SECTION 2: CURRENT PHASE RULES — P03 CANONICAL RECONCILIATION COMPLETE / TASK-P03-001 RELEASE PENDING
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
 > Phase P02 domain and state storage core implementation is **COMPLETE** and approved by External Supervisor final audit (`P02_FINAL_AUDIT = EXTERNAL_AUDIT_APPROVED`, baseline commit `b073a1969d0b64d151e96f0d9b59b005d4cf518a`, evidence commit `7375bbe0c0f17ac6cc50f87a319cb936caf64905`).
-> The active phase gate is **`P03_PRECODE_UPSTREAM_CONTRACT_AUDIT`**.
-> This gate is **STRICTLY ANALYSIS AND DOCUMENTATION ONLY**. Production coding for Phase P03 remains strictly **HELD**.
+> Core directions of `PROPOSAL-P03-001` are **EXTERNAL_APPROVED** by External Supervisor decision.
+> Canonical specifications (`docs/02`, `docs/12`, `docs/14`, `docs/17`, `docs/21`, `docs/22`, `docs/phases/P03_AO_INTEGRATION.md`) have been reconciled.
+> The active phase gate is **`EXTERNAL_SUPERVISOR_P03_CANONICAL_RECONCILIATION`**.
+> Production coding for Phase P03 remains strictly **HELD** pending release of the immutable `TASK-P03-001` Task Contract.
 
-1. **PHASE P03 PRE-CODE AUDIT BOUNDARY**:
-   - Work during this gate is strictly confined to architectural analysis, upstream contract audit against pinned Agent Orchestrator v0.13.0 (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`), observability event reconciliation, and documentation.
+1. **PHASE P03 CANONICAL RECONCILIATION GATE BOUNDARY**:
+   - Work during this gate is strictly confined to governance, architectural documentation, upstream contract alignment, and pre-code audit reconciliation.
    - Zero production Go code may be created, edited, or deleted.
 
 2. **EXPLICITLY FORBIDDEN DURING THIS GATE**:
@@ -79,7 +81,7 @@ This document establishes immutable operational directives for all AI coding age
 
 3. **P03 PRODUCTION CODE AUTHORIZATION GUARD**:
    - Production P03 coding in this repository becomes authorized **ONLY** when:
-     1. P03 upstream/public contract mapping is reconciled;
-     2. Any architecture contradiction is resolved under change governance;
-     3. External Supervisor releases a concrete P03 Task Contract.
+     1. External Supervisor audits canonical P03 reconciliation and approves exit from gate `EXTERNAL_SUPERVISOR_P03_CANONICAL_RECONCILIATION`;
+     2. External Supervisor releases an immutable Task Contract for `TASK-P03-001`;
+     3. `P03_CODE` is transitioned from `HELD` to `AUTHORIZED`.
    - Until all conditions are met, `P03_CODE` remains strictly **HELD**, and no application source files (`.go`) may be created or modified.

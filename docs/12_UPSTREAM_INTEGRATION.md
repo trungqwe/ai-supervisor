@@ -1,6 +1,6 @@
 ﻿# 12. UPSTREAM INTEGRATION SPECIFICATION
 
-> **Focus**: AOAdapter Interface, Antigravity CLI Integration & Fallback Boundary  
+> **Focus**: AOAdapter Interface, Antigravity CLI Integration & Fallback Boundary
 > **Status**: Approved Baseline
 
 ---
@@ -31,6 +31,9 @@ interface IAOAdapter {
   // Workspace & Git Inspection
   getWorktreePath(sessionId: string): Promise<string>;
   getActiveBranch(sessionId: string): Promise<string>;
+
+  // Workspace Inspection & File Retrieval (Raw Transport)
+  getWorkspaceFile(sessionId: string, relativePath: string): Promise<Uint8Array>;
 }
 ```
 
@@ -40,6 +43,8 @@ interface IAOAdapter {
 1. **No Direct SQLite Access**: The adapter exclusively calls AO's loopback REST endpoints or CLI subcommands.
 2. **Session Containment**: Every task execution runs in a dedicated Git worktree managed by AO.
 3. **Graceful Fallback**: If an AO API endpoint fails, the adapter emits domain-typed exceptions (`AODaemonUnavailableException`, `AOSessionNotFoundException`) rather than unhandled transport crashes.
+4. **No StateStore Ownership**: The `AOAdapter` is strictly an anti-corruption transport adapter. It has zero dependency on StateStore or SQLite (`AOADAPTER_STATESTORE_DEPENDENCY = FORBIDDEN`, `AOADAPTER_DIRECT_SQL = FORBIDDEN`), performs zero `TaskAttempt` allocations, and does not own or execute Task state transitions. All Task state transitions are owned and executed exclusively by the Supervisor orchestration/use-case layer using existing P02 domain/StateStore APIs.
+5. **Read-Only Workspace File Retrieval**: `getWorkspaceFile` calls AO public REST (`GET /api/v1/sessions/{id}/workspace/file?path={relPath}`) strictly within session-scoped relative paths; returns raw bounded artifact content; performs zero `WorkerReport` semantic validation, zero `WorkerClaim` creation, and zero StateStore transitions (strictly reserved for Phase P04 `EvidenceCollector`).
 
 ---
 

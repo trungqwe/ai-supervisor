@@ -64,12 +64,12 @@
 - **Forbidden Responsibility**: Does NOT store plaintext secrets or environment passwords.
 
 ### Module: `AOAdapter`
-- **Purpose**: Translates domain operations into Untrivial Agent Orchestrator public REST API calls (`GET /healthz`, `GET /readyz`, `POST /api/v1/projects`, `POST /api/v1/sessions`, `POST /api/v1/sessions/{id}/send`, `/kill`, `/restore`).
+- **Purpose**: Translates domain operations into Untrivial Agent Orchestrator public REST API calls (`GET /healthz`, `GET /readyz`, `GET /api/v1/agents`, `POST /api/v1/projects`, `POST /api/v1/sessions`, `POST /api/v1/sessions/{id}/send`, `/kill`, `/restore`, `GET /api/v1/sessions/{id}`, `GET /api/v1/sessions/{id}/workspace/file`), provides normalized session telemetry/status translation, and provides a session-scoped raw workspace-file read primitive.
 - **Origin**: AWS CAO provider abstraction (`docs/sources/08_AWS_CAO.md`).
 - **Existing Upstream Capability Checked**: YES (AO provides the public REST API).
 - **Reason This Module Exists in Our Code**: Decouples Supervisor domain logic from AO internal changes and adapts worker session telemetry.
 - **Why We Own This**: Anti-corruption layer shielding the domain; handles empirical gap resolution identified in P01-C.
-- **Forbidden Responsibility**: Does NOT access AO internal SQLite database or vendor AO code.
+- **Forbidden Responsibility**: Does NOT own or access StateStore or SQLite directly (`AOADAPTER_STATESTORE_DEPENDENCY = FORBIDDEN`, `AOADAPTER_DIRECT_SQL = FORBIDDEN`); does NOT allocate TaskAttempt; does NOT hold Task state transition authority (owned by Supervisor orchestration layer using P02 APIs); does NOT perform WorkerReport semantic interpretation, schema validation, or WorkerClaim creation (strictly P04 EvidenceCollector); does NOT mutate Git worktrees (no `git stash`, `git clean`, checkout, reset); does NOT invoke Antigravity CLI (`agy`) directly; does NOT vendor AO code or access AO internal SQLite database.
 
 ### Module: `ChatGPTToolSurface` & `TransportAdapter`
 - **Purpose**: Exposes the 12 high-level domain tools over the OpenAI-supported transport proven in Phase P01 Track P01-D (FR-016).

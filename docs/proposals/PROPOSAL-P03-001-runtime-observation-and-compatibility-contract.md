@@ -4,356 +4,236 @@
 > **Date**: 2026-09-22
 > **Author**: AI Engineering Supervisor Worker
 > **Target Phase**: P03 (Agent Orchestrator Integration)
-> **Status**: `RECOMMENDED_FOR_EXTERNAL_APPROVAL`
-> **Decision Priority**: Level 3 Proposal under `docs/24_CHANGE_GOVERNANCE.md`
+> **Status**: `EXTERNAL_APPROVED`
+> **Governance Stage**: `CHANGE_INTAKE_PROPOSAL`
+> **External Decision**: `APPROVED_WITH_REVISION_2_CORRECTIONS_APPLIED`
+> **Architecture Change**: `NO`
+> **ADR Required**: `NO`
 > **Governing Upstream Authority**: `Untrivial-ai/agent-orchestrator` v0.13.0 (Commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`)
 
 ---
 
 # Problem Statement
 
-During the Phase P03 pre-code upstream contract audit against the pinned Agent Orchestrator (AO) v0.13.0 authority (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`), rigorous verification of upstream source revealed four critical contract mismatches and documentation gaps between canonical specifications and upstream literal capabilities:
+During the Phase P03 Pre-Code Upstream Contract Audit against pinned Untrivial Agent Orchestrator (AO) v0.13.0, the External Supervisor identified critical contract discrepancies between canonical specifications and upstream source reality:
 
-1. **FR-006 Worker Heartbeat Mismatch**: Canonical requirement FR-006 literally requires the Supervisor to "monitor worker process health, heartbeats, and status events via AO public API". Upstream AO v0.13.0 provides session status, activity state, and activity timestamps, but provides **zero native worker heartbeat events**. The 10-second ticker in `backend/internal/httpd/events.go` (`eventsHeartbeatInterval`) emits an empty SSE comment line (`: \n\n`) intended strictly as a transport keepalive for HTTP intermediaries, not a worker process heartbeat. Proceeding with literal `worker.heartbeat` event synthesis without governance approval violates the anti-reinvention principle and produces unverified synthetic lifecycle telemetry.
-2. **FR-015 Runtime Compatibility Surface Gap**: Canonical requirement FR-015 requires verifying "daemon status, version, worker harness availability". The prior audit claimed version mismatch is detected via a health probe version field. Literal source inspection of `daemonProbePayload()` in `backend/internal/httpd/router.go` proves that neither `/healthz` nor `/readyz` exposes an AO version field. Pinned version compatibility is established out-of-band by deployment automation and/or verifiable API schema fingerprinting (`/api/v1/openapi.yaml`), rather than a runtime health probe field.
-3. **Canonical AOAdapter Interface Omission**: ADR-011 establishes that worker report artifacts (`worker-report.json`) must be retrieved through AO's workspace file read endpoint (`GET /api/v1/sessions/{id}/workspace/file?path=...`). However, the canonical `IAOAdapter` interface in `docs/12_UPSTREAM_INTEGRATION.md` contains no workspace file retrieval operation, creating a formal interface deficiency.
-4. **REC-005 Read-Only Policy Contradiction**: `docs/14_FAILURE_RECOVERY.md` REC-005 currently prescribes that AOAdapter should "Stash or clean untracked artifacts before initializing new task attempt". This instruction directly contradicts the Supervisor's fundamental architectural constraint as a **read-only control plane** that never modifies the target repository, and violates AO's exclusive ownership of Git worktrees.
-5. **Phase Task Boundary Alignment**: The initial P03 task decomposition leaked Phase P04 evidence collection responsibilities (WorkerReport JSON parsing, schema validation, WorkerClaim creation, and `REPORT_READY` transition) into P03. Canonical traceability in `docs/21_TRACEABILITY_MATRIX.md` strictly assigns FR-007 to EvidenceCollector in P04.
-
-Under `docs/24_CHANGE_GOVERNANCE.md`, no worker may silently amend canonical requirements or canonical architecture documents. This proposal establishes the formal evaluation and proposed resolutions for external supervisor approval prior to any canonical document modification or production code release.
+1. **FR-006 Heartbeat Discrepancy**: Canonical FR-006 requires monitoring "heartbeats" via AO public API. Pinned AO v0.13.0 contains no worker heartbeat; its SSE keepalive comment frame (`: \n\n`) is transport-level only.
+2. **FR-015 Health Probe Field Discrepancy**: Pinned AO `GET /healthz` and `GET /readyz` expose daemon status, service, and PID, but **NO version field**. Version `v0.13.0` is proven via deployment provenance; OpenAPI contains `info.version = 0.1.0-route-shell`.
+3. **IAOAdapter Interface Gap**: Canonical `IAOAdapter` lacked a workspace file retrieval method, while ADR-011 and FR-007 require retrieving worker reports via AO REST.
+4. **REC-005 Readonly Boundary Conflict**: Canonical `docs/14_FAILURE_RECOVERY.md` REC-005 directed AOAdapter to "stash or clean" worktrees, violating the Supervisor read-only architectural invariant.
+5. **StateStore Ownership Separation**: AOAdapter must strictly remain an anti-corruption transport adapter with zero direct dependency on StateStore or SQLite, and zero Task state transition authority.
 
 ---
 
 # Authority Conflict Matrix
 
-Resolving the observed gaps requires applying the strict 9-level decision hierarchy established in `docs/24_CHANGE_GOVERNANCE.md`:
-
-| Level | Authority Source | Precedence Status in this Conflict | Conflict Resolution Principle |
+| Conflict Area | Canonical Specification | Pinned Upstream AO Reality | Governance Impact |
 |---|---|---|---|
-| **1** | Confirmed User Requirement | Supreme Authority | User requires robust, verifiable supervision without false green flags or silent failures. |
-| **2** | Approved ADRs (`ADR-002`, `ADR-009`, `ADR-011`, `ADR-012`) | High Architectural Authority | `ADR-002` establishes AO as execution control plane. `ADR-009` mandates upstream reuse over reimplementation (prohibits reinvention of worker daemon wrappers). `ADR-011` mandates report retrieval through `/workspace/file` and forbids direct `agy` invocation in P03. `ADR-012` governs attempt identity and pre-dispatch preconditions. |
-| **3** | Canonical Architecture (`docs/04_ARCHITECTURE.md`) | System Boundary Baseline | Supervisor is a read-only control plane. Zero direct modification of target repository worktrees. |
-| **4** | Requirement Specification (`docs/02_REQUIREMENTS.md`) | Functional Specification Baseline | FR-006, FR-015, FR-007 specify functional requirements. Where literal text assumes upstream capabilities not present in pinned AO, requirements must be clarified via proposal, not silently ignored or bypassed. |
-| **5** | Approved Roadmap (`docs/17_ROADMAP.md`) | Phase Boundary Baseline | Phase P03 owns AOAdapter, session lifecycle, worker management. Phase P04 owns EvidenceCollector, WorkerReport parsing, schema validation. |
-| **6** | Task Contract | Operational Boundary | Workers operate strictly within approved task contracts. |
-| **7** | Source Repo / Reference (AO v0.13.0) | Upstream Reality | Pinned commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6` defines literal upstream behavior. Specs cannot demand what upstream physically lacks. |
-| **8** | Worker Suggestion | Advisory | Suggestions (e.g. prior audit draft) must be verified against source. |
-| **9** | Chat Conversation | Volatile Context | Non-authoritative. System truth lives in repo documents. |
-
-### Evaluation of Conflicts Under the Hierarchy:
-1. **FR-006 vs Source Reality**: Level 4 specification requires worker heartbeats, but Level 7 upstream reality provides only session status and activity state. Level 2 ADR-009 prohibits reinventing a worker daemon sidecar. Resolution: Clarify Level 4 requirement through governance (Option A) to define liveness observation via authoritative AO session/activity state.
-2. **FR-015 vs Source Reality**: Level 4 specification requires version detection via daemon status, but Level 7 source `daemonProbePayload()` contains no version. Level 2 ADR-009 prohibits modifying upstream AO code. Resolution: Clarify Level 4 requirement to verify daemon liveness/readiness via `/healthz`/`/readyz`, harness availability via `/api/v1/agents`, and version provenance out-of-band / via OpenAPI schema fingerprint.
-3. **ADR-011 vs Canonical Spec Omission**: Level 2 ADR-011 mandates report retrieval via `/workspace/file`, which takes precedence over Level 4 spec omission. Resolution: Reconcile `IAOAdapter` interface in `docs/12_UPSTREAM_INTEGRATION.md` by proposing `GetWorkspaceFile`.
-4. **REC-005 vs Read-Only Architecture**: Level 4 failure recovery table instructs AOAdapter to stash/clean target worktree, directly contradicting Level 1/2/3 read-only architecture and Level 2 ADR-009 anti-reinvention. Level 3 Architecture takes precedence over Level 4 failure recovery text. Resolution: Amend REC-005 to fail-closed (`WORKTREE_DIRTY`) and escalate.
+| **Worker Heartbeat** | `docs/02_REQUIREMENTS.md` FR-006: monitor process health and heartbeats. | Pinned AO v0.13.0 has no worker heartbeat event. SSE keepalive `: \n\n` is transport-only. | Clarify FR-006: Authoritative session snapshot observation; no synthetic worker heartbeat. |
+| **Health Probe Version** | `docs/02_REQUIREMENTS.md` FR-015: returns daemon status, version, harness. | `backend/internal/httpd/router.go` probe payload has `status`, `service`, `pid`, `paths`, but **no version field**. | Clarify FR-015: Liveness/readiness via `/healthz`/`/readyz`; harness via `/api/v1/agents`; version via pinned deployment provenance. |
+| **OpenAPI Schema Version** | Historical worker claim: OpenAPI proves release version v0.13.0. | Pinned `openapi.yaml` defines `info.version = 0.1.0-route-shell`, NOT `v0.13.0`. | Classify OpenAPI fingerprint strictly as API compatibility signal, NOT release identity proof. |
+| **Workspace File Read** | `docs/04_ARCHITECTURE.md` ADR-011 / FR-007: retrieve report via AO HTTP API. | Canonical `IAOAdapter` interface lacked `GetWorkspaceFile`. | Add session-scoped, read-only `GetWorkspaceFile` primitive to `IAOAdapter`. |
+| **Dirty Worktree Handling** | `docs/14_FAILURE_RECOVERY.md` REC-005: "Stash or clean untracked artifacts". | Violates Supervisor read-only invariant and ADR-009 anti-reinvention. | Reconcile REC-005: Fail closed (`WORKTREE_DIRTY`), block dispatch, escalate to operator/human. |
+| **StateStore Ownership** | Prior revision ambiguity: adapter checks dispatch authority and executes transitions. | AOAdapter is an anti-corruption transport adapter. | Strict separation: `AOADAPTER_STATESTORE_DEPENDENCY = FORBIDDEN`. Supervisor orchestration layer owns transitions. |
 
 ---
 
-# Pinned AO Evidence
+# Pinned AO Ground Truth Evidence
 
-Literal verification of `Untrivial-ai/agent-orchestrator` at pinned commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`:
+### 1. Daemon Probe Payload (`backend/internal/httpd/router.go:394-420`)
+```go
+func daemonProbePayload(r *http.Request, state *daemonLifecycleState) map[string]any {
+    // ...
+    res := map[string]any{
+        "status":  "ok",
+        "service": "agent-orchestrator-daemon",
+        "pid":     os.Getpid(),
+        "paths":   paths,
+    }
+    // NO "version" field exists in the returned JSON object.
+    return res
+}
+```
 
-1. **Health Probe Payload** (`backend/internal/httpd/router.go:394-420`):
-   ```go
-   func daemonProbePayload(status string, cfg config.Config) map[string]any {
-       payload := map[string]any{
-           "status":  status,
-           "service": daemonmeta.ServiceName,
-           "pid":     os.Getpid(),
-       }
-       if exe, err := os.Executable(); err == nil && exe != "" {
-           payload["executablePath"] = exe
-       }
-       if cwd, err := os.Getwd(); err == nil && cwd != "" {
-           payload["workingDirectory"] = cwd
-       }
-       if cfg.StartupWorkingDirectory != "" {
-           payload["startupWorkingDirectory"] = cfg.StartupWorkingDirectory
-       }
-       if appImage := os.Getenv("AO_APPIMAGE"); appImage != "" {
-           payload["appImagePath"] = appImage
-       }
-       return payload
-   }
-   ```
-   **Literal Fact**: Returns status, service name, pid, and path metadata. **No version field exists**.
+### 2. Embedded OpenAPI Specification (`backend/internal/httpd/apispec/openapi.yaml:1-6`)
+```yaml
+openapi: 3.1.0
+info:
+  description: Loopback-only HTTP surface served by the Go daemon. Generated from Go (code-first)...
+  title: Agent Orchestrator HTTP daemon
+  version: 0.1.0-route-shell
+```
+`info.version` is a route-shell spec version, not daemon release version `v0.13.0`.
 
-2. **Agent Readiness Endpoints** (`backend/internal/httpd/controllers/agents.go:36-44`):
-   ```go
-   func (c *AgentsController) Register(r chi.Router) {
-       r.Get("/agents", c.list)
-       r.Post("/agents/refresh", c.refresh)
-       r.Get("/agents/readiness", c.readiness)
-       r.Post("/agents/readiness/ensure", c.ensureReadiness)
-       r.Post("/agents/{agent}/probe", c.probe)
-       r.Get("/agents/{agent}/models", c.models)
-       r.Post("/agents/{agent}/models/refresh", c.refreshModels)
-   }
-   ```
-   **Literal Fact**: Public endpoints exist to inspect agent harness inventory and ensure readiness.
+### 3. Activity State Machine (`backend/internal/domain/activity.go:17-30`)
+```go
+const (
+    ActivityActive       ActivityState = "active"
+    ActivityIdle         ActivityState = "idle"
+    ActivityWaitingInput ActivityState = "waiting_input"
+    ActivityBlocked      ActivityState = "blocked"
+    ActivityExited       ActivityState = "exited"
+)
+```
+* Note: `ActivityBusy` does **not** exist in pinned AO.
+* `ActivityActive`: worker actively executing turns/tools.
+* `ActivityIdle`: agent turn complete (derived from agent `stop` hook).
+* `Activity.LastActivityAt`: timestamp when activity state was last observed. **Not an autonomous worker heartbeat.** Legitimate long-running tool operations produce no intermediate callbacks.
 
-3. **OpenAPI Compatibility Spec** (`backend/internal/httpd/api.go:182` & `apispec/openapi.yaml`):
-   ```go
-   r.Get("/openapi.yaml", apispec.ServeYAML)
-   ```
-   **Literal Fact**: Serves committed OpenAPI 3.1.0 specification verbatim at `GET /api/v1/openapi.yaml`. `info.version` is `"0.1.0-route-shell"`.
-
-4. **SSE Event Stream & Transport Keepalive** (`backend/internal/httpd/events.go:44-55`):
-   ```go
-   var eventsHeartbeatInterval = 10 * time.Second
-   ```
-   **Literal Fact**: Mounts `GET /api/v1/events` backed by `cdc.Source` (`change_log` table). Emits comment frame `: \n\n` every 10s to keep HTTP connection alive. It does not carry worker state or process telemetry.
-
-5. **CDC Event Types** (`backend/internal/cdc/event.go:17-30`):
-   * `session_created`, `session_updated`, `pr_created`, `pr_updated`, etc.
-   * Captured by database triggers on SQLite tables.
-   * Monotonic `Seq` ordering with replay cursor via `Last-Event-ID` / `X-AO-Event-After`.
-
-6. **Authoritative Session State** (`backend/internal/httpd/controllers/sessions.go:401-413` & `1968-2000`):
-   * `GET /api/v1/sessions/{sessionId}` returns `SessionView` containing `domain.Session`.
-   * `Activity.State`: `"active"`, `"idle"`, `"waiting_input"`, `"blocked"`, `"exited"`.
-   * `IsTerminated`: boolean flag.
-
-7. **Agy Harness Activity Mapping** (`backend/internal/adapters/agent/agy/activity.go:13-22`):
-   ```go
-   func DeriveActivityState(event string, _ []byte) (domain.ActivityState, bool) {
-       switch event {
-       case "pre-invocation", "post-tool-use":
-           return domain.ActivityActive, true
-       case "stop":
-           return domain.ActivityIdle, true
-       default:
-           return "", false
-       }
-   }
-   ```
-   **Literal Fact**: Agent hook callbacks translate directly: `"pre-invocation"`/`"post-tool-use"` -> `ActivityActive`; `"stop"` -> `ActivityIdle`.
-
-8. **Workspace File Read Primitive** (`backend/internal/httpd/controllers/sessions.go:570-600`):
-   * `GET /api/v1/sessions/{sessionId}/workspace/file?path={relPath}`
-   * Returns `WorkspaceFileResponse` with `Content`, `Size`, `FileFingerprint`. Strictly confined to session workspace.
-
-9. **Upstream Request Timeout Default** (`backend/internal/config/config.go:31`):
-   ```go
-   DefaultRequestTimeout = 60 * time.Second
-   ```
-   **Literal Fact**: Server-side request timeout default is 60 seconds.
+### 4. Session Read Model & Exit Semantics (`backend/internal/domain/session.go:21-39`)
+```go
+type Session struct {
+    ID           string        `json:"id"`
+    ProjectID    string        `json:"projectId"`
+    Harness      string        `json:"harness"`
+    Status       SessionStatus `json:"status"`
+    Activity     Activity      `json:"activity"`
+    IsTerminated bool          `json:"isTerminated"`
+    // ...
+}
+```
+* Public read model exposes `Activity.State`, `IsTerminated`, `Status`.
+* It does **not** expose a reliable public exit code or reason.
+* A single snapshot cannot distinguish intentional stop from an unexpected crash without Supervisor operational provenance.
 
 ---
 
-# FR-006 Heartbeat Gap
+# FR-006 Lifecycle Observation Resolution
 
-### Current Canonical Requirement:
-FR-006 literally states: "monitor worker process health, heartbeats, and status events via AO public API". Furthermore, P03 phase specifications mention `worker_started`, `worker_heartbeat`, `worker_finished`.
+### Reality:
+Pinned AO v0.13.0 does not produce worker-level heartbeats.
 
-### Pinned AO Source Reality:
-Upstream AO provides:
-1. `Activity.State`: `"active"`, `"idle"`, `"waiting_input"`, `"blocked"`, `"exited"`.
-2. `Activity.LastActivityAt`: Timestamp updated when CLI hooks fire.
-3. `IsTerminated`: Boolean indicating session termination.
-4. CDC `session_created` and `session_updated` events.
-5. SSE connection keepalive comment frames (`eventsHeartbeatInterval = 10s`).
-
-Upstream AO **DOES NOT** provide an authoritative worker heartbeat event. The 10-second `eventsHeartbeatInterval` in `backend/internal/httpd/events.go` writes an empty comment `: \n\n` strictly to prevent idle TCP drops across reverse proxies. It is not associated with any worker process, contains no worker identity, and emits no payload. It must NOT be mapped to `worker.heartbeat`.
-
-### Evaluation of Options:
-* **OPTION A — RECOMMENDED**: Clarify FR-006 so that "heartbeat" means **bounded liveness observation** through authoritative AO session snapshot state (`Activity.State`, `IsTerminated`), without inventing a synthetic `worker.heartbeat` event.
-  - The canonical lifecycle event taxonomy remains: `worker.started`, `worker.stopped`, `worker.crashed`.
-  - Turn completion remains: AO activity `idle` (derived authoritatively from agent `stop` hook callback).
-  - No synthetic lifecycle event is emitted merely because a periodic poll succeeded.
-  - If a worker becomes unresponsive or times out, bounded observation policy detects inactivity and transitions to `FAILED`/`CRASHED`.
-* **OPTION B**: Introduce an explicit Supervisor-generated liveness sample concept (e.g. `supervisor.liveness_sample`) distinct from worker lifecycle events.
-  - Must use a completely distinct semantic name.
-  - Must NOT claim to be an upstream worker heartbeat.
-  - Added complexity with minimal observability value over poll logs.
-* **OPTION C**: Retain literal upstream worker-heartbeat requirement.
-  - **UNSATISFIABLE** on pinned AO v0.13.0. Would require intrusive sidecar or modifying upstream AO, violating ADR-002 and ADR-009.
+### Semantics:
+1. **Baseline Transport**: Authoritative AO session snapshot observation via `GET /api/v1/sessions/{id}` is the P03 baseline.
+2. **State Transition**: Observing `Activity.State == ActivityActive` permits the Supervisor orchestration layer to transition task state `DISPATCHED -> RUNNING` via P02 StateStore APIs.
+3. **Turn Completion**: `Activity.State == ActivityIdle` represents worker turn completion per ADR-011.
+4. **No Synthetic Heartbeat**: Zero synthetic `worker.heartbeat` events shall be invented or emitted.
+5. **Activity Timestamp Clarification**: `Activity.LastActivityAt` is diagnostic activity evidence, NOT hang detection heartbeat proof. A long-running tool may legitimately run without intermediate callbacks. Bounded execution deadlines are governed by Supervisor execution policy, not solely by `lastActivityAt`.
 
 ---
 
-# FR-015 Runtime Compatibility Gap
+# FR-015 Runtime Compatibility Resolution
 
-### Current Canonical Requirement:
-FR-015 requires verifying "daemon status, version, worker harness availability" during startup preflight.
+### Reality:
+`GET /healthz` and `GET /readyz` return daemon health and PID, but lack a `version` field.
 
-### Prior Worker Inaccuracy:
-Prior audit claimed `ErrAOVersionMismatch` is detected via the health probe version field. This was factually false: `daemonProbePayload()` in `backend/internal/httpd/router.go` provides `status`, `service`, `pid`, `executablePath`, `workingDirectory`, `startupWorkingDirectory`, `appImagePath`, but **NO version field**.
-
-### Audit of Exact Public Compatibility Surfaces:
-1. `GET /healthz`: Returns 200 OK with `status="ok"`, `service="agent-orchestrator-daemon"`, `pid`. Proves daemon liveness. (`DAEMON_LIVENESS = PROVEN`)
-2. `GET /readyz`: Returns 200 OK with `status="ready"`, `service="agent-orchestrator-daemon"`, `pid`. Proves daemon readiness. (`DAEMON_READINESS = PROVEN`)
-3. `GET /api/v1/agents`: Returns list of configured harnesses (`"agy"`, `"claude-code"`, etc.). (`HARNESS_INVENTORY = PUBLIC_API_AVAILABLE`)
-4. `GET /api/v1/agents/readiness`: Returns cached readiness evaluation of all agents. (`HARNESS_READINESS = PUBLIC_API_AVAILABLE`)
-5. `POST /api/v1/agents/readiness/ensure`: Actively triggers readiness checks. (`HARNESS_READINESS = PUBLIC_API_AVAILABLE`)
-6. `GET /api/v1/openapi.yaml`: Serves the embedded OpenAPI 3.1.0 specification. (`API_COMPATIBILITY_FINGERPRINT = EVALUATE`)
-
-### Recommended Semantic:
-1. Runtime daemon liveness/readiness is verified via `/healthz` and `/readyz`.
-2. Worker harness availability and readiness are verified via `/api/v1/agents` and `/api/v1/agents/readiness`.
-3. AO version compatibility is guaranteed by **pinned deployment provenance** (Git commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`, release `v0.13.0`) and can be cross-verified via cryptographic fingerprinting of `/api/v1/openapi.yaml`, NOT a non-existent health JSON field.
+### Semantics:
+1. **Daemon Liveness**: Verified via `GET /healthz` (returns `status="ok"`).
+2. **Daemon Readiness**: Verified via `GET /readyz` (returns `status="ready"`).
+3. **Harness Inventory**: Verified via `GET /api/v1/agents` (verifies `"agy"` harness exists).
+4. **Harness Readiness**: Verified via `GET /api/v1/agents/readiness` and/or `POST /api/v1/agents/readiness/ensure`.
+5. **API Compatibility**: Verified against expected public contract / schema surface.
+6. **Release Identity**: Verified via out-of-band pinned deployment provenance (commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`), NOT health JSON.
+7. **OpenAPI Schema Fingerprint**: API compatibility signal only. Digest equality indicates expected API schema surface, NOT proof that the running binary is release `v0.13.0`.
 
 ---
 
-# AOAdapter Workspace Read Interface Gap
+# Stopped vs Crashed Classification
 
-### Architectural Context:
-ADR-011 mandates that worker reports (`worker-report.json`) must be retrieved through AO's workspace file read endpoint (`GET /api/v1/sessions/{id}/workspace/file?path=...`). However, canonical `IAOAdapter` in `docs/12_UPSTREAM_INTEGRATION.md` contains no workspace file read method.
+Pinned AO session snapshots expose `IsTerminated` and `Activity.State`, but do not expose an authoritative exit reason. Therefore:
+* `IsTerminated == true` MUST NOT automatically mean `worker.crashed`.
+* `ActivityExited` MUST NOT automatically mean intentional `worker.stopped`.
 
-### Proposed Interface Primitive:
+### Normalized Event Mapping:
+* **`WORKER_STOPPED`**: Supervisor has authoritative intentional-stop provenance (e.g., successful `stopWorker`/`kill` action correlated to that session/attempt).
+* **`WORKER_CRASHED`**: Session/process terminates unexpectedly when no intentional termination was requested by the Supervisor, corroborated by observable termination evidence.
+* **`WORKER_TERMINATION_UNKNOWN`**: If evidence cannot safely distinguish intentional stop from crash, fail closed and retain an unknown termination classification for failure recovery handling.
+
+---
+
+# AOAdapter and StateStore Ownership Separation
+
+The `AOAdapter` is strictly an anti-corruption transport adapter.
+
+### Explicit Boundary Rules:
+* `AOADAPTER_STATESTORE_DEPENDENCY = FORBIDDEN`
+* `AOADAPTER_DIRECT_SQL = FORBIDDEN`
+* `TASK_STATE_TRANSITION_OWNER = SUPERVISOR_ORCHESTRATION_LAYER_USING_P02_APIS`
+
+### Execution Flow:
+1. **Supervisor Orchestration Layer**: Prepares dispatch, creates durable `TaskAttempt`, commits `READY -> DISPATCHED` in StateStore, then invokes `AOAdapter.dispatchTaskContract`.
+2. **AOAdapter Layer**: Translates domain-safe input to AO HTTP requests (`POST /api/v1/sessions/{id}/send`), returns normalized transport result.
+3. **Observation & Transition**: Supervisor observation loop polls session snapshot via AOAdapter; upon observing `ActivityActive`, Supervisor orchestration layer invokes existing P02 domain/StateStore APIs to transition `DISPATCHED -> RUNNING`.
+
+---
+
+# AO Workspace Read Transport Primitive
+
 Add to `IAOAdapter`:
 ```go
-// GetWorkspaceFile retrieves a raw file from the session's workspace.
-// It is strictly read-only, session-scoped, and path-confined.
+// GetWorkspaceFile retrieves raw artifact bytes from the session workspace.
+// Strictly session-scoped, path-confined, and read-only.
 GetWorkspaceFile(ctx context.Context, sessionID string, relativePath string) ([]byte, error)
 ```
 
-### Strict Operational Constraints:
-* **Read-only**: Never modifies workspace files.
-* **Session-scoped**: Must target an active or retained session.
-* **Relative path confinement**: Paths must be clean, relative to workspace root; reject `..`, absolute paths, or path traversal.
-* **Zero host filesystem bypass**: Must use AO's HTTP API, never raw OS filesystem reads across worktrees.
-* **Zero schema interpretation**: Transport returns raw bytes; does NOT parse JSON, validate schemas, create `WorkerClaim`, or transition `StateStore`. Those remain strictly Phase P04 responsibilities.
+### Constraints:
+* Calls `GET /api/v1/sessions/{id}/workspace/file?path={relPath}`.
+* Read-only; relative path confinement (rejects traversal `..`, absolute paths).
+* Returns raw byte payload.
+* **Zero WorkerReport semantic interpretation**: No JSON parsing, no schema validation, no `WorkerClaim` creation, no `REPORT_READY` transition (strictly reserved for Phase P04 `EvidenceCollector`).
 
 ---
 
-# REC-005 Readonly Conflict
+# REC-005 Readonly Worktree Resolution
 
-### Current Problem:
-`docs/14_FAILURE_RECOVERY.md` REC-005 prescribes:
-* *Dirty Worktree Detected*: Worktree contains uncommitted files before task dispatch.
-* *Owner*: AOAdapter.
-* *Action*: "Stash or clean untracked artifacts before initializing new task attempt."
+### Problem:
+Legacy REC-005 directed AOAdapter to "stash or clean" worktrees, violating the Supervisor read-only invariant.
 
-### Architectural Conflict:
-1. **Read-Only Invariant**: The Supervisor is strictly a read-only governance control plane. It must never run mutating git commands (`git stash`, `git clean`, `git checkout`) on target workspaces.
-2. **Upstream Separation**: AO owns Git worktree lifecycle (`backend/internal/worktree/`).
-3. **Anti-Reinvention**: Supervisor must not reimplement worktree state management.
-
-### Recommended Resolution:
-Amend REC-005 action:
-* When a dirty worktree is detected prior to dispatch (via AO session/worktree read inspection or pre-dispatch check), the Supervisor **fails closed**.
-* It rejects dispatch with error `WORKTREE_DIRTY`.
-* It marks task attempt blocked/escalated (`HUMAN_REQUIRED` or `BLOCKED`), requiring operator resolution.
-* Zero automated destructive git mutations are performed by the Supervisor.
+### Resolution:
+* Supervisor **fails closed** upon detecting a dirty or unsafe worktree precondition.
+* Rejects dispatch, marks task attempt blocked/failed (`failure_reason = WORKTREE_DIRTY`), and escalates to human/operator resolution.
+* Zero mutating git operations (`git stash`, `git clean`, `git checkout`, `git reset`) are executed by the Supervisor.
 
 ---
 
-# Alternatives
+# Policy Inventory — Canonical Status
 
-| Decision Area | Alternative | Pros | Cons | Verdict |
-|---|---|---|---|---|
-| **Heartbeat Observation** | **Alt 1A**: Pure Bounded Session Snapshot Polling (`GET /sessions/{id}`) | Simple, deterministic, reliable, zero dependency on CDC DB triggers. | Periodic HTTP request overhead (e.g. 1s–2s interval). | **RECOMMENDED** |
-| | **Alt 1B**: CDC `/events` stream wake-up + snapshot verify | Low latency event push. | CDC stream not proven in P01; complex reconnection logic. | DEFERRED / OPTIONAL ENHANCEMENT |
-| | **Alt 1C**: Treat CDC payload as lifecycle authority | Zero polling. | Fragile, binds Supervisor to internal AO DB schema, no turn-completion guarantee. | REJECTED |
-| | **Alt 1D**: Synthetic `worker.heartbeat` on every poll | Satisfies literal FR-006 text. | Fabricates fake events not emitted by upstream, corrupts audit trail. | REJECTED |
-| **Runtime Compatibility** | **Alt 2A**: Health probe + Agent endpoints + Pinned git provenance | 100% honest to upstream source, no artificial fields. | Requires understanding that version is verified out-of-band. | **RECOMMENDED** |
-| | **Alt 2B**: Attempt to parse binary metadata or Electron files | Might extract a string. | Violates container/daemon isolation, highly brittle. | REJECTED |
-| **Workspace Read** | **Alt 3A**: `GetWorkspaceFile` in `IAOAdapter` via AO REST API | Session-scoped, follows ADR-011, honors read-only boundary. | Requires adding one method to adapter interface. | **RECOMMENDED** |
-| | **Alt 3B**: Direct host filesystem read (`os.ReadFile`) | Avoids adding adapter method. | Violates ADR-002, ADR-011, and container isolation. | REJECTED |
-| **Dirty Worktree** | **Alt 4A**: Fail closed with `WORKTREE_DIRTY` / escalate | Upholds read-only invariant, prevents data loss, safe. | Requires manual or AO-level reset. | **RECOMMENDED** |
-| | **Alt 4B**: Run `git stash` / `git clean` from Supervisor | Cleans worktree automatically. | Destructive, violates read-only architecture and ADR-009. | REJECTED |
+All Supervisor operational policies are tracked without unauthorized numeric value inventions:
 
----
+| Policy Identifier | Owner | Value | Status |
+|---|---|---|---|
+| `UPSTREAM_AO_REQUEST_TIMEOUT` | Upstream AO | `60s` | `UPSTREAM_FACT` (`config.DefaultRequestTimeout`) |
+| `SUPERVISOR_HTTP_TIMEOUT` | Supervisor | `UNSET` | `UNRESOLVED_POLICY` |
+| `SUPERVISOR_HEALTH_PROBE_TIMEOUT` | Supervisor | `UNSET` | `UNRESOLVED_POLICY` |
+| `SUPERVISOR_SPAWN_TIMEOUT` | Supervisor | `UNSET` | `UNRESOLVED_POLICY` |
+| `SUPERVISOR_SEND_TIMEOUT` | Supervisor | `UNSET` | `UNRESOLVED_POLICY` |
+| `SUPERVISOR_ACTIVITY_POLL_INTERVAL`| Supervisor | `UNSET` | `UNRESOLVED_POLICY` |
+| `SUPERVISOR_EXECUTION_DEADLINE` | Supervisor | `UNSET` | `UNRESOLVED_POLICY` |
+| `SUPERVISOR_KILL_STOP_TIMEOUT` | Supervisor | `UNSET` | `UNRESOLVED_POLICY` |
+| `SUPERVISOR_WORKSPACE_READ_TIMEOUT`| Supervisor | `UNSET` | `UNRESOLVED_POLICY` |
 
-# Recommended Resolution
-
-1. **FR-006 Clarification**: Adopt Option A. Define worker process health and lifecycle observation via periodic bounded polling of authoritative AO session state (`GET /api/v1/sessions/{id}`). Turn completion is observed when AO activity transitions to `idle` (`ActivityIdle`), which AO derives directly from the agent's native `stop` hook. Lifecycle events emitted by Supervisor remain strictly `worker.started`, `worker.stopped`, `worker.crashed`. No synthetic `worker.heartbeat` event is fabricated.
-2. **FR-015 Clarification**: Reconcile FR-015 preflight: verify daemon liveness (`/healthz`) and readiness (`/readyz`); verify agent harness availability and readiness (`/api/v1/agents` and `/api/v1/agents/readiness`); assert AO version compatibility via pinned deployment provenance and build manifest, optionally verified via `/api/v1/openapi.yaml` schema fingerprint.
-3. **IAOAdapter Interface Extension**: Add `GetWorkspaceFile(ctx, sessionID, relPath)` to canonical `IAOAdapter`. Strictly bounded, read-only, session-confined.
-4. **REC-005 Amendment**: Amend REC-005 in `docs/14_FAILURE_RECOVERY.md` so that detected dirty worktrees fail closed with `WORKTREE_DIRTY` without running mutating git commands.
-5. **Phase Boundary Enforcement**: Preserve strict phase separation. P03 implements `GetWorkspaceFile` raw transport primitive only. WorkerReport parsing, schema validation, WorkerClaim creation, and `REPORT_READY` transition remain strictly Phase P04 responsibilities.
+*Note: No circuit-breaker or retry-count policies are introduced without formal governance approval.*
 
 ---
 
-# Architecture Impact Assessment
+# Revised P03 Task Ownership
 
-* **Canonical 3-Tier Architecture**: Completely preserved. Supervisor Core -> AOAdapter -> Agent Orchestrator.
-* **Read-Only Invariant**: Reinforced. By rejecting `git stash`/`git clean` in REC-005, the Supervisor remains 100% read-only on target repositories.
-* **ADR-002, ADR-009, ADR-011, ADR-012**: 100% honored and reinforced.
-* **Database/Domain Isolation**: Zero AO DTO pollution of Supervisor domain models.
+```
+TASK-P03-001: Upstream Contract & Client Foundation (Transport, Probes, Fingerprint)
+  └── TASK-P03-002: Session Lifecycle & Dispatch (Create, Send, Kill, Restore)
+        └── TASK-P03-003: Lifecycle Observation & State Reconciliation (Poll Loop, DISPATCHED->RUNNING)
+              └── TASK-P03-004: AO Workspace Read Transport Primitive (GetWorkspaceFile raw read)
+                    └── TASK-P03-005: P03 Live AO Integration & Exit Gate Validation
+```
 
----
-
-# ADR Requirement Assessment
-
-* **Determination**: `NO — PROVISIONAL PENDING PROPOSAL REVIEW`.
-* **Rationale**: The proposed resolutions do not alter the canonical system architecture or introduce new external dependencies. They clarify existing requirement semantics (FR-006, FR-015), reconcile an interface omission already established by ADR-011 (`GetWorkspaceFile`), and correct an operational inconsistency in failure recovery (REC-005). Existing ADRs (`ADR-002`, `ADR-009`, `ADR-011`, `ADR-012`) fully govern these boundaries. If the External Supervisor requests a formal ADR, one will be prepared following proposal approval.
-
----
-
-# Exact Canonical Documents Requiring Future Amendment
-
-Amendments will be applied **ONLY AFTER** formal external approval of this proposal:
-
-| Canonical Document | Section | Proposed Amendment Summary |
-|---|---|---|
-| `docs/02_REQUIREMENTS.md` | FR-006 | Clarify that worker health and turn observation are performed via authoritative AO session/activity state (`active` -> `idle`) rather than literal upstream worker heartbeats. |
-| `docs/02_REQUIREMENTS.md` | FR-015 | Clarify compatibility check: health probe liveness/readiness, harness readiness via `/api/v1/agents`, and version provenance out-of-band / OpenAPI schema fingerprint. |
-| `docs/12_UPSTREAM_INTEGRATION.md` | `IAOAdapter` | Add `GetWorkspaceFile(ctx context.Context, sessionID string, relativePath string) ([]byte, error)` to interface definition. |
-| `docs/14_FAILURE_RECOVERY.md` | REC-005 | Change action from "Stash or clean untracked artifacts" to "Fail closed with WORKTREE_DIRTY; escalate to HUMAN_REQUIRED; zero destructive git commands". |
-| `docs/21_TRACEABILITY_MATRIX.md` | FR-006, FR-015, FR-007 | Reconcile mappings: FR-006 to lifecycle observation; FR-015 to health+agents+provenance; FR-007 exclusively to P04 EvidenceCollector. |
-| `docs/phases/P03_AO_INTEGRATION.md` | P03 Scope & Exit Gate | Align task decomposition with revised 5-task structure; restrict P03 exit gate to session lifecycle and raw file transport, excluding P04 report validation. |
+* **TASK-P03-001**: AO loopback HTTP client foundation, `/healthz`, `/readyz`, `/api/v1/agents`, error decoding, OpenAPI fingerprinting.
+* **TASK-P03-002**: Session creation, prompt dispatch, termination, restore; pure transport boundary (zero StateStore dependency).
+* **TASK-P03-003**: Authoritative session state observation loop (`GET /sessions/{id}`); Supervisor orchestration maps active state to `DISPATCHED -> RUNNING` via P02 APIs.
+* **TASK-P03-004**: Session-confined raw workspace file reader (`GET /sessions/{id}/workspace/file`); zero report parsing or claim creation.
+* **TASK-P03-005**: End-to-end integration test against live pinned AO daemon proving P03 contract compliance.
 
 ---
 
-# Proposed P03 Task Ownership
+# Architecture & ADR Impact Assessment
 
-To ensure strict compliance with canonical phase boundaries, the proposed P03 task decomposition is revised as follows:
-
-### TASK-P03-001: AO Transport Foundation & Compatibility Read Model
-* Loopback-only REST client (`http://127.0.0.1:{port}`);
-* Base URL validation and security policy;
-* Daemon liveness (`/healthz`) and readiness (`/readyz`);
-* Harness inventory and readiness (`/api/v1/agents`, `/api/v1/agents/readiness`);
-* Project registration/verification (`/api/v1/projects`);
-* Session inspection (`GET /api/v1/sessions/{id}`);
-* Error envelope decoding (`envelope.APIError`);
-* Normalized adapter error mapping;
-* Zero session mutation commands; zero polling loop; zero WorkerReport ingestion.
-
-### TASK-P03-002: Session Mutation & Dispatch Boundary
-* Session creation (`POST /api/v1/sessions`);
-* Session prompt dispatch (`POST /api/v1/sessions/{id}/send`);
-* Session termination (`POST /api/v1/sessions/{id}/kill`);
-* Session restore (`POST /api/v1/sessions/{id}/restore`);
-* ADR-012 durable pre-dispatch state validation (assert task is `DISPATCHED` with valid attempt before calling AO);
-* Zero attempt allocation inside adapter; zero direct SQLite access.
-
-### TASK-P03-003: Lifecycle Observation & State Reconciliation
-* Authoritative session state observation loop (`GET /api/v1/sessions/{id}`);
-* Observes worker transition to `ActivityActive` -> executes StateStore transition `DISPATCHED -> RUNNING` via existing P02 StateStore/domain transition APIs;
-* Observes turn completion when `Activity.State` transitions to `ActivityIdle` (derived from agent `stop` hook);
-* Observes session exit / failure (`IsTerminated = true` or `ActivityExited`) -> maps to `worker.stopped` or `worker.crashed`;
-* Injects bounded observation policy (configurable poll interval, inactivity timeout, operation deadlines);
-* Zero synthetic worker heartbeat events; zero direct SQL writes; zero StateMachine bypass.
-
-### TASK-P03-004: AO Workspace Read Transport Primitive
-* Implements `GetWorkspaceFile(ctx, sessionID, relativePath)`;
-* Calls `GET /api/v1/sessions/{id}/workspace/file?path={relPath}`;
-* Enforces session-scoped relative path confinement (rejects traversal, absolute paths);
-* Returns raw bounded byte payload;
-* Zero WorkerReport parsing; zero schema validation; zero WorkerClaim creation; zero StateStore transitions (strictly reserved for P04).
-
-### TASK-P03-005: P03 Live AO Integration & Exit Gate Validation
-* End-to-end integration test against live pinned AO daemon;
-* Validates daemon compatibility, project setup, session spawn, dispatch, active / running transition, idle turn completion, workspace file retrieval, and clean teardown;
-* Validates zero domain model pollution by upstream DTOs;
-* Proves P03 exit gate compliance without demanding P04 EvidenceCollector behavior.
-
----
-
-# Risks
-
-1. **Polling Overhead Risk**: Frequent polling of `GET /sessions/{id}` could impose CPU load.
-   - *Mitigation*: Configurable poll interval (default 1.0s to 2.0s) with bounded maximums.
-2. **Inactivity False Positive Risk**: Long-running tool executions might appear idle.
-   - *Mitigation*: AOAdapter updates `lastActivityAt` on every CLI tool execution (`post-tool-use`, `pre-invocation`). Bounded timeout applies to absence of any activity signal.
-3. **Timeout Mismatch Risk**: Upstream AO has a 60s server-side request timeout default (`config.DefaultRequestTimeout`).
-   - *Mitigation*: Supervisor client uses dedicated, configurable HTTP client timeouts (`SUPERVISOR_HTTP_TIMEOUT`), distinct from operation deadlines.
+* **Architecture Change**: `NO`. Canonical 3-tier architecture preserved.
+* **ADR Required**: `NO`. Existing ADRs (`ADR-002`, `ADR-009`, `ADR-011`, `ADR-012`) govern these boundaries.
+* **Canonical Reconciliations**: Completed in `docs/02`, `docs/12`, `docs/14`, `docs/17`, `docs/21`, `docs/22`, `docs/phases/P03_AO_INTEGRATION.md`.
 
 ---
 
 # External Approval Gate
 
-* **Final Status**: `RECOMMENDED_FOR_EXTERNAL_APPROVAL`
-* **Condition**: Awaiting formal review and decision by External Supervisor.
-* **Prohibition**: No canonical requirement files may be modified and no production Go code in `internal/**` may be written until this proposal is explicitly approved.
+* **Status**: `EXTERNAL_APPROVED`
+* **External Supervisor Decision**: `APPROVED_WITH_REVISION_2_CORRECTIONS_APPLIED`
+* **Production Code Guard**: `P03_CODE = HELD`. Implementation authorization pending release of immutable `TASK-P03-001` Task Contract.

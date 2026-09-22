@@ -1,6 +1,6 @@
 ﻿# 02. REQUIREMENTS SPECIFICATION
 
-> **Standard**: IEEE 830-compliant requirements with atomic, traceable IDs  
+> **Standard**: IEEE 830-compliant requirements with atomic, traceable IDs
 > **Status**: Baseline Specification
 
 ---
@@ -14,7 +14,7 @@
 | **FR-003** | Technical Context Access | The system shall provide the Supervisor with indexed access to project requirements, architecture, and source tree metadata. | Supervisor retrieves documentation outline and specific sections without loading full files into prompt context. |
 | **FR-004** | Task Contract Creation | The system shall create immutable Task Contracts containing objective, allowed scope, forbidden scope, acceptance tests, and stop conditions. | Contract is assigned a unique `task_id` and verified against schema before dispatch. |
 | **FR-005** | Worker Task Dispatch | The system shall dispatch the immutable Task Contract to the Execution Control Plane (AO) to initiate or resume worker execution. | Task state transitions from `READY` to `DISPATCHED`; AO worker session is triggered. |
-| **FR-006** | Worker Lifecycle Observation | The system shall monitor worker process health, heartbeats, and status events via the AO public API. | State transitions to `RUNNING`; crashes or hangs trigger timeout and failure handlers. |
+| **FR-006** | Worker Lifecycle Observation | The system shall observe worker lifecycle and bounded execution health via AO public session/activity surfaces. | Active session observation permits state transition from `DISPATCHED` to `RUNNING`; AO `idle` represents worker turn completion per ADR-011; intentional termination and unexpected termination are distinguished using Supervisor operation provenance where possible; task/operation timeout handling uses separately configured bounded execution deadlines; no synthetic worker heartbeat is required; `lastActivityAt` is diagnostic activity evidence, not heartbeat proof. |
 | **FR-007** | Worker Report Ingestion | The system shall ingest structured worker completion reports and extract claims, changed files, and reported test results. | Ingested report conforms to `worker-report.schema.json` and is labeled as `WorkerClaim`. |
 | **FR-008** | Independent Evidence Collection | The system shall independently query Git for actual base/head SHAs, diffs, touched files, and check command exit codes. | Git evidence is collected directly from the worktree, independent of worker claims. |
 | **FR-009** | Scope Violation Detection | The system shall compare touched files in the Git diff against the Task Contract `allowed_scope` and `forbidden_scope`. | Any edit outside `allowed_scope` flags a `PolicyViolation` in the review bundle. |
@@ -23,7 +23,7 @@
 | **FR-012** | Revision Cycle Management | When revision is required, the system shall formulate a revision contract referencing prior unverified claims or policy violations. | Worker is reinvoked with the targeted revision contract and existing worktree. |
 | **FR-013** | Audit Trail Generation | The system shall log all pair events, task transitions, evidence hashes, and review decisions to a local append-only log. | Audit log is queryable, chronological, and sanitized of secret tokens. |
 | **FR-014** | Multi-Project Ready Domain | The domain model shall support multiple project records, even though V1 executes a single active Pair. | Database and domain entities isolate project records by unique `project_id`. |
-| **FR-015** | Upstream Health Check | The system shall verify connectivity and API compatibility with the AO daemon before dispatching tasks. | Returns daemon status, version, and worker harness availability. |
+| **FR-015** | Upstream Health Check & Preflight | The system shall verify daemon connectivity, readiness, harness inventory, and public API compatibility with the AO daemon before dispatching tasks. | Daemon liveness verified via `GET /healthz`; readiness verified via `GET /readyz`; required harness presence and readiness verified via `GET /api/v1/agents` and `/api/v1/agents/readiness`; API compatibility verified against expected public contract/schema surface; release identity verified via pinned deployment provenance (runtime health JSON does not expose release version). |
 | **FR-016** | Supervisor Tool Transport | The target ChatGPT Web environment shall be able to invoke the Supervisor's supported high-level tools through an OpenAI-supported transport without OS-level GUI automation and without manual prompt/report copy-paste. | Phase P01 feasibility proof demonstrates a verified, supported transport mechanism for the target user account (Plus web / local relay / MCP). |
 
 ---
@@ -62,4 +62,3 @@
 | **OPS-001** | Single-Command Startup | The local control plane service shall start via a single documented command. |
 | **OPS-002** | Clean Process Termination | Stopping the control plane service shall cleanly close open sessions without leaving orphaned worker processes. |
 | **OPS-003** | Self-Contained Storage | All task state and evidence shall be stored locally without requiring external cloud accounts or paid third-party databases. |
-

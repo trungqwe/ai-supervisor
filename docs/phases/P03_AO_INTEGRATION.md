@@ -1,12 +1,16 @@
-﻿# PHASE SPECIFICATION: P03 — AO INTEGRATION (EXECUTION ADAPTER)
+# PHASE SPECIFICATION: P03 — AO INTEGRATION (EXECUTION ADAPTER)
 
 ## 1. Objective
-Implement `AOAdapter` to connect the Supervisor Control Plane to the AO daemon REST API and event streams.
+Implement `AOAdapter` to connect the Supervisor Control Plane to the Untrivial Agent Orchestrator public REST API for session lifecycle management, authoritative snapshot observation, and raw workspace artifact read transport.
 
 ## 2. Deliverables
-- `AOAdapter` implementation mapping domain calls to AO endpoints.
-- Event listener streaming worker lifecycle events (`worker_started`, `worker_heartbeat`, `worker_finished`).
+- `AOAdapter` implementation against pinned public REST surfaces (`GET /healthz`, `GET /readyz`, `GET /api/v1/agents`, `POST /api/v1/projects`, `POST /api/v1/sessions`, `POST /api/v1/sessions/{id}/send`, `/kill`, `/restore`, `GET /api/v1/sessions/{id}`, `GET /api/v1/sessions/{id}/workspace/file`).
+- Normalized lifecycle observation over authoritative session snapshots (`GET /api/v1/sessions/{id}`), observing active, idle, and terminated states.
+- Active/idle/terminated state observation and turn completion mapping per ADR-011.
+- Supervisor orchestration layer integration for `DISPATCHED -> RUNNING` transition via P02 StateStore/domain APIs (no StateStore dependency inside AOAdapter).
+- Raw session workspace artifact read primitive (`GetWorkspaceFile`) for retrieving attempt artifacts without semantic report interpretation or claim creation (strictly reserved for Phase P04).
 - Automated contract tests asserting zero domain pollution from AO DTOs.
+- Zero synthetic worker heartbeat requirement.
 
 ## 3. Exit Gate
-- Automated integration tests successfully spawn an AO worker session, send test instructions, and cleanly terminate.
+- Automated integration tests successfully perform preflight health/readiness, spawn an AO worker session, dispatch instructions, observe active execution and turn-complete idle states, fetch raw workspace artifact, and cleanly terminate without P04 EvidenceCollector dependencies.
