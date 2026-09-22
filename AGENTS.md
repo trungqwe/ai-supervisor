@@ -52,7 +52,7 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-002 IMPLEMENTATION
+# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-002 REVISION 1
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
@@ -60,16 +60,18 @@ This document establishes immutable operational directives for all AI coding age
 > Core directions of `PROPOSAL-P03-001` are **EXTERNAL_APPROVED** by External Supervisor decision.
 > Canonical specifications (`docs/02`, `docs/12`, `docs/14`, `docs/17`, `docs/21`, `docs/22`, `docs/phases/P03_AO_INTEGRATION.md`) have been reconciled under Revision 3 and approved by External Supervisor (`P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED`).
 > Task TASK-P03-001 is **EXTERNAL_AUDIT_APPROVED** (`docs/audits/P03_TASK_001_EXTERNAL_REAUDIT_002.md`, commit `e5d3337772f4243ca0f85b4105430d1aa9329bd3`).
-> The active phase gate is **`EXTERNAL_SUPERVISOR_P03_TASK_002_AUDIT`**.
-> Production coding is **`HELD_FOR_EXTERNAL_AUDIT`** (`TASK_P03_002 = READY_FOR_EXTERNAL_AUDIT`, `TASK_P03_003 = NOT_RELEASED`).
+> External audit of commit `056629ff4d38bbf4caaa94fc860825a2e9991a7c` identified finding `P03T2R1-001` (`ACTIVITY_PROTOCOL_ERROR_STATUS_MISREPORTED`).
+> Revision 1 remediates finding `P03T2R1-001` by making `validateCanonicalActivityState` status-aware and preserving observed HTTP response status (`201` on spawn, `200` on get/restore).
+> The active phase gate is **`EXTERNAL_SUPERVISOR_P03_TASK_002_REAUDIT`**.
+> Production coding is **`HELD_FOR_EXTERNAL_AUDIT`** (`TASK_P03_002 = REVISION_1_READY_FOR_EXTERNAL_REAUDIT`, `TASK_P03_003 = NOT_RELEASED`).
 
-1. **TASK-P03-002 SCOPE & BOUNDARY**:
-   - Scope is strictly confined to implementing the AO session lifecycle and dispatch transport in `internal/ao`.
+1. **TASK-P03-002 REVISION 1 SCOPE & BOUNDARY**:
+   - Scope is strictly confined to fixing finding `P03T2R1-001` (preserving exact observed HTTP status code in activity state protocol errors).
    - Allowed operations:
-     - `CreateWorkerSession(ctx, projectID, harness)` via `POST /api/v1/sessions` (exact HTTP 201, minimal wire contract);
+     - `CreateWorkerSession(ctx, projectID, harness)` via `POST /api/v1/sessions` (exact HTTP 201, minimal wire contract, protocol errors report 201);
      - `DispatchTaskContract(ctx, sessionID, message)` via `POST /api/v1/sessions/{id}/send` (exact HTTP 200, immutable message transmission);
      - `StopWorker(ctx, sessionID)` via `POST /api/v1/sessions/{id}/kill` (exact HTTP 200, honest `freed` outcome reporting);
-     - `ResumeWorker(ctx, sessionID)` via `POST /api/v1/sessions/{id}/restore` (exact HTTP 200, valid `restoreMode` and activity state validation).
+     - `ResumeWorker(ctx, sessionID)` via `POST /api/v1/sessions/{id}/restore` (exact HTTP 200, valid `restoreMode` and activity state validation, protocol errors report 200).
 
 2. **EXPLICITLY FORBIDDEN IN TASK-P03-002**:
    - Absolutely NO session activity polling loop (`TASK-P03-003`);
@@ -90,10 +92,10 @@ This document establishes immutable operational directives for all AI coding age
    - Lifecycle polling and authoritative activity loop implementation remains strictly **HELD** (`TASK_P03_003 = NOT_RELEASED`).
    - Implementation of `TASK-P03-003` becomes authorized only upon formal audit approval and task contract release by External Supervisor.
 
-4. **FINAL TASK-P03-002 GOVERNANCE STATE**:
+4. **FINAL TASK-P03-002 REVISION 1 GOVERNANCE STATE**:
    - `P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED`
    - `TASK_P03_001 = EXTERNAL_AUDIT_APPROVED`
    - `P03_CODE = HELD_FOR_EXTERNAL_AUDIT`
-   - `TASK_P03_002 = READY_FOR_EXTERNAL_AUDIT`
+   - `TASK_P03_002 = REVISION_1_READY_FOR_EXTERNAL_REAUDIT`
    - `TASK_P03_003 = NOT_RELEASED`
-   - `ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_TASK_002_AUDIT`
+   - `ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_TASK_002_REAUDIT`

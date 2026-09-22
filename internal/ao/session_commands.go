@@ -104,7 +104,7 @@ func (c *Client) CreateWorkerSession(ctx context.Context, projectID string, harn
 		}
 	}
 
-	state, err := validateCanonicalActivityState(resp.Session.Activity.State, http.MethodPost, path)
+	state, err := validateCanonicalActivityState(resp.Session.Activity.State, http.StatusCreated, http.MethodPost, path)
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +296,7 @@ func (c *Client) ResumeWorker(ctx context.Context, sessionID string) (*ResumeWor
 		}
 	}
 
-	state, err := validateCanonicalActivityState(resp.Session.Activity.State, http.MethodPost, path)
+	state, err := validateCanonicalActivityState(resp.Session.Activity.State, http.StatusOK, http.MethodPost, path)
 	if err != nil {
 		return nil, err
 	}

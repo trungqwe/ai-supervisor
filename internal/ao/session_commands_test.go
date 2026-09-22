@@ -208,6 +208,37 @@ func TestClient_CreateWorkerSession(t *testing.T) {
 				}
 			})
 		}
+
+		t.Run("spawn_unknown_activity_reports_status_201", func(t *testing.T) {
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusCreated)
+				w.Write([]byte(`{"session":{"id":"s1","projectId":"p1","kind":"worker","harness":"agy","activity":{"state":"unsupported"}},"promptBytes":0,"systemPromptBytes":0}`))
+			}))
+			defer s.Close()
+
+			c, _ := newTestClient(t, s)
+			_, err := c.CreateWorkerSession(context.Background(), "p1", "agy")
+			if err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !errors.Is(err, ErrProtocolViolation) {
+				t.Fatalf("expected errors.Is(err, ErrProtocolViolation), got %v", err)
+			}
+			var protoErr *ProtocolError
+			if !errors.As(err, &protoErr) {
+				t.Fatalf("expected *ProtocolError, got %T (%v)", err, err)
+			}
+			if protoErr.StatusCode != http.StatusCreated {
+				t.Errorf("expected StatusCode %d (HTTP 201), got %d", http.StatusCreated, protoErr.StatusCode)
+			}
+			if protoErr.Method != http.MethodPost {
+				t.Errorf("expected Method %s, got %s", http.MethodPost, protoErr.Method)
+			}
+			if protoErr.Path != "/api/v1/sessions" {
+				t.Errorf("expected Path %s, got %s", "/api/v1/sessions", protoErr.Path)
+			}
+		})
 	})
 }
 
@@ -683,5 +714,36 @@ func TestClient_ResumeWorker(t *testing.T) {
 				}
 			})
 		}
+
+		t.Run("restore_unknown_activity_reports_status_200", func(t *testing.T) {
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(`{"ok":true,"sessionId":"s1","restoreMode":"native","session":{"id":"s1","activity":{"state":"hibernating"}}}`))
+			}))
+			defer s.Close()
+
+			c, _ := newTestClient(t, s)
+			_, err := c.ResumeWorker(context.Background(), "s1")
+			if err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !errors.Is(err, ErrProtocolViolation) {
+				t.Fatalf("expected errors.Is(err, ErrProtocolViolation), got %v", err)
+			}
+			var protoErr *ProtocolError
+			if !errors.As(err, &protoErr) {
+				t.Fatalf("expected *ProtocolError, got %T (%v)", err, err)
+			}
+			if protoErr.StatusCode != http.StatusOK {
+				t.Errorf("expected StatusCode %d (HTTP 200), got %d", http.StatusOK, protoErr.StatusCode)
+			}
+			if protoErr.Method != http.MethodPost {
+				t.Errorf("expected Method %s, got %s", http.MethodPost, protoErr.Method)
+			}
+			if protoErr.Path != "/api/v1/sessions/s1/restore" {
+				t.Errorf("expected Path %s, got %s", "/api/v1/sessions/s1/restore", protoErr.Path)
+			}
+		})
 	})
 }

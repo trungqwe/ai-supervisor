@@ -1049,6 +1049,19 @@ func TestClient_Sessions_ReadModelAndActivityValidation(t *testing.T) {
 	if !errors.Is(err, ErrProtocolViolation) {
 		t.Errorf("expected ErrProtocolViolation on unknown activity state, got %v", err)
 	}
+	var getProtoErr *ProtocolError
+	if !errors.As(err, &getProtoErr) {
+		t.Fatalf("expected *ProtocolError for GetWorkerStatus unknown activity, got %T (%v)", err, err)
+	}
+	if getProtoErr.StatusCode != http.StatusOK {
+		t.Errorf("expected StatusCode %d for GetWorkerStatus unknown activity, got %d", http.StatusOK, getProtoErr.StatusCode)
+	}
+	if getProtoErr.Method != http.MethodGet {
+		t.Errorf("expected Method %s, got %s", http.MethodGet, getProtoErr.Method)
+	}
+	if getProtoErr.Path != "/api/v1/sessions/sess-unknown-state" {
+		t.Errorf("expected Path %s, got %s", "/api/v1/sessions/sess-unknown-state", getProtoErr.Path)
+	}
 
 	// Mismatched session ID fails closed
 	_, err = c.GetWorkerStatus(context.Background(), "sess-mismatch")

@@ -9,7 +9,8 @@ import (
 )
 
 // validateCanonicalActivityState validates raw state string fail-closed against canonical specification.
-func validateCanonicalActivityState(rawState string, method string, path string) (ActivityState, error) {
+// statusCode preserves the actual HTTP response status observed on the wire.
+func validateCanonicalActivityState(rawState string, statusCode int, method string, path string) (ActivityState, error) {
 	switch rawState {
 	case string(ActivityStateActive):
 		return ActivityStateActive, nil
@@ -23,7 +24,7 @@ func validateCanonicalActivityState(rawState string, method string, path string)
 		return ActivityStateExited, nil
 	default:
 		return "", &ProtocolError{
-			StatusCode: http.StatusOK,
+			StatusCode: statusCode,
 			Method:     method,
 			Path:       path,
 			Reason:     fmt.Sprintf("unknown activity state %q (must be active, idle, waiting_input, blocked, or exited)", rawState),
@@ -73,7 +74,7 @@ func (c *Client) GetWorkerStatus(ctx context.Context, sessionID string) (*Worker
 		}
 	}
 
-	state, err := validateCanonicalActivityState(wire.Session.Activity.State, http.MethodGet, path)
+	state, err := validateCanonicalActivityState(wire.Session.Activity.State, http.StatusOK, http.MethodGet, path)
 	if err != nil {
 		return nil, err
 	}
