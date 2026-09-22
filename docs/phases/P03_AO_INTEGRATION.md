@@ -6,10 +6,15 @@ Implement `AOAdapter` to connect the Supervisor Control Plane to the Untrivial A
 ## 2. Deliverables
 - `AOAdapter` implementation against pinned public REST surfaces:
   - **Preflight Probes & API Surface**: `GET /healthz` (liveness), `GET /readyz` (readiness), `GET /api/v1/agents` (harness inventory), `GET /api/v1/agents/readiness` (harness readiness), `GET /api/v1/openapi.yaml` (API schema compatibility signal; does not prove daemon release version).
-  - **Project & Session Lifecycle**: `POST /api/v1/projects`, `POST /api/v1/sessions`, `POST /api/v1/sessions/{id}/send`, `POST /api/v1/sessions/{id}/kill`, `POST /api/v1/sessions/{id}/restore`, `GET /api/v1/sessions/{id}`.
+  - **Project & Session Lifecycle**: `POST /api/v1/projects`, `POST /api/v1/sessions`, `POST /api/v1/sessions/{id}/send`, `POST /api/v1/sessions/{id}/kill` (session identity only wire request), `POST /api/v1/sessions/{id}/restore` (verified pinned wire route restoring terminated session; `operationId: restoreSession`), `GET /api/v1/sessions/{id}`.
   - **Raw Workspace Transport**: `GET /api/v1/sessions/{id}/workspace/file?path={relPath}`.
-- Normalized lifecycle observation over authoritative session snapshots (`GET /api/v1/sessions/{id}`), observing active, idle, and terminated states.
-- Active/idle/terminated state observation and turn completion mapping per ADR-011.
+- Decoupled worker session lifecycle primitives: Pair provisioning separated from Task dispatch, supporting reuse across tasks via `CREATE_NEW_WORKER_SESSION_ALLOWED_IFF`.
+- Strict pre-send status whitelist validation (`AOWorkerStatus.status IN ('idle', 'waiting_input')`) prior to issuing `POST /api/v1/sessions/{id}/send`.
+- Durable 3-stage dispatch saga integration (`DISPATCH_BOUND` -> `SEND_REQUESTED` -> `SEND_CONFIRMED`) with fail-closed quarantine containment on unknown delivery.
+- Purpose-aware stop operations (`purpose IN ('RUNNING_ATTEMPT_STOP', 'QUARANTINE_CLEANUP', 'PAIR_MAINTENANCE')`) with restart-stable `confirmation_deadline_at` tracking and generation prechecks.
+- Double-gated quarantine integration (`Pair Lane Gate` and `Task Attempt Gate`) with Class A/B/C clearance playbooks.
+- Normalized lifecycle observation over authoritative session snapshots (`GET /api/v1/sessions/{id}`), observing active, idle, waiting_input, blocked, and exited states.
+- Active/idle/terminated state observation and turn completion mapping per ADR-011 and ADR-016.
 - Supervisor orchestration layer integration for `DISPATCHED -> RUNNING` transition via P02 StateStore/domain APIs (no StateStore dependency inside AOAdapter).
 - Raw session workspace artifact read primitive (`GetWorkspaceFile`) for retrieving attempt artifacts without semantic report interpretation or claim creation (strictly reserved for Phase P04 EvidenceCollector).
 - Automated contract tests asserting zero domain pollution from AO DTOs.
@@ -17,4 +22,4 @@ Implement `AOAdapter` to connect the Supervisor Control Plane to the Untrivial A
 - Zero active CDC/SSE event subscription deliverable (stream integration deferred as optional future optimization; baseline observation uses authoritative GET session snapshot polling).
 
 ## 3. Exit Gate
-- Automated integration tests successfully perform preflight health/readiness/agent probes, spawn an AO worker session, dispatch instructions, observe active execution and turn-complete idle states, fetch raw workspace artifact, and cleanly terminate without P04 EvidenceCollector dependencies.
+- Automated integration tests successfully perform preflight health/readiness/agent probes, decoupled session provisioning, durable 3-stage dispatch saga, observation reconciliation across active/idle/waiting_input/blocked states, raw workspace artifact fetch, and purpose-aware termination/quarantine enforcement without P04 EvidenceCollector dependencies.

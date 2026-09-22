@@ -10,9 +10,9 @@
 | Scenario ID | Failure Scenario | Impact | Recovery Owner | Playbook / Action |
 |---|---|---|---|---|
 | **REC-001** | Supervisor Daemon Restart | Active pair binding disconnected; memory state lost. | Supervisor Core | Reload state from local State Store; reconnect to existing Pair via `session_token`. |
-| **REC-002** | AO Daemon Crash | Worker execution interrupted; ConPTY pipes closed. | AOAdapter | Attempt auto-reconnect to AO daemon; query session state; restore session if supported. |
+| **REC-002** | AO Daemon Crash | Worker execution interrupted; ConPTY pipes closed. | AOAdapter | Attempt auto-reconnect to AO daemon; query session state via `GetWorkerStatus`; restore session if supported via verified pinned wire route `POST /api/v1/sessions/{sessionId}/restore` (`ResumeWorker`). If session restoration fails or is unrecoverable, enforce double-gated quarantine containment (`worker_sessions.quarantine_state = 'QUARANTINED'` and `task_attempts.quarantine_state = 'QUARANTINED'`). |
 | **REC-003** | Antigravity CLI Crash | Process exits with non-zero code before report generation. | Supervisor Core | Mark attempt `FAILED` (`failure_reason = PROCESS_CRASH`); query Git for partial changes; decide whether to retry or escalate to `HUMAN_REQUIRED`. |
-| **REC-004** | Worker Execution Timeout | Worker runs longer than configured bounded execution timeout policy. | Supervisor Core | Issue `stopWorker` to AO; capture partial logs; mark attempt `FAILED` (`failure_reason = TIMEOUT`). |
+| **REC-004** | Worker Execution Timeout | Worker runs longer than configured bounded execution timeout policy. | Supervisor Core | Allocate `stop_operations` row (`purpose = 'RUNNING_ATTEMPT_STOP'`); capture target generation for Supervisor-side precheck; persist restart-stable `confirmation_deadline_at`; issue `stopWorker` (`POST /api/v1/sessions/{sessionId}/kill` carrying session identity only). If confirmed stopped within deadline under `WORKER_STOPPED_ALLOWED_IFF`, record `recovery_disposition = 'WORKER_STOPPED'` and transition `RUNNING -> FAILED` (`failure_reason = TIMEOUT` in audit log). If stop call or confirmation times out, fail closed to `STOP_CONFIRMATION_TIMEOUT`, retain quarantine, and enforce `STOP_REISSUE_REQUIRES_HUMAN`. |
 | **REC-005** | Dirty Worktree Detected | Worktree contains uncommitted files or unsafe working tree state before or during dispatch. | Supervisor Core | Fail closed with zero mutating Git commands. **Case A (Pre-PrepareDispatch)**: reject dispatch; Task remains `READY`; zero `TaskAttempt` allocated; emit audit evidence `WORKTREE_DIRTY`; escalate for human/upstream resolution. **Case B (Post-PrepareDispatch)**: transition `DISPATCHED -> FAILED` with failure rationale in audit log; no attempt schema mutation. |
 | **REC-006** | Git Merge Conflict | Worker changes conflict with target main branch. | Supervisor Core | Mark task `BLOCKED` (`blocker_reason = MERGE_CONFLICT`); escalate to `HUMAN_REQUIRED` per canonical workflow. |
 | **REC-007** | Worker Report Absent | Worker terminates with exit code 0 but creates no report file within bounded fetch window. | Supervisor Core | Mark attempt `FAILED` (`failure_reason = REPORT_MISSING`). Diagnostic Git evidence may be collected for triage, but no promotion to `REPORT_READY`, `EVIDENCE_READY`, or `REVIEWING` occurs. |
@@ -22,7 +22,7 @@
 | **REC-011** | Stale Pair Mismatch | ChatGPT attempts tool call with expired or mismatched token. | Supervisor Core | Reject request with `PAIR_MISMATCH_ERROR`; require re-binding via `bind_project`. |
 | **REC-012** | Project Directory Missing | Local repository directory moved or deleted. | Supervisor Core | Mark project `UNAVAILABLE`; freeze Pair state; alert User. |
 | **REC-013** | Upstream Incompatibility | Upstream AO changes API format unexpectedly. | AOAdapter | Halt dispatch; mark `UPSTREAM_INCOMPATIBLE`; prompt developer to run compatibility audit. |
-| **REC-014** | Unexpected Machine Restart | Host OS reboots during execution. | Supervisor Startup | On startup, scan State Store for tasks in `DISPATCHED`/`RUNNING`; verify AO worktrees; resume or mark `FAILED`. |
+| **REC-014** | Unexpected Machine Restart | Host OS reboots during execution. | Supervisor Startup | On startup, execute synchronous recovery scanner across provisioning (`PROVISION_REQUESTED -> PROVISION_FAILED`), dispatch (`SEND_REQUESTED` fail-closed quarantine), in-flight stops (`STOP_REQUESTED`/`STOP_CALL_SUCCEEDED` with restart-stable deadline evaluation and `STOP_REISSUE_REQUIRES_HUMAN`), and open blocked attempts (`# BLOCKED_WITH_OPEN_CURRENT_ATTEMPT MANDATORY_ESCALATION_RECOVERY` to `HUMAN_REQUIRED` with `AO_BLOCKED_ESCALATED`). See §1.2. |
 | **REC-015** | Power Loss During Write | Local State Store file write interrupted. | State Store Engine | Selected State Store must provide crash-safe durable persistence and recovery semantics satisfying NFR-003. Concrete engine mechanism is decided by Q4 ADR. |
 
 ### 1.1 REC-005 Worktree Recovery Timing & State Model Invariants
@@ -30,7 +30,7 @@
 The Supervisor maintains strict zero-mutation isolation over target Git worktrees and adheres to the canonical P02 StateStore/domain model:
 
 1. **P02 Domain Ground Truth**:
-   - `TaskAttempt` contains identity, contract, report path, timestamps, and raw report (`attempt_id`, `attempt_number`, `task_id`, `contract_id`, `expected_report_path`, `started_at`, `ended_at`, `worker_report_raw`). It possesses **no** `state` field and **no** `failure_reason` column in persistence.
+   - `TaskAttempt` contains identity, contract, report path, timestamps, raw report, and ADR-016 execution additions (`attempt_id`, `attempt_number`, `task_id`, `contract_id`, `expected_report_path`, `started_at`, `ended_at`, `worker_report_raw`, `session_id`, `terminal_generation`, `recovery_disposition`, `quarantine_state`). It possesses **no** `state` field and **no** `failure_reason` column in persistence.
    - Canonical `StateMachine` forbids transitions `READY -> BLOCKED` or `READY -> FAILED`. `READY` allows only `READY -> DISPATCHED` (via atomic `PrepareDispatch`) or `READY -> CANCELLED`.
    - Atomic `PrepareDispatch` simultaneously commits `READY -> DISPATCHED` and allocates the persistent `TaskAttempt`.
 
@@ -47,3 +47,100 @@ The Supervisor maintains strict zero-mutation isolation over target Git worktree
    - **State Invariant**: Task transitions to `FAILED`. Zero schema mutation: no `failure_reason` column is added to `TaskAttempt`.
    - **Audit Record**: Record failure cause `WORKTREE_DIRTY` within the append-only `AuditLogger` event payload.
    - **Resolution**: Escalate to human or failure recovery handler. Zero `git stash`, `git clean`, `git checkout`, or `git reset` is executed by the Supervisor.
+
+---
+
+### 1.2 Double-Gated Quarantine Clearance Rules & Startup Recovery Architecture
+
+#### 1.2.1 Independent Double-Gated Quarantine Enforcement (ADR-016 §12)
+
+The Control Plane enforces two independent safety gates across execution and allocation lanes:
+1. **Pair Lane Gate (`worker_sessions.quarantine_state`)**:
+   - Values: `CLEAN`, `QUARANTINED` (default `CLEAN`).
+   - Guard: When `QUARANTINED`, locks the entire Pair lane against new task or attempt allocation.
+2. **Task Attempt Gate (`task_attempts.quarantine_state`)**:
+   - Values: `CLEAN`, `QUARANTINED` (default `CLEAN`).
+   - Guard: When `QUARANTINED`, prevents retry of that specific task (`FAILED -> READY` is blocked).
+3. **Dispatch & Retry Guard**:
+   - `PrepareDispatch` evaluates both gates prior to execution:
+     - Target `worker_sessions.quarantine_state == 'CLEAN'`; AND
+     - All prior attempts for the target task have `task_attempts.quarantine_state == 'CLEAN'`; AND
+     - Target Pair has zero unresolved provisioning rows: `SELECT COUNT(*) FROM pair_provisioning_operations WHERE pair_id = ? AND stage IN ('PROVISION_REQUESTED', 'PROVISION_FAILED') == 0`.
+   - If any condition fails, dispatch is rejected immediately with `ErrQuarantinedExecution`.
+4. **Separation of Safety State from Diagnostic Disposition**:
+   - `task_attempts.recovery_disposition` records machine-readable diagnostic outcomes (e.g., `UNCERTAIN_DELIVERY_CRASH`, `STOP_TARGET_ABSENT`, `STOP_CONFIRMATION_TIMEOUT`).
+   - `task_attempts.quarantine_state` is the immutable safety lock. Diagnostic observations update `recovery_disposition` but MUST NOT clear `quarantine_state`.
+
+#### 1.2.2 Quarantine Clearance Classes (ADR-016 §6, §12)
+
+Quarantine may be cleared ONLY in a single atomic SQLite transaction verifying the exact lineage tuple `(attempt_id, session_id, terminal_generation)` under one of three governed resolution classes:
+
+1. **Class A (`PHYSICAL_EXECUTION_RESOLUTION`)**:
+   - **Preconditions**: Physical termination of the matching generation is durably confirmed under `WORKER_STOPPED_ALLOWED_IFF`:
+     1. `stop_operations.purpose == 'RUNNING_ATTEMPT_STOP'`;
+     2. Positive kill call acceptance proven (`stage == 'STOP_CALL_SUCCEEDED'`);
+     3. Observed `session_id` matches `stop_operations.session_id`;
+     4. Observed `terminal_generation` matches `stop_operations.terminal_generation` (string equality);
+     5. Upstream returns `isTerminated == true`;
+     6. Observation occurs within restart-stable temporal window `now < confirmation_deadline_at`.
+   - **Resolution Action**: Sets `task_attempts.quarantine_state = 'CLEAN'`; if authorized, sets `worker_sessions.quarantine_state = 'CLEAN'`; sets `task_attempts.recovery_disposition = 'WORKER_STOPPED'`; emits audit event `QUARANTINE_RESOLVED_PHYSICAL`.
+   - **Constraint**: Clean-worktree inspection is NOT a condition for physical execution clearance.
+
+2. **Class B (`ADMINISTRATIVE_RISK_RESOLUTION` / HTTP 404 Session Absence)**:
+   - **Preconditions**: Upstream returns HTTP 404 (Not Found) during status observation.
+   - **Governance Truth**: HTTP 404 proves public session absence, NOT physical process termination (`SESSION_ABSENCE_IS_NOT_PHYSICAL_TERMINATION`). Session absence alone or session replacement NEVER clears quarantine.
+   - **Resolution Action**: Both quarantine gates remain ACTIVE until an authorized operator explicitly executes administrative risk resolution, recording absence evidence, risk acknowledgement, and setting `task_attempts.recovery_disposition = 'QUARANTINE_RESOLVED_ADMINISTRATIVE'`. Emits audit event `QUARANTINE_RESOLVED_ADMINISTRATIVE`.
+
+3. **Class C (`ADMINISTRATIVE_RISK_RESOLUTION` / Human Risk Acceptance)**:
+   - **Preconditions**: Target worker execution cannot be contacted, verified, or proven stopped (e.g. persistent transport partition, daemon crash).
+   - **Resolution Action**: An authorized human operator explicitly accepts residual duplicate-execution risk. Persists `stop_operations.resolution_state = 'ADMINISTRATIVE_RISK_ACCEPTED'`; sets `task_attempts.quarantine_state = 'CLEAN'`; sets `worker_sessions.quarantine_state = 'CLEAN'`; records `recovery_disposition = 'QUARANTINE_RESOLVED_ADMINISTRATIVE'`; emits audit event `QUARANTINE_RESOLVED_ADMINISTRATIVE`.
+   - **Constraint**: This is administrative risk assumption, NOT physical termination. It is strictly PROHIBITED to record `WORKER_STOPPED` or `TERMINATION_CONFIRMED`.
+
+#### 1.2.3 Synchronous Startup Recovery Sweep (ADR-016 §19)
+
+Upon Supervisor daemon restart, prior to accepting incoming client API requests, the daemon executes a deterministic 5-step synchronous recovery scanner:
+
+1. **Step 1: Pair Provisioning Operations Sweep**:
+   - Query all rows with `pair_provisioning_operations.stage = 'PROVISION_REQUESTED'`.
+   - Transition each row to `stage = 'PROVISION_FAILED'`, `resolution_state = 'FAILED'`.
+   - Lock affected Pair lanes against automatic dispatch (`PROVISION_CONFIRMED` rows are NOT scanned as unresolved).
+2. **Step 2: Dispatch Operations Sweep (Unknown Delivery Containment)**:
+   - Query all rows with `dispatch_operations.stage = 'SEND_REQUESTED'`.
+   - Apply D5 unknown delivery fail-closed handling:
+     - Transition task `DISPATCHED -> FAILED` (reason: `UNCERTAIN_DELIVERY_CRASH`);
+     - Set `task_attempts.recovery_disposition = 'UNCERTAIN_DELIVERY_CRASH'`;
+     - Set `task_attempts.quarantine_state = 'QUARANTINED'`;
+     - Set `worker_sessions.quarantine_state = 'QUARANTINED'`;
+     - Emit audit event `UNCERTAIN_DELIVERY_QUARANTINE_IMPOSED`.
+   - `SEND_CONFIRMED` rows are accepted writes; they are reconciled against authoritative upstream status rather than unknown delivery.
+3. **Step 3: In-Flight Stop Operations Sweep**:
+   - Query all rows where `stop_operations.resolution_state = 'IN_FLIGHT'` and `stage IN ('STOP_REQUESTED', 'STOP_CALL_SUCCEEDED')`.
+   - For `STOP_REQUESTED`:
+     - If alive with matching generation: automatic `/kill` reissue is strictly PROHIBITED (`PINNED_KILL_GENERATION_ATOMIC_FENCE = ABSENT`). Record `resolution_state = 'STOP_REISSUE_REQUIRES_HUMAN'`. Retain active quarantine; require human intervention (`STOP_REISSUE_REQUIRES_HUMAN`).
+     - If `isTerminated == true`: kill call was never confirmed transmitted/accepted. Retain `stage = 'STOP_REQUESTED'`, set `resolution_state = 'STOP_EFFECT_UNPROVEN_TARGET_ALREADY_TERMINATED'`. If `purpose == 'RUNNING_ATTEMPT_STOP'` and task is `RUNNING`: transition task `RUNNING -> FAILED` (reason: `WORKER_TERMINATION_UNKNOWN`). Retain quarantine; do NOT record `WORKER_STOPPED`.
+     - If generation mismatch: retain `stage = 'STOP_REQUESTED'`, set `resolution_state = 'STOP_GENERATION_MISMATCH'`. Transition `RUNNING -> FAILED` (disposition: `STOP_GENERATION_MISMATCH`).
+     - If HTTP 404: set `stage = 'STOP_TARGET_ABSENT'`, `resolution_state = 'STOP_TARGET_ABSENT'`. Transition `RUNNING -> FAILED` (reason: `SESSION_ABSENT`).
+   - For `STOP_CALL_SUCCEEDED`:
+     - Kill signal was already accepted upstream. Reissuing `/kill` is redundant and prohibited.
+     - Evaluate observed status against restart-stable `confirmation_deadline_at`:
+       1. *HTTP 404*: `stage = 'STOP_TARGET_ABSENT'`, `resolution_state = 'STOP_TARGET_ABSENT'`, transition `RUNNING -> FAILED` (`SESSION_ABSENT`), quarantine remains active.
+       2. *Generation Mismatch*: `resolution_state = 'STOP_GENERATION_MISMATCH'`, transition `RUNNING -> FAILED` (`STOP_GENERATION_MISMATCH`), quarantine remains active.
+       3. *Matching Generation and `isTerminated == true`*:
+          - If observed before deadline (`now < confirmation_deadline_at`): all 6 conditions of `WORKER_STOPPED_ALLOWED_IFF` met. Set `stage = 'STOP_TERMINATION_CONFIRMED'`, `resolution_state = 'TERMINATION_CONFIRMED'`. If `purpose == 'RUNNING_ATTEMPT_STOP'` and task is `RUNNING`: `ended_at = now`, record `WORKER_STOPPED`, release attempt quarantine. For cleanup/maintenance: ZERO TaskState transition.
+          - If first observed at or after deadline (`now >= confirmation_deadline_at`): Condition 6 of `WORKER_STOPPED_ALLOWED_IFF` is NOT met. Pinned AO exposes no exit timestamp; the control plane cannot speculate whether exit occurred before deadline. Recording `WORKER_STOPPED` is strictly PROHIBITED. Retain `stage = 'STOP_CALL_SUCCEEDED'`, set `resolution_state = 'STOP_CONFIRMATION_TIMEOUT'`. If `purpose == 'RUNNING_ATTEMPT_STOP'` and task is `RUNNING`: transition `RUNNING -> FAILED` (`STOP_CONFIRMATION_TIMEOUT`), quarantine remains active on attempt and Pair.
+       4. *Matching Generation and Alive (`isTerminated == false`)*:
+          - If `now < confirmation_deadline_at`: remain `stage = 'STOP_CALL_SUCCEEDED'`, `resolution_state = 'IN_FLIGHT'`, and continue bounded observation until deadline.
+          - If `now >= confirmation_deadline_at`: retain `stage = 'STOP_CALL_SUCCEEDED'`, set `resolution_state = 'STOP_CONFIRMATION_TIMEOUT'`. Transition `RUNNING -> FAILED` (`STOP_CONFIRMATION_TIMEOUT`), quarantine remains active; do NOT record `WORKER_STOPPED`.
+4. **Step 4: Blocked Attempt Crash Escalation (`# BLOCKED_WITH_OPEN_CURRENT_ATTEMPT MANDATORY_ESCALATION_RECOVERY`)**:
+   - Query all tasks where `tasks.state = 'BLOCKED'` AND the matching current `TaskAttempt` has `ended_at IS NULL`.
+   - Because canonical workflow defines NO `BLOCKED -> RUNNING` edge, an open attempt in `BLOCKED` can never resume execution. Retaining `ended_at = NULL` would permanently orphan the attempt.
+   - For each matching task, the scanner immediately executes `AtomicAttemptClosureTransition` in a single SQLite transaction:
+     1. Atomically update `tasks.state` from `BLOCKED` to `HUMAN_REQUIRED`;
+     2. Set `task_attempts.ended_at = now`;
+     3. Set `task_attempts.recovery_disposition = 'AO_BLOCKED_ESCALATED'`;
+     4. Append audit event `WORKER_BLOCKED_ESCALATED`.
+   - Zero network calls are made (pure control plane deterministic escalation).
+5. **Step 5: In-Flight Task & Pair Lane Reconciliation**:
+   - Probe AO daemon availability exclusively via approved adapter methods: `CheckHealth(ctx)` / `CheckReadiness(ctx)`.
+   - *If AO is Reachable*: Reconcile in-flight tasks via `GetWorkerStatus(ctx, sessionID)` using opaque string generation matching. If active/idle with matching generation, resume standard lifecycle observation. If session absent (404) or terminated, execute atomic failure transition.
+   - *If AO is Unreachable*: Do NOT blindly fail in-flight tasks. Mark tasks with `recovery_disposition = 'RECOVERY_PENDING'`, lock affected Pair lanes, and schedule background reconciliation retries using caller-injected `SUPERVISOR_ACTIVITY_POLL_INTERVAL` as checking cadence. Absolutely zero new operational policies, retry counts, or backoff formulas are invented.

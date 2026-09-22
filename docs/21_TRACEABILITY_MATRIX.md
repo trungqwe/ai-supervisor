@@ -11,7 +11,7 @@
 | **FR-002** (Pair Binding) | `docs/04_ARCHITECTURE.md#sec-1` | ADR-001 | `PairRegistry` | P02 / P05 | Test 1:1 pair constraint in schema (P02); test interactive handshake (P05) | Mieruko |
 | **FR-003** (Context Access) | `docs/04_ARCHITECTURE.md#sec-1` | ADR-007 | `ContextEngine` | P05 | Test read-only indexed outline retrieval tool for ChatGPT | Codencer |
 | **FR-004** (Task Contract) | `docs/08_TASK_CONTRACT.md` | ADR-010, ADR-012, ADR-013 | `TaskContractManager` | P02 | Validate schema, immutability, revision lineage & verification_requests | Symphony |
-| **FR-005** (Worker Dispatch) | `docs/04_ARCHITECTURE.md#sec-2.1` | ADR-002, ADR-012 | `AOAdapter` | P03 | Verify worktree spawn, attempt pre-allocation & task send | Agent Orchestrator |
+| **FR-005** (Worker Dispatch) | `docs/04_ARCHITECTURE.md#sec-2.1` | ADR-002, ADR-012, ADR-016 | `AOAdapter` | P03 | Verify decoupled session provisioning, attempt pre-allocation, durable 3-stage dispatch saga (`DISPATCH_BOUND` -> `SEND_REQUESTED` -> `SEND_CONFIRMED`), & pre-send admissibility whitelist | Agent Orchestrator |
 | **FR-006** (Worker Observation) | `docs/04_ARCHITECTURE.md#sec-2.1` | ADR-002 | `AOAdapter` + Supervisor Core | P03 | Authoritative session/activity observation, turn completion detection, and bounded execution timeout validation (no synthetic heartbeat) | Agent Orchestrator |
 | **FR-007** (Report Ingestion) | `docs/09_WORKER_REPORT.md` | ADR-006, ADR-011, ADR-012 | `EvidenceCollector` | P04 | Attempt-scoped report fetch via AO workspace API & schema validation | AIWorkHub |
 | **FR-008** (Evidence Collection) | `docs/04_ARCHITECTURE.md#sec-2.2` | ADR-006, ADR-011, ADR-012, ADR-013 | `EvidenceCollector` | P04 | Independent git diff & constrained test runner execution bound to TaskAttempt | AIWorkHub |
@@ -37,5 +37,5 @@
 | **SEC-004** (Secret Sanitization) | `docs/07_SECURITY_MODEL.md` | ADR-007 | `AuditLogger` | P02 | Token scrubber regex & credential masking for persisted audit/error data | Proxide |
 | **SEC-005** (Scope Enforcement) | `docs/08_TASK_CONTRACT.md` | ADR-010 | `PolicyEngine` | P04 | Rejection test on forbidden scope | Symphony |
 | **OPS-001** (Single Command) | `docs/17_ROADMAP.md#sec-1` | ADR-001 | Deployment | P06 | CLI startup command verification | Inherent |
-| **OPS-002** (Clean Termination) | `docs/14_FAILURE_RECOVERY.md` | ADR-002 | `SupervisorCore` | P02 / P05 | StateStore/domain close API (P02); process lifecycle & signal handling (P05) | Agent Orchestrator |
+| **OPS-002** (Clean Termination) | `docs/14_FAILURE_RECOVERY.md` | ADR-002, ADR-016 | `SupervisorCore` | P02 / P03 / P05 | StateStore/domain close API (P02); purpose-aware stop lifecycle, restart-stable deadline evaluation, double-gated quarantine cleanup & process signal handling (P03/P05) | Agent Orchestrator |
 | **OPS-003** (Self-Contained Store) | `docs/05_DOMAIN_MODEL.md` | ADR-007, ADR-015 | `StateStore` | P02 | Zero cloud database dependency; SQLite WAL + synchronous=FULL durability | AIWorkHub |

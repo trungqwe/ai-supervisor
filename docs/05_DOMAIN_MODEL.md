@@ -40,6 +40,55 @@ classDiagram
         +string worktree_path
         +string worker_agent_id
         +WorkerStatus status
+        +string terminal_generation
+        +QuarantineState quarantine_state
+        +datetime created_at
+        +datetime updated_at
+    }
+
+    class PairProvisioningOperation {
+        +string operation_id
+        +string pair_id
+        +PairProvisioningStage stage
+        +string client_token
+        +string session_id
+        +datetime requested_at
+        +datetime completed_at
+        +datetime resolved_at
+        +string resolved_by
+        +string resolution_notes
+    }
+
+    class DispatchOperation {
+        +string operation_id
+        +string attempt_id
+        +string pair_id
+        +string task_id
+        +string session_id
+        +string terminal_generation
+        +DispatchStage stage
+        +datetime requested_at
+        +datetime confirmed_at
+        +string resolution_state
+    }
+
+    class StopOperation {
+        +string operation_id
+        +StopPurpose purpose
+        +string pair_id
+        +string task_id
+        +string contract_id
+        +string attempt_id
+        +string session_id
+        +string terminal_generation
+        +StopStage stage
+        +string actor
+        +datetime requested_at
+        +datetime call_completed_at
+        +datetime confirmation_deadline_at
+        +datetime termination_confirmed_at
+        +datetime resolved_at
+        +StopResolutionState resolution_state
     }
 
     class Task {
@@ -69,6 +118,10 @@ classDiagram
         +int attempt_number
         +string task_id
         +string contract_id
+        +string session_id
+        +string terminal_generation
+        +string recovery_disposition
+        +QuarantineState quarantine_state
         +string expected_report_path
         +datetime started_at
         +datetime ended_at
@@ -136,10 +189,14 @@ classDiagram
     Project "1" *-- "1..*" Pair
     Pair "1" o-- "1" SupervisorBinding
     Pair "1" o-- "1" WorkerSession
+    Pair "1" *-- "0..*" PairProvisioningOperation
+    Pair "1" *-- "0..*" StopOperation
     Pair "1" *-- "1..*" Task
     Task "1" *-- "1..*" TaskContract
     Task "1" *-- "1..*" TaskAttempt
     TaskAttempt "1" --> "1" TaskContract
+    TaskAttempt "1" o-- "1" DispatchOperation
+    TaskAttempt "1" o-- "0..*" StopOperation
     TaskAttempt "1" o-- "1" WorkerClaim
     TaskAttempt "1" o-- "1" Evidence
     TaskAttempt "1" o-- "0..1" ReviewBundle
@@ -154,27 +211,74 @@ classDiagram
 1. **Project**:
    - Represents a registered codebase workspace.
    - *Invariant*: `root_path` must exist locally and contain a valid Git repository.
-2. **Pair**:
-   - Represents the active engineering collaboration lane between a Supervisor and Worker.
-   - *Invariant*: Exactly one task may be in `DISPATCHED`, `RUNNING`, or `REVIEWING` state per Pair at any time.
-3. **Task, TaskContract & TaskAttempt**:
+
+2. **Pair & WorkerSession**:
+   - `Pair` represents the active engineering collaboration lane between a Supervisor and Worker.
+   - `WorkerSession` represents the current physical worker session bound to the Pair.
+     - Preserves canonical domain relationship `Pair "1" o-- "1" WorkerSession` with bidirectional uniqueness (`pair_id PRIMARY KEY`, `session_id UNIQUE`).
+     - Attributes: `pair_id`, `session_id`, `runtime_type`, `worktree_path` (nullable string: `worktree_path TEXT NULL`, reflecting pinned AO v0.13.0 public API absence), `worker_agent_id`, `status` (`ACTIVE`, `IDLE`, `TERMINATED`), `terminal_generation` (opaque string generation identifier), `quarantine_state` (`CLEAN`, `QUARANTINED`, default `'CLEAN'`), `created_at`, `updated_at`.
+   - *Invariants*:
+     - Exactly one task may be in `DISPATCHED`, `RUNNING`, or `REVIEWING` state per Pair at any time.
+     - Runtime lifecycle `status` (`ACTIVE` / `IDLE` / `TERMINATED`) is strictly separated from safety gate `quarantine_state` (`CLEAN` / `QUARANTINED`). A terminated session may be quarantined or clean.
+     - `CREATE_NEW_WORKER_SESSION_ALLOWED_IFF`: Creating a new worker session is permitted IF AND ONLY IF:
+       1. Zero existing `worker_sessions` rows exist for the Pair; OR
+       2. Existing Pair `worker_sessions.status == 'TERMINATED'` AND `quarantine_state == 'CLEAN'`; AND
+       3. No active `pair_provisioning_operations` row exists in `stage IN ('PROVISION_REQUESTED', 'PROVISION_FAILED')`; AND
+       4. No open `task_attempts` row exists with `quarantine_state == 'QUARANTINED'` for the Pair.
+
+3. **Durable Saga Operations (ADR-016 §27)**:
+   - **`PairProvisioningOperation` (`pair_provisioning_operations`)**:
+     - Tracks durable Pair-scoped sandbox provisioning across external side effects, providing crash consistency and unowned session containment.
+     - Schema: `operation_id TEXT PRIMARY KEY`, `pair_id TEXT NOT NULL REFERENCES pairs(pair_id)`, `stage TEXT NOT NULL CHECK (stage IN ('PROVISION_REQUESTED', 'PROVISION_CONFIRMED', 'PROVISION_FAILED', 'PROVISION_RESOLVED'))`, `client_token TEXT NOT NULL`, `session_id TEXT`, `requested_at TEXT NOT NULL`, `completed_at TEXT`, `resolved_at TEXT`, `resolved_by TEXT`, `resolution_notes TEXT`.
+     - Partial Unique Index: `idx_pair_provisioning_unresolved ON pair_provisioning_operations(pair_id) WHERE stage IN ('PROVISION_REQUESTED', 'PROVISION_FAILED')`.
+     - Resolution states: `IN_FLIGHT`, `PROVISION_SUCCEEDED`, `PROVISION_FAILED_RETRYABLE`, `PROVISION_FAILED_TERMINAL`, `PROVISION_SUPERSEDED`, `PROVISION_MANUALLY_RESOLVED`.
+   - **`DispatchOperation` (`dispatch_operations`)**:
+     - Tracks the 3-stage dispatch saga and guarantees 1:1 attempt cardinality (`# ONE_TASK_ATTEMPT = ONE_DISPATCH_OPERATION`).
+     - Schema: `operation_id TEXT PRIMARY KEY`, `attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id)`, `pair_id TEXT NOT NULL REFERENCES pairs(pair_id)`, `task_id TEXT NOT NULL REFERENCES tasks(task_id)`, `session_id TEXT NOT NULL`, `terminal_generation TEXT NOT NULL`, `stage TEXT NOT NULL CHECK (stage IN ('DISPATCH_BOUND', 'SEND_REQUESTED', 'SEND_CONFIRMED'))`, `requested_at TEXT NOT NULL`, `confirmed_at TEXT`, `resolution_state TEXT`.
+     - Resolution states: `IN_FLIGHT`, `DISPATCH_CONFIRMED`, `DISPATCH_FAILED_TERMINAL`, `DISPATCH_RECOVERED_RETRYABLE`, `DISPATCH_SUPERSEDED`, `DISPATCH_MANUALLY_RESOLVED`.
+   - **`StopOperation` (`stop_operations`)**:
+     - Tracks purpose-aware stop operations with restart-stable confirmation deadlines and stage provenance, preventing blind re-kill over runtimes lacking an atomic generation fence.
+     - Schema: `operation_id TEXT PRIMARY KEY`, `purpose TEXT NOT NULL CHECK (purpose IN ('RUNNING_ATTEMPT_STOP', 'QUARANTINE_CLEANUP', 'PAIR_MAINTENANCE'))`, `pair_id TEXT NOT NULL REFERENCES pairs(pair_id)`, `task_id TEXT REFERENCES tasks(task_id)`, `contract_id TEXT REFERENCES task_contracts(contract_id)`, `attempt_id TEXT REFERENCES task_attempts(attempt_id)`, `session_id TEXT NOT NULL`, `terminal_generation TEXT NOT NULL`, `stage TEXT NOT NULL CHECK (stage IN ('STOP_REQUESTED', 'STOP_CALL_SUCCEEDED', 'STOP_CALL_FAILED', 'STOP_TERMINATION_CONFIRMED', 'STOP_TARGET_ABSENT'))`, `actor TEXT NOT NULL`, `requested_at TEXT NOT NULL`, `call_completed_at TEXT`, `confirmation_deadline_at TEXT`, `termination_confirmed_at TEXT`, `resolved_at TEXT`, `resolution_state TEXT NOT NULL DEFAULT 'IN_FLIGHT'`.
+     - Resolution states: `IN_FLIGHT`, `TERMINATION_CONFIRMED`, `STOP_TARGET_ABSENT`, `STOP_CONFIRMATION_TIMEOUT`, `STOP_GENERATION_MISMATCH`, `STOP_EFFECT_UNPROVEN_TARGET_ALREADY_TERMINATED`, `STOP_REISSUE_REQUIRES_HUMAN`, `STOP_CALL_FAILED`, `STOP_CALL_OUTCOME_UNKNOWN`, `ADMINISTRATIVE_RISK_ACCEPTED`.
+     - Invariant: `stage` (wire-effect fact) is strictly distinct from `resolution_state` (governed outcome). Resolution tokens are never stored in `stage`.
+
+4. **Task, TaskContract & TaskAttempt (Model A Persistence)**:
    - `Task` manages overall task lifecycle and attempt history across revision cycles.
    - `TaskContract` defines the immutable work specification (`is_immutable == true`).
      - Each `Task` has one or more `TaskContract` revisions (`Task 1 -> 1..* TaskContract`).
      - Every revision has a unique `contract_id`, a monotonically increasing `revision_number` within the task, and an optional `supersedes_contract_id` (ADR-012).
      - Once dispatched, a `TaskContract` revision is permanently immutable. It **never** contains transient execution identities such as `attempt_id`.
-   - `TaskAttempt` represents a single execution, retry, or revision iteration.
+   - `TaskAttempt` represents a single execution, retry, or revision iteration under **Model A Attempt Persistence**:
      - Each `TaskAttempt` binds to exactly one `TaskContract` revision (`contract_id`).
-     - Attributes: `attempt_id` (unique opaque immutable attempt identity), `attempt_number` (monotonically increasing integer within the task), `task_id`, `contract_id`, `expected_report_path`, `started_at`, `ended_at`, `worker_report_raw`.
-   - *Invariants*:
-     - A `TaskAttempt` is allocated before every `READY -> DISPATCHED` transition.
-     - Canonical report path derives deterministically: `.supervisor/reports/<task_id>/<attempt_id>.json`.
-     - `REVISION_REQUIRED -> READY` creates a new `TaskContract` revision (`revision_number + 1`, `supersedes_contract_id`).
-     - `FAILED -> READY` retry without specification changes reuses the same `contract_id` and allocates a new `TaskAttempt` upon dispatch.
-4. **WorkerClaim vs. Evidence**:
+     - Core Attributes: `attempt_id` (unique opaque immutable attempt identity), `attempt_number` (monotonically increasing integer within the task), `task_id`, `contract_id`, `expected_report_path`, `started_at`, `ended_at`, `worker_report_raw`.
+     - Candidate Snapshot Extensions (ADR-016 §27):
+       - `session_id TEXT`: Immutable snapshot of the bound worker session identity for historical auditability.
+       - `terminal_generation TEXT`: Opaque generation string captured upon attempt conclusion.
+       - `recovery_disposition TEXT`: Diagnostic classification of execution outcome (e.g. `UNCERTAIN_DELIVERY_CRASH`, `MISSED_ACTIVE_WINDOW`, `AO_BLOCKED_DECISION`, `AO_BLOCKED_ESCALATED`, `WORKER_STOPPED`).
+       - `quarantine_state TEXT NOT NULL DEFAULT 'CLEAN' CHECK (quarantine_state IN ('CLEAN', 'QUARANTINED'))`: Independent safety gate at attempt scope.
+     - *Invariants*:
+       - `task_attempts` contains zero undeclared columns (rejecting invented columns such as `terminal_error`; full error details reside in `audit_events.details_json`).
+       - Diagnostic `recovery_disposition` is strictly distinct from safety gate `quarantine_state`.
+       - A `TaskAttempt` is allocated before every `READY -> DISPATCHED` transition.
+       - Canonical report path derives deterministically: `.supervisor/reports/<task_id>/<attempt_id>.json`.
+       - `REVISION_REQUIRED -> READY` creates a new `TaskContract` revision (`revision_number + 1`, `supersedes_contract_id`).
+       - `FAILED -> READY` retry without specification changes reuses the same `contract_id` and allocates a new `TaskAttempt` upon dispatch, provided both quarantine gates and provisioning guards are `CLEAN`.
+
+5. **Double-Gated Quarantine Invariant (ADR-016 §12)**:
+   - The Supervisor enforces defense-in-depth through two independent quarantine gates:
+     1. **Pair Lane Gate (`worker_sessions.quarantine_state`)**: Controls whether the physical worker session lane is eligible for task dispatch or new session allocation.
+     2. **Task Attempt Gate (`task_attempts.quarantine_state`)**: Controls whether the specific attempt has resolved its safety boundaries before task retry or completion.
+   - Values for both gates are strictly `CLEAN` / `QUARANTINED`.
+   - Retrying a failed task (`FAILED -> READY`) requires that:
+     - `worker_sessions.quarantine_state == 'CLEAN'`;
+     - All prior attempts for the task have `quarantine_state == 'CLEAN'`;
+     - The Pair has zero rows in `pair_provisioning_operations` with `stage IN ('PROVISION_REQUESTED', 'PROVISION_FAILED')`.
+
+6. **WorkerClaim vs. Evidence**:
    - `WorkerClaim`: Self-reported statements from the worker process, bound strictly to `attempt_id`.
    - `Evidence`: Verified facts collected directly from Git, file trees, and the trusted verification runner by the Supervisor, bound strictly to `attempt_id`.
    - *Invariant*: Evidence cannot be written or modified by the worker.
-5. **ReviewBundle & ReviewDecision**:
+
+7. **ReviewBundle & ReviewDecision**:
    - `ReviewBundle` is attempt-scoped (`attempt_id`) and compiles the immutable contract revision, worker claims, independent Git/test evidence, policy findings, and recommended review focus.
    - `ReviewDecision` is explicitly bound to both `task_id` and `attempt_id`, preventing review decisions from becoming ambiguous across revision cycles.

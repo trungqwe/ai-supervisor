@@ -64,9 +64,13 @@
 - **Forbidden Responsibility**: Does NOT store plaintext secrets or environment passwords.
 
 ### Module: `AOAdapter`
-- **Purpose**: Translates domain operations into Untrivial Agent Orchestrator public REST API calls (`GET /healthz`, `GET /readyz`, `GET /api/v1/agents`, `GET /api/v1/agents/readiness`, `GET /api/v1/openapi.yaml`, `POST /api/v1/projects`, `POST /api/v1/sessions`, `POST /api/v1/sessions/{id}/send`, `/kill`, `/restore`, `GET /api/v1/sessions/{id}`, `GET /api/v1/sessions/{id}/workspace/file`), provides normalized session telemetry/status translation, and provides a session-scoped raw workspace-file read primitive.
+- **Purpose**: Translates domain operations into Untrivial Agent Orchestrator public REST API calls (`GET /healthz`, `GET /readyz`, `GET /api/v1/agents`, `GET /api/v1/agents/readiness`, `GET /api/v1/openapi.yaml`, `POST /api/v1/projects`, `POST /api/v1/sessions`, `POST /api/v1/sessions/{id}/send`, `POST /api/v1/sessions/{id}/kill`, `POST /api/v1/sessions/{id}/restore`, `GET /api/v1/sessions/{id}`, `GET /api/v1/sessions/{id}/workspace/file`), provides normalized session telemetry/status translation, enforces pre-send status whitelist validation (`idle`, `waiting_input` only), and provides a session-scoped raw workspace-file read primitive.
 - **Origin**: AWS CAO provider abstraction (`docs/sources/08_AWS_CAO.md`).
 - **Existing Upstream Capability Checked**: YES (AO provides the public REST API; public API does not guarantee process exit code availability).
+- **Wire Contract Details**:
+  - `POST /api/v1/sessions/{id}/kill`: Wire request carries session identity only. Stop `purpose`, generation precheck, and `confirmation_deadline_at` are Supervisor-owned logic/metadata in `stop_operations`; they are not wire parameters and do not form an atomic generation fence.
+  - `POST /api/v1/sessions/{id}/restore`: Verified pinned wire route (`operationId: restoreSession`) restoring a terminated session (`ResumeWorker`). Distinguish from `POST /api/v1/sessions/{id}/resume-agent` which resumes an exited agent process within an active session without restoring workspace or terminated session.
+  - Pre-send validation: Mandatory check that `AOWorkerStatus.status IN ('idle', 'waiting_input')` before issuing `/send`.
 - **Reason This Module Exists in Our Code**: Decouples Supervisor domain logic from AO internal changes and adapts worker session telemetry.
 - **Why We Own This**: Anti-corruption layer shielding the domain; handles empirical gap resolution identified in P01-C.
 - **Forbidden Responsibility**: Does NOT own or access StateStore or SQLite directly (`AOADAPTER_STATESTORE_DEPENDENCY = FORBIDDEN`, `AOADAPTER_DIRECT_SQL = FORBIDDEN`); does NOT allocate TaskAttempt; does NOT hold Task state transition authority (owned by Supervisor orchestration layer using P02 APIs); does NOT perform WorkerReport semantic interpretation, schema validation, or WorkerClaim creation (strictly P04 EvidenceCollector); does NOT mutate Git worktrees (no `git stash`, `git clean`, checkout, reset); does NOT invoke Antigravity CLI (`agy`) directly; does NOT vendor AO code, couple to AO internal packages, or access AO internal SQLite database.
@@ -110,3 +114,39 @@
 - **Phase**: P02 (Interface & In-Memory Fake) / P04 (Host Configuration Loader)
 - **Provenance**: Proxide / Architecture V2.1
 - **Purpose**: Exposes read-only `VerificationProfilePolicy` metadata to `TaskContractValidator` for semantic verification request validation without exposing executable paths or command construction logic to the core domain.
+
+---
+
+# 3. Store Entities Provenance & Anti-Reinvention Justification (ADR-016)
+
+### Entity: `pair_provisioning_operations`
+- **Purpose**: Durably tracks Pair worker session provisioning intent across crash boundaries (`PROVISION_REQUESTED` -> `PROVISION_CONFIRMED` / `PROVISION_FAILED`). Records unresolved spawn uncertainty for operator-audited handling.
+- **Origin**: Distributed saga pattern & distributed intent logging.
+- **Existing Upstream Capability Checked**: YES (AO provides `POST /api/v1/sessions` but has no concept of Pair lane binding or intent-state durability across crash boundaries; AO does not identify unowned orphan sessions or track provisioning sagas).
+- **Reason This Entity Exists in Our Code**: Prevents orphan session leakage and guarantees that crashes during provisioning leave the Pair lane safely locked rather than ambiguously partially initialized (D3). Unowned orphan sessions are not automatically identified or killed.
+- **Why We Own This**: Core lifecycle safety and Pair lane concurrency management.
+
+### Entity: `dispatch_operations`
+- **Purpose**: Enforces durable 3-stage dispatch saga (`DISPATCH_BOUND` -> `SEND_REQUESTED` -> `SEND_CONFIRMED`) and enforces strict 1:1 cardinality with task execution attempts (`UNIQUE(attempt_id)`).
+- **Origin**: Two-phase commit / transactional outbox dispatch pattern.
+- **Existing Upstream Capability Checked**: YES (AO provides `POST /api/v1/sessions/{id}/send` but provides no delivery-acknowledgement fence or retry idempotency against socket drops; AO accepts prompts on any session without verifying task contracts).
+- **Reason This Entity Exists in Our Code**: Ensures zero instruction loss, prevents duplicate task prompt delivery, and handles transport drop crashes fail-closed (`SEND_REQUESTED` -> `UNCERTAIN_DELIVERY_CRASH` + double-gated quarantine) (D4).
+- **Why We Own This**: Execution integrity and fail-closed crash recovery over external process runtimes.
+
+### Entity: `stop_operations`
+- **Purpose**: Durably tracks purpose-aware worker termination operations (`purpose IN ('RUNNING_ATTEMPT_STOP', 'QUARANTINE_CLEANUP', 'PAIR_MAINTENANCE')`) across stages (`STOP_REQUESTED`, `STOP_CALL_SUCCEEDED`, `STOP_TERMINATION_CONFIRMED`, `STOP_TARGET_ABSENT`) and resolution states, with restart-stable `confirmation_deadline_at`.
+- **Origin**: Purpose-aware distributed cancellation pattern.
+- **Existing Upstream Capability Checked**: YES (AO provides `POST /api/v1/sessions/{id}/kill` taking only session ID, but exposes no purpose tagging, no atomic generation fencing, and no deadline management; AO does not track why a session was stopped or reconcile restart outcomes).
+- **Reason This Entity Exists in Our Code**: Prevents blind re-killing (`STOP_REISSUE_REQUIRES_HUMAN`), guarantees restart-stable temporal bounding under `WORKER_STOPPED_ALLOWED_IFF`, and distinguishes live task abortion from maintenance cleanup (D11).
+- **Why We Own This**: Supervisor owns operational lifecycle semantics and failure attribution.
+
+### Extensions to `task_attempts`
+- **Purpose**: Captures execution identity, recovery disposition, and quarantine safety state without altering the frozen `TaskContract` specification.
+- **Exact Schema Additions**: Exactly four columns per ADR-016 §27: `session_id TEXT`, `terminal_generation TEXT`, `recovery_disposition TEXT`, and `quarantine_state TEXT NOT NULL DEFAULT 'CLEAN' CHECK(quarantine_state IN ('CLEAN', 'QUARANTINED'))`.
+- **Origin**: Distributed execution correlation & containment.
+- **Existing Upstream Capability Checked**: YES (AO returns `terminalGeneration` and `status` in snapshots, but does not track task attempt boundaries or quarantine state).
+- **Reason This Exists in Our Code**: Binds immutable specification to concrete execution attempt; separates diagnostic outcome (`recovery_disposition`) from safety gate (`quarantine_state`) (D1, D6, D12).
+- **Why We Own This**: Core task lifecycle and execution containment.
+
+### Anti-Reinvention Justification Summary
+These persistent store entities do not duplicate any capability provided by Untrivial Agent Orchestrator. AO is an execution daemon exposing a point-in-time REST API for process/session management. AO does NOT provide distributed saga consistency, crash-resilient transactional intent tracking, double-gated quarantine safety locks, purpose-aware cancellation accounting, or task-to-session execution identity binding. The Supervisor Control Plane must own these entities to satisfy NFR-003 (crash safety) and guarantee deterministic governance over external execution runtimes.

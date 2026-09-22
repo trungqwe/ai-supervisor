@@ -1,8 +1,10 @@
 # PLAN-P03-CANONICAL-RECONCILIATION-ADR-016: Canonical Specification Reconciliation Scope Plan
 
 > **Authority**: Formulated pursuant to accepted [ADR-016](file:///d:/TU_CODE/ai-supervisor/docs/adr/ADR-016-durable-dispatch-session-binding-and-lifecycle-reconciliation.md) (EXTERNAL_APPROVED by External Supervisor Re-Audit 006, commit `40d51ffe9af4dab5545f060d5bee2ffd441b6109`), `docs/24_CHANGE_GOVERNANCE.md` (Decision Hierarchy Level 2: Approved ADR takes precedence over Level 3: Canonical Architecture and Level 4: Requirement Specifications), and External Supervisor directive.
-> **Status**: DRAFT PLAN — PENDING USER SCOPE REVIEW
-> **Mode**: PLANNING ONLY (Zero canonical specification mutation, zero task contract creation, zero migration, zero production code in this turn).
+> **Status**: APPROVED PLAN — EXECUTION IN PROGRESS
+> **Approval Authority**: Approved by External Supervisor at commit `906d5969347773bd7cf5bbe273b34fd4f549efce` (with mandatory pinned AO restore route correction)
+> **Active Gate**: `CANONICAL_SPEC_RECONCILIATION_EXECUTION`
+> **Mode**: DOCUMENTATION RECONCILIATION EXECUTION ONLY (Zero production Go code, zero migrations, TASK-P03-003 NOT released).
 > **Date**: 2026-09-23
 
 ---
@@ -14,7 +16,7 @@ To ensure complete auditability and prevent historical confusion, the reconcilia
 | Dimension | Baseline A: Previous Approved Reconciliation | Baseline B: New ADR-016 Reconciliation (This Plan) |
 | :--- | :--- | :--- |
 | **Originating Proposal / ADR** | `PROPOSAL-P03-001` (Core directions approved) | `PROPOSAL-P03-002` Revision 6 -> **ADR-016 Accepted** (Re-Audit 006) |
-| **Audit Status** | `P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED` (Revision 3) | **`CANONICAL_SPEC_RECONCILIATION_PLANNING` (NOT STARTED / PENDING REVIEW)** |
+| **Audit Status** | `P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED` (Revision 3; Historical Baseline A) | **`CANONICAL_SPEC_RECONCILIATION_EXECUTION` (SCOPE APPROVED; ADR-016 RECONCILIATION IN PROGRESS)** |
 | **Reconciled Scope** | Preflight probes (`CheckReadiness`, `ListAgents`, `GetAgentReadiness`, `GetAPIContract`), OpenAPI compatibility signal, CDC event subscription deferral in `docs/02`, `docs/12`, `docs/14`, `docs/17`, `docs/21`, `docs/22`, and `docs/phases/P03_AO_INTEGRATION.md`. | Durable dispatch saga, Pair session provisioning decoupling, Model A attempt snapshot persistence, double-gated quarantine, strict pre-send whitelist, purpose-aware stop lifecycle, synchronous startup recovery sweep, and store entity provenance across `docs/04`, `docs/05`, `docs/06`, `docs/08`, `docs/12`, `docs/14`, `docs/22`, and affected references in `docs/21` and `docs/phases/P03_AO_INTEGRATION.md`. |
 | **Claim Distinction** | Baseline A is permanently locked and approved. | **Baseline B is strictly in planning mode. Zero claim of approval, completion, or release is made.** |
 
@@ -49,20 +51,20 @@ The 13 binding decisions of accepted ADR-016 are mapped to the canonical specifi
 - **Target File & Section**: `docs/04_ARCHITECTURE.md`, Section 2.1 ("Task Dispatch Flow" sequence diagram) and Section 3.1 ("AOAdapter Boundary").
 - **Current Content Causing Drift**:
   - Section 2.1 sequence diagram lines 75-79 depict `AOAdapter.createWorkerSession(projectId, harness="antigravity")` executing *inside* the task dispatch flow immediately following `READY -> DISPATCHED`.
-  - Section 3.1 includes `POST /api/v1/sessions/{id}/restore` as an active process control endpoint. ADR-016 §4 names the pinned public routes, while §§7, 9, and 13 also refer to session restore / `ResumeWorker`; the plan must not silently resolve this ambiguity.
-- **Governing ADR-016 Decisions**: **D2** (ADR-016 §8), **D4** (ADR-016 §10), and **D11** (ADR-016 §17); public wire facts are in ADR-016 §4 and token definitions in §6. The `/restore` capability ambiguity is tracked separately in §7 of this plan.
+  - Section 3.1 includes `POST /api/v1/sessions/{id}/restore` as an active process control endpoint. Pinned AO commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6` verifies `POST /api/v1/sessions/{sessionId}/restore` (`operationId: restoreSession`) as the route that restores a terminated session (`ResumeWorker`).
+- **Governing ADR-016 Decisions**: **D2** (ADR-016 §8), **D4** (ADR-016 §10), and **D11** (ADR-016 §17); public wire facts are verified in pinned AO and token definitions in §6.
 - **Required Specification Synchronization**:
   1. *Sequence Diagram Update*: Update Section 2.1 Mermaid diagram to decouple Pair session provisioning from task prompt dispatch. The task dispatch flow commences with a pre-existing, verified Pair WorkerSession in `idle` or `waiting_input` status (or triggers Pair provisioning if no session exists under `CREATE_NEW_WORKER_SESSION_ALLOWED_IFF`).
   2. *Durable Dispatch Saga Steps*: Reflect the 3-stage dispatch saga in `dispatch_operations`:
      - Stage 1: `DISPATCH_BOUND` (persisted simultaneously with TaskState `READY -> DISPATCHED` and candidate `TaskAttempt` execution snapshot);
      - Stage 2: `SEND_REQUESTED` (persisted immediately prior to issuing loopback `POST /api/v1/sessions/{id}/send`);
      - Stage 3: `SEND_CONFIRMED` (persisted only upon HTTP 200 response from AO; HTTP 204 is not an ADR-approved success condition).
-  3. *Reconcile the `/restore` wire claim*: Do not document `POST /api/v1/sessions/{id}/restore` as a pinned AO wire route unless the exact pinned public source proves it exists. Before canonical mutation, resolve the separate ADR ambiguity recorded in §7 below about the approved `ResumeWorker` / session-restore capability.
+  3. *Reconcile the `/restore` wire claim*: Document `POST /api/v1/sessions/{id}/restore` (`POST /api/v1/sessions/{sessionId}/restore`) as verified in pinned AO v0.13.0, performing session restoration for a terminated session (`ResumeWorker`), distinguished from `/resume-agent`.
 - **Co-requisite Synchronizations**: `docs/05_DOMAIN_MODEL.md` (entities `PairProvisioningOperation`, `DispatchOperation`), `docs/12_UPSTREAM_INTEGRATION.md` (wire methods).
 - **Execution Order**: Phase 2 (Architecture & Adapter Synchronization).
 - **Consistency Checks**:
   - Assert sequence diagram shows no inline worktree creation during normal dispatch over an existing session.
-  - Assert no unverified `/restore` wire route is documented; verify the route against the pinned public API and apply the External Supervisor's resolution for the ADR restore-capability blocker in §7.
+  - Assert `POST /api/v1/sessions/{id}/restore` wire route is verified against pinned AO public API and distinguished from `/resume-agent`.
 - **Completion Criteria**: Sequence diagram accurately models decoupled provisioning and durable 3-stage dispatch saga adhering to D2, D4, and D11.
 
 ---
@@ -150,7 +152,7 @@ The 13 binding decisions of accepted ADR-016 are mapped to the canonical specifi
 - **Governing ADR-016 Decisions**: **D1** (ADR-016 §7), **D7** (§13), **D11** (§17), and **D13** (§19); public field/route facts are in §4, registry tokens in §6, and candidate persistence definitions in §27.
 - **Required Specification Synchronization**:
   1. *Clean Interface Methods*:
-     - Do not assert that the ADR-approved `ResumeWorker` capability is absent: ADR-016 §§7 and 9 require a governed resume path for a restorable session, but §4 does not identify its public wire mapping. Resolve the explicit blocker in §7 before changing the canonical adapter contract; do not invent a `/restore` route.
+     - Document `resumeWorker(sessionId: string)` mapping to verified pinned wire route `POST /api/v1/sessions/{sessionId}/restore` (operationId: `restoreSession`), which restores a terminated session. Distinguish from `resumeAgent` (`POST /api/v1/sessions/{sessionId}/resume-agent`, operationId: `resumeAgent`), which resumes an exited agent in an active session without restoring workspace or terminated session.
      - Update worktree-path semantics: pinned V1 public responses do not expose it; model `worktree_path` as nullable and do not add a public lookup endpoint or synthetic value.
      - Update `stopWorker`: document only the pinned wire route `POST /api/v1/sessions/{sessionId}/kill`, whose request identifies the session only. Keep stop `purpose`, generation precheck, and `confirmation_deadline_at` in Supervisor logic/operation metadata; they are not wire parameters and do not form an atomic generation fence.
   2. *Authoritative Status Structure (`AOWorkerStatus`)*:
@@ -162,7 +164,7 @@ The 13 binding decisions of accepted ADR-016 are mapped to the canonical specifi
 - **Co-requisite Synchronizations**: `docs/04_ARCHITECTURE.md` (§3.1), `docs/phases/P03_AO_INTEGRATION.md` (§2).
 - **Execution Order**: Phase 2 (Architecture & Adapter Synchronization).
 - **Consistency Checks**:
-  - Assert any `ResumeWorker` adapter operation is tied to the resolution of the §7 blocker and verified pinned public capability; never infer a `/restore` wire route from the adapter name.
+  - Assert `resumeWorker` adapter operation maps to verified pinned wire route `POST /api/v1/sessions/{sessionId}/restore` (operationId: `restoreSession`) for restoring a terminated session.
   - Assert the `/kill` wire contract has only session identity and no purpose/generation/deadline parameter.
   - Assert pre-send whitelist contains strictly `idle` and `waiting_input`.
 - **Completion Criteria**: `IAOAdapter` interface and upstream semantics match pinned AO v0.13.0 wire reality and ADR-016 requirements.
@@ -173,13 +175,13 @@ The 13 binding decisions of accepted ADR-016 are mapped to the canonical specifi
 
 - **Target File & Section**: `docs/14_FAILURE_RECOVERY.md`, Section 1 ("Recovery Matrix & Owners") and new subsections.
 - **Current Content Causing Drift**:
-  - REC-002 mentions "restore session if supported"; reconcile the unsupported wire-route claim without overriding ADR-016 §§7, 9, and 13's restore / `ResumeWorker` references.
+  - REC-002 mentions "restore session if supported"; reconcile with verified pinned wire route `POST /api/v1/sessions/{sessionId}/restore` (operationId: `restoreSession`) with double-gated quarantine containment on failure.
   - REC-004 ("Worker Execution Timeout") prescribes issuing `stopWorker` and marking `FAILED (TIMEOUT)` without specifying purpose-aware stop operation tracking, generation precheck, or restart-stable deadlines.
   - REC-014 ("Unexpected Machine Restart") prescribes an informal scan without the deterministic decision order for in-flight provisioning, dispatch, stop operations, or mandatory blocked escalation.
   - Complete absence of Double-Gated Quarantine clearance playbooks (Class A, Class B, Class C).
 - **Governing ADR-016 Decisions**: **D5** (ADR-016 §11), **D6** (§12), **D11** (§17), and **D13** (§19); clearance vocabulary is in §6 items 5–8 and persistence CHECK values in §27.
 - **Required Specification Synchronization**:
-  1. *Update REC-002*: Remove any unverified `/restore` wire-route instruction. Document session failure containment via quarantine, and apply the External Supervisor's resolution of the §7 restore-capability blocker before changing the `ResumeWorker` behavior statement.
+  1. *Update REC-002*: Document session restoration via verified pinned route `POST /api/v1/sessions/{sessionId}/restore` (`ResumeWorker`). If session restoration fails or is unrecoverable, enforce double-gated quarantine containment.
   2. *Update REC-004*: Align timeout recovery with ADR-016 §17: allocate a `stop_operations` row (`purpose = 'RUNNING_ATTEMPT_STOP'`), capture target generation for a Supervisor-side precheck, persist restart-stable `confirmation_deadline_at`, and observe termination within the window. Do not describe generation as a `/kill` argument or atomic fence.
   3. *Update REC-014 (Comprehensive Startup Recovery Sweep)*:
      - Replace informal scan with the synchronous recovery scanner from ADR-016 §19 (D13), preserving each exact stage predicate and outcome:
@@ -199,7 +201,7 @@ The 13 binding decisions of accepted ADR-016 are mapped to the canonical specifi
 - **Co-requisite Synchronizations**: `docs/05_DOMAIN_MODEL.md` (quarantine states), `docs/06_WORKFLOW_STATE_MACHINE.md` (retry gate).
 - **Execution Order**: Phase 3 (Recovery Playbooks & Store Entity Provenance).
 - **Consistency Checks**:
-  - Assert REC-002 contains no unverified `/restore` wire route and its `ResumeWorker` behavior matches the §7 blocker resolution.
+  - Assert REC-002 specifies verified pinned `POST /api/v1/sessions/{sessionId}/restore` for restorable sessions and double-gated quarantine containment on failure.
   - Assert only `PROVISION_REQUESTED` is startup-marked `PROVISION_FAILED`; `SEND_REQUESTED` is the unknown-delivery path; `SEND_CONFIRMED` is reconciled as an accepted write; stop `stage` and `resolution_state` remain distinct; and Class A/B/C clearances follow §§12 and 17 with audited clearance.
 - **Completion Criteria**: Recovery playbooks accurately codify the crash-consistency, quarantine, and startup sweep requirements of ADR-016.
 
@@ -209,11 +211,11 @@ The 13 binding decisions of accepted ADR-016 are mapped to the canonical specifi
 
 - **Target File & Section**: `docs/22_MODULE_PROVENANCE.md`, Section 1 ("Planned Modules Provenance") and Section 3 ("Store Entities Provenance").
 - **Current Content Causing Drift**:
-  - Under `AOAdapter`, lists `/restore` among translated endpoints.
+  - Under `AOAdapter`, lists `/restore` among translated endpoints, which is verified against pinned AO commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6` as `POST /api/v1/sessions/{sessionId}/restore`.
   - Lacks architectural registration and provenance justification for new store entities introduced by ADR-016.
 - **Governing ADR-016 Decisions**: **D1** (ADR-016 §7), **D3** (§9), **D4** (§10), **D11** (§17), **D12** (§18), persistence DDL (§27), and §28 Item 7 ("Register new store entities").
 - **Required Specification Synchronization**:
-  1. *Clean `AOAdapter` Endpoint List*: Do not list an unverified `/restore` wire endpoint; resolve the §7 restore-capability blocker before changing any adapter capability claim. Document purpose, generation precheck, and deadline as Supervisor-owned stop-operation metadata/logic. The pinned AO `/kill` wire call remains `POST /api/v1/sessions/{sessionId}/kill` with session identity only; do not add purpose or generation parameters or describe the precheck as an atomic fence. Include the D7 pre-send whitelist status check.
+  1. *Clean `AOAdapter` Endpoint List*: Document verified pinned endpoints including `POST /api/v1/sessions/{sessionId}/restore` (operationId: `restoreSession`) for restoring a terminated session. Document purpose, generation precheck, and deadline as Supervisor-owned stop-operation metadata/logic. The pinned AO `/kill` wire call remains `POST /api/v1/sessions/{sessionId}/kill` with session identity only; do not add purpose or generation parameters or describe the precheck as an atomic fence. Include the D7 pre-send whitelist status check.
   2. *Add Store Entities Provenance*:
      - `pair_provisioning_operations`: Records durable Pair provisioning intent and unresolved spawn uncertainty for operator-audited handling; unowned orphan sessions are not automatically identified or killed (D3).
      - `dispatch_operations`: Records durable 3-stage dispatch sagas and enforces 1:1 attempt cardinality; unknown delivery remains possible and is handled fail-closed (D4).
@@ -224,7 +226,7 @@ The 13 binding decisions of accepted ADR-016 are mapped to the canonical specifi
 - **Execution Order**: Phase 3 (Recovery Playbooks & Store Entity Provenance).
 - **Consistency Checks**:
   - Assert all new tables are registered with anti-reinvention justifications.
-  - Assert no unverified `/restore` wire route is listed and the adapter capability statement follows the External Supervisor's §7 blocker resolution.
+  - Assert `POST /api/v1/sessions/{sessionId}/restore` wire route is verified against pinned AO v0.13.0 and distinguished from `/resume-agent`.
 - **Completion Criteria**: Module provenance fully documents all new persistent structures and maintains compliance with `docs/sources/REUSE_MATRIX.md`.
 
 ---
@@ -233,17 +235,17 @@ The 13 binding decisions of accepted ADR-016 are mapped to the canonical specifi
 
 - **Target File & Section**: `docs/phases/P03_AO_INTEGRATION.md`, Section 2 ("Deliverables") and Section 3 ("Exit Gate").
 - **Current Content Causing Drift**:
-  - Section 2 Deliverables explicitly lists `POST /api/v1/sessions/{id}/restore`.
+  - Section 2 Deliverables explicitly lists `POST /api/v1/sessions/{id}/restore` (verified in pinned AO v0.13.0).
   - Lacks mention of decoupled Pair provisioning, durable dispatch saga, and double-gated quarantine integration.
 - **Governing ADR-016 Decisions**: **D2** (ADR-016 §8), **D4** (§10), **D6** (§12), **D11** (§17), and **D13** (§19); token, wire, and DDL checks are in §§4, 6, and 27.
 - **Required Specification Synchronization**:
-  1. Do not list `POST /api/v1/sessions/{id}/restore` as an AO wire route unless the pinned public source verifies it; resolve the §7 restore-capability blocker before changing any adapter capability statement.
+  1. Confirm `POST /api/v1/sessions/{id}/restore` is a verified pinned AO wire route restoring a terminated session (`operationId: restoreSession`).
   2. In Section 2, clarify that `AOAdapter` delivers decoupled session lifecycle primitives, strict pre-send status whitelist validation, and purpose-aware stop operations.
   3. In Section 3 Exit Gate, confirm that integration tests verify preflight probes, session creation, dispatch saga, observation reconciliation, and purpose-aware termination.
 - **Co-requisite Synchronizations**: `docs/12_UPSTREAM_INTEGRATION.md`.
 - **Execution Order**: Phase 2 (Architecture & Adapter Synchronization).
 - **Consistency Checks**:
-  - Assert no unverified `/restore` wire route appears in the phase specification; apply the External Supervisor's resolution of the §7 blocker.
+  - Assert `POST /api/v1/sessions/{id}/restore` is documented as verified pinned wire route.
 - **Completion Criteria**: Phase P03 deliverable scope accurately mirrors approved ADR-016 adapter boundaries.
 
 ---
@@ -272,14 +274,14 @@ Before any future canonical edit, verify each item against the cited accepted AD
 
 | Plan item | Exact ADR-016 source sections | Required literal comparison before/after reconciliation |
 |---|---|---|
-| **S1** | §§4, 6(2–3), 8 (D2), 10 (D4), 17 (D11), 27 | `dispatch_operations.stage` is exactly `DISPATCH_BOUND` / `SEND_REQUESTED` / `SEND_CONFIRMED`; `SEND_CONFIRMED` only follows HTTP 200; match its §27 columns and `UNIQUE(attempt_id)`. `/kill` wire carries session identity only. Keep the restore-capability issue blocked per §7. |
+| **S1** | §§4, 6(2–3), 8 (D2), 10 (D4), 17 (D11), 27 | `dispatch_operations.stage` is exactly `DISPATCH_BOUND` / `SEND_REQUESTED` / `SEND_CONFIRMED`; `SEND_CONFIRMED` only follows HTTP 200; match its §27 columns and `UNIQUE(attempt_id)`. `/kill` wire carries session identity only. Verified `/restore` route `POST /api/v1/sessions/{sessionId}/restore`. |
 | **S2** | §§6(1–7), 7 (D1), 9 (D3), 10 (D4), 12 (D6), 17 (D11), 27 | Match `CLEAN` / `QUARANTINED`; runtime `status` remains `ACTIVE` / `IDLE` / `TERMINATED`. Compare every entity column, stage CHECK, purpose CHECK, partial unique index, `UNIQUE(attempt_id)`, and quarantine CHECK/default to §27. Compare resolution states to §6; keep `stage` separate from `resolution_state` and do not add CHECK constraints/columns absent from the authoritative DDL. |
 | **S3** | §§5, 6(5–8), 11–18 (D5–D12), 22–24 | Match the 13 states, 22 domain transitions / 25 graph edges, allowed transitions, recovery dispositions, audit-event names, quarantine gate predicates, and stop purpose outcomes. Verify retry also checks unresolved provisioning stages `PROVISION_REQUESTED` / `PROVISION_FAILED`. |
 | **S4** | §§5, 7 (D1), 8 (D2), 10 (D4), 16 (D10), 18 (D12), 27 | Keep `TaskContract` fields unchanged. Compare only `session_id`, `terminal_generation`, `recovery_disposition`, and `quarantine_state` as TaskAttempt additions; compare `AO_BLOCKED_ESCALATED`, `ended_at`, and atomic escalation behavior to §6/§16/§18. |
-| **S5** | §§4, 6(2–5), 13 (D7), 17 (D11), 19 (D13), 27 | Match public status/generation facts and strict `idle` / `waiting_input` whitelist. Verify `/kill` path and session-only wire identity; no `purpose`, generation, or deadline wire field and no atomic fence claim. Match stop stage CHECK and `resolution_state` separately to §6/§27. |
-| **S6** | §§6(1–8), 9 (D3), 11 (D5), 12 (D6), 17 (D11), 19 (D13), 22–25, 27 | Startup provisioning predicate is only `PROVISION_REQUESTED` -> `PROVISION_FAILED`; unknown dispatch is `SEND_REQUESTED`; reconcile `SEND_CONFIRMED`; stop stage/resolution predicates match §§17/19. Check Class A/B/C outcomes, audit events, and clearance conditions against §§6/11/12/17/25; no absence/replacement-only clearance. |
-| **S7** | §§6, 7, 9, 10, 12, 17, 18, 27–29 | Compare registered store entities, exact columns/constraints and task-attempt additions against §27; compare operation and event names against §6/§25; preserve AO boundary and reuse justification without inventing upstream capability. |
-| **S8** | §§4, 6, 8, 10, 12, 17, 19, 27–29 | Compare phase deliverables to approved adapter/wire boundaries and the three operation DDLs. Do not assert a restore wire route or remove the approved resume behavior until §7 is resolved. |
+| **S5** | §§4, 6(2–5), 13 (D7), 17 (D11), 19 (D13), 27 | Match public status/generation facts and strict `idle` / `waiting_input` whitelist. Verify `resumeWorker` maps to pinned `POST /api/v1/sessions/{sessionId}/restore`. Verify `/kill` path and session-only wire identity; no `purpose`, generation, or deadline wire field and no atomic fence claim. Match stop stage CHECK and `resolution_state` separately to §6/§27. |
+| **S6** | §§6(1–8), 9 (D3), 11 (D5), 12 (D6), 17 (D11), 19 (D13), 22–25, 27 | Startup provisioning predicate is only `PROVISION_REQUESTED` -> `PROVISION_FAILED`; unknown dispatch is `SEND_REQUESTED`; reconcile `SEND_CONFIRMED`; stop stage/resolution predicates match §§17/19. REC-002 maps to pinned `POST /api/v1/sessions/{sessionId}/restore`. Check Class A/B/C outcomes, audit events, and clearance conditions against §§6/11/12/17/25; no absence/replacement-only clearance. |
+| **S7** | §§6, 7, 9, 10, 12, 17, 18, 27–29 | Compare registered store entities, exact columns/constraints and task-attempt additions against §27; compare operation and event names against §6/§25; document verified endpoints including `POST /api/v1/sessions/{sessionId}/restore`; preserve AO boundary and reuse justification without inventing upstream capability. |
+| **S8** | §§4, 6, 8, 10, 12, 17, 19, 27–29 | Compare phase deliverables to approved adapter/wire boundaries and the three operation DDLs. Document verified wire routes including `POST /api/v1/sessions/{id}/restore`. |
 | **S9** | §§5, 6, 8, 10, 17, 27–28 | Verify `FR-005` and `OPS-002` references and descriptions against the exact dispatch stages, stop purposes, quarantine values, and DDL; no new token or state may be introduced by traceability prose. |
 
 ---
@@ -352,7 +354,7 @@ graph TD
 
 ### Verification Criteria for Each Batch:
 1. **Batch 1**: Domain entities and state rules are compared field-for-field with ADR-016 §§6/27, preserve the 13 canonical states and 22 executable transitions, and use only Model A snapshot fields.
-2. **Batch 2**: Architecture sequence diagram aligns with decoupled provisioning and the exact 3-stage dispatch saga; no unverified `/restore` wire route is documented, and the §7 restore-capability blocker is resolved before changing canonical adapter/phase capability claims.
+2. **Batch 2**: Architecture sequence diagram aligns with decoupled provisioning and the exact 3-stage dispatch saga; `POST /api/v1/sessions/{sessionId}/restore` wire route is verified against pinned AO v0.13.0 and distinguished from `/resume-agent`.
 3. **Batch 3**: Recovery playbooks REC-002, REC-004, REC-014 accurately model the 5-step startup recovery sweep and double-gated quarantine clearance rules without inventing numeric timeouts.
 
 ---
@@ -369,11 +371,25 @@ Reconciliation execution will be considered complete and ready for External Supe
 
 ---
 
-## 7. External Supervisor Blockers (No ADR Mutation)
+## 7. External Supervisor Blockers (Resolved with Pinned AO Evidence)
 
-### `ADR16-PLAN-BLOCKER-001` — Resume / Restore Capability Has No Pinned Public Wire Mapping
+### `ADR16-PLAN-BLOCKER-001` — Resume / Restore Capability Pinned Public Wire Mapping [RESOLVED / CLOSED]
 
-- **Evidence in accepted ADR-016**: §7 item 4 requires resuming an existing terminated-but-restorable session through a governed `ResumeWorker` path; §7 item 5 describes restoring a session while preserving `session_id` and changing `terminal_generation`; §9 item 1 also requires a governed `ResumeWorker` path; §13 item 2 says an `exited` session requires session restore.
-- **Boundary gap**: §4 enumerates the pinned public spawn, send, kill, and observation routes but does not define a public resume/restore route or map `ResumeWorker` to an approved AO operation. D11 (§17) identifies the `/kill` wire request and explicitly limits it to session identity. The ADR therefore leaves the adapter capability/wire boundary for resume/restore unresolved; this plan does not assume that an endpoint exists or that the capability is absent.
-- **External decision required**: Confirm the exact pinned public AO capability and approved adapter mapping for `ResumeWorker`, or direct a separately governed ADR correction. Until decided, do not add a `/restore` wire route, delete the approved resume behavior from canonical specs, or claim session restore is unavailable.
-- **Gate impact**: This blocker remains open for External Supervisor resolution before S1, S5, S6, S7, or S8 canonical changes that depend on resume/restore behavior. It does not change the accepted status of ADR-016 and does not authorize production implementation.
+- **Status**: **`CLOSED WITH PINNED AO EVIDENCE`** (Approved by External Supervisor at commit `906d5969347773bd7cf5bbe273b34fd4f549efce`).
+- **Pinned AO Verification (Commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`)**:
+  - `backend/internal/httpd/apispec/openapi.yaml:5245-5283`: Defines path `POST /api/v1/sessions/{sessionId}/restore`, `operationId: restoreSession`, summary `"Restore a terminated session"`, responses: HTTP 200 (`RestoreSessionResponse`), 404, 409, 500.
+  - `backend/internal/httpd/controllers/sessions.go:195`: Registers `r.Post("/sessions/{sessionId}/restore", c.restore)`.
+  - `backend/internal/httpd/controllers/sessions.go:1250-1258`: Handler `c.restore` invokes `c.Svc.Restore(r.Context(), sessionID(r))` and writes HTTP 200 JSON `RestoreSessionResponse{OK: true, SessionID: sessionID(r), RestoreMode: out.Mode, Session: sessionView(out.Session)}`.
+  - `backend/internal/service/session/service.go:579-589`: Service implementation:
+    ```go
+    // Restore relaunches a terminated session and returns the API-facing read model.
+    func (s *Service) Restore(ctx context.Context, id domain.SessionID) (RestoreOutcome, error) {
+    ```
+- **Distinction Between `/restore` and `/resume-agent`**:
+  - `POST /api/v1/sessions/{sessionId}/restore` (`operationId: restoreSession`): Restores a **terminated** session, relaunching it and recreating or preserving workspace. This is the exact capability that ADR-016 designates as `ResumeWorker` (ADR-016 §7 items 4-5, §9 item 1, §13 item 2).
+  - `POST /api/v1/sessions/{sessionId}/resume-agent` (`operationId: resumeAgent`, `openapi.yaml:5284-5324`, `service.go:608-618`): Resumes an exited agent process within an active session without restoring a terminated session or recreating its workspace.
+- **Resolution & Authorization**:
+  - The approved wire route implementing ADR-016 `ResumeWorker` is formally verified as `POST /api/v1/sessions/{sessionId}/restore`.
+  - Zero ADR-016 modification is required; the ADR's architectural decision and ubiquitous terminology (`ResumeWorker`) remain intact and are directly satisfied by pinned AO's `restoreSession` API.
+  - Blocker `ADR16-PLAN-BLOCKER-001` is formally **CLOSED**.
+  - Active Gate transitions to **`CANONICAL_SPEC_RECONCILIATION_EXECUTION`**.

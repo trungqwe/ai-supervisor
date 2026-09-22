@@ -16,9 +16,10 @@ A **Task Contract** is the authoritative specification dispatched to an AI codin
 2. **Explicit Scope Enforcement**:
    - Every contract declares `allowed_scope` (whitelist of glob patterns).
    - Any file touched outside `allowed_scope` or inside `forbidden_scope` triggers an automatic `PolicyViolation` during verification.
-3. **Separation of Specification from Execution**:
-   - A Task Contract specifies *what* to do and within what boundaries; it **never** contains transient execution identities such as `attempt_id`.
-   - Execution iterations are tracked independently via `TaskAttempt`.
+3. **Separation of Specification from Execution (ADR-010, ADR-012, ADR-016)**:
+   - A Task Contract specifies *what* to do and within what boundaries; it **never** contains transient execution identities such as `attempt_id`, `session_id`, or `terminal_generation`.
+   - Execution iterations are tracked independently via `TaskAttempt` under Model A persistence: execution identity is captured exclusively in relational snapshot columns on `task_attempts` (`session_id`, `terminal_generation`, `recovery_disposition`, `quarantine_state`) and in the associated `dispatch_operations` record (`UNIQUE(attempt_id)`). The concept of attempt execution identity is strictly explanatory and does NOT introduce new contract fields or properties.
+   - The `TaskContract` entity and its JSON schema remain permanently immutable, containing zero execution or runtime fields.
 
 ---
 
@@ -64,3 +65,7 @@ If during implementation the worker discovers:
 - Missing external tools or environment conflicts;
 
 The worker **MUST NOT** make unilateral decisions or expand its scope. It must halt immediately, emit a `WorkerReport` with `status: "BLOCKED"`, and state the exact blocking rationale. The task transitions to `BLOCKED` and escalates to `HUMAN_REQUIRED`.
+
+> [!CRITICAL]
+> **Atomic Attempt Closure on Blocker Escalation (ADR-016 §16, §18)**:
+> When a task transitions from `BLOCKED` to `HUMAN_REQUIRED`, the active `TaskAttempt` must be closed atomically (`ended_at = now`, `recovery_disposition = 'AO_BLOCKED_ESCALATED'`) via `AtomicAttemptClosureTransition` under invariant `# HUMAN_REQUIRED_WITH_PRIOR_EXECUTION MUST_NOT_RETAIN_RESUMABLE_OPEN_ATTEMPT`. No resumable attempt may remain dangling across human replanning or cancellation.

@@ -66,28 +66,55 @@ sequenceDiagram
     participant AO as Agent Orchestrator (AOAdapter)
     participant Agy as Antigravity CLI
 
+    Note over SCP,AO: Pair Session Provisioning Decoupled (ADR-012 §10 amended by ADR-016 D2)
+    opt Pair WorkerSession Absent or Clean Terminated (CREATE_NEW_WORKER_SESSION_ALLOWED_IFF)
+        SCP->>DB: Record pair_provisioning_operations (PROVISION_REQUESTED)
+        SCP->>AO: AOAdapter.createWorkerSession(projectId, harness="antigravity")
+        AO-->>SCP: Return session details (HTTP 201 Created)
+        SCP->>DB: Store WorkerSession & update provisioning (PROVISION_CONFIRMED)
+    end
+
     ChatGPT->>SCP: dispatch_task(contract_payload)
     SCP->>SCP: Validate contract against task-contract.schema.json (contract_id, task_id, revision_number)
     SCP->>DB: Store immutable TaskContract revision (State: READY)
+
     rect rgb(245, 245, 255)
-        Note over SCP,DB: Atomic Pre-Dispatch Persistence (P02 Core)
-        SCP->>DB: Allocate TaskAttempt (attempt_id, attempt_number, contract_id, expected_report_path)
-        SCP->>DB: Atomically persist READY -> DISPATCHED with dispatch intent
+        Note over SCP,AO: Pre-Send Admissibility Check (ADR-016 D7)
+        SCP->>AO: AOAdapter.getWorkerStatus(sessionId)
+        AO-->>SCP: Return AOWorkerStatus (status in 'idle', 'waiting_input')
     end
-    Note over SCP: Dispatch committed durably before invoking external side effects.
-    SCP->>AO: AOAdapter.createWorkerSession(projectId, harness="antigravity")
-    alt AO Session Spawn & Delivery Success
-        AO->>AO: Allocate isolated Git worktree & session
-        SCP->>AO: AOAdapter.sendTask(sessionId, TaskContract + Attempt metadata)
-        AO->>Agy: Launch worker harness in worktree
+
+    rect rgb(245, 245, 255)
+        Note over SCP,DB: Saga Stage 1: Atomic Pre-Dispatch Persistence (P02 Core & ADR-016 D4)
+        SCP->>DB: Allocate TaskAttempt (session_id, terminal_generation, quarantine_state='CLEAN')
+        SCP->>DB: Atomically persist READY -> DISPATCHED and dispatch_operations (DISPATCH_BOUND)
+    end
+
+    rect rgb(255, 250, 240)
+        Note over SCP,DB: Saga Stage 2: Send Requested Persistence
+        SCP->>DB: Update dispatch_operations (SEND_REQUESTED)
+    end
+
+    SCP->>AO: AOAdapter.sendTask(sessionId, TaskContract + Attempt metadata)
+
+    alt Upstream Write Acceptance (HTTP 200 OK)
+        AO-->>SCP: Return write confirmation (HTTP 200 OK)
+        rect rgb(240, 255, 240)
+            Note over SCP,DB: Saga Stage 3: Send Confirmed Persistence
+            SCP->>DB: Update dispatch_operations (SEND_CONFIRMED)
+        end
+        AO->>Agy: Launch worker turn in existing worktree
         Agy-->>AO: Worker process active
-        AO-->>SCP: Worker started event / status
+        SCP->>AO: AOAdapter.getWorkerStatus(sessionId)
+        AO-->>SCP: Observe status: active
         SCP->>DB: Transition state to RUNNING
         SCP-->>ChatGPT: Dispatch confirmed (status: RUNNING)
-    else AO Spawn / Send / ConPTY Failure
-        AO-->>SCP: Error response (HTTP 5xx / ConPTY failure)
-        SCP->>DB: Transition state to FAILED (failure_reason: AO_SPAWN_ERROR / CONPTY_FAILURE)
-        SCP-->>ChatGPT: Dispatch failed (status: FAILED, reason recorded)
+    else Unconfirmed Send / Network Failure / Crash (Fail-Closed Quarantine, ADR-016 D5/D6)
+        AO-->>SCP: Error / Timeout / Ambiguous Delivery
+        SCP->>DB: Transition DISPATCHED -> FAILED (ended_at=now, recovery_disposition='UNCERTAIN_DELIVERY_CRASH')
+        SCP->>DB: Impose Double-Gated Quarantine (worker_sessions & task_attempts = 'QUARANTINED')
+        SCP->>DB: Escalate FAILED -> HUMAN_REQUIRED
+        SCP-->>ChatGPT: Dispatch failed (status: FAILED / HUMAN_REQUIRED, quarantined)
     end
 ```
 
@@ -153,11 +180,17 @@ sequenceDiagram
 ### 3.1 AOAdapter Boundary
 All execution interactions flow strictly through `AOAdapter`. The adapter encapsulates:
 - Daemon health checks (`GET /healthz`, `GET /readyz`);
+- Harness inventory & readiness probes (`GET /api/v1/agents`, `GET /api/v1/agents/readiness`);
+- Public API contract retrieval (`GET /api/v1/openapi.yaml`, compatibility signal only);
 - Project registration (`POST /api/v1/projects`);
 - Session creation (`POST /api/v1/sessions`);
-- Task transmission (`POST /api/v1/sessions/{id}/send`);
-- Process control (`POST /api/v1/sessions/{id}/kill`, `POST /api/v1/sessions/{id}/restore`).
-Detailed HTTP mappings reside exclusively in `docs/sources/UPSTREAM_CONTRACT_BASELINE.md`.
+- Task transmission (`POST /api/v1/sessions/{id}/send`, strict whitelist pre-send enforcement);
+- Process control:
+  - Terminate session: `POST /api/v1/sessions/{id}/kill` (wire request carries session identity only; stop purpose, generation precheck, and confirmation deadline reside in Supervisor-owned `stop_operations` metadata);
+  - Restore terminated session: `POST /api/v1/sessions/{id}/restore` (`POST /api/v1/sessions/{sessionId}/restore`, `operationId: restoreSession`, restores a terminated session under `ResumeWorker`, distinguished from `/resume-agent`);
+- Session observation (`GET /api/v1/sessions/{id}`, authoritative snapshot);
+- Raw workspace file read transport (`GET /api/v1/sessions/{id}/workspace/file?path={relPath}`).
+Detailed HTTP mappings reside in `docs/sources/UPSTREAM_CONTRACT_BASELINE.md` and `docs/12_UPSTREAM_INTEGRATION.md`.
 
 ### 3.2 AO ↔ Agy Integration Realism & P01 Proof
 - **Known Upstream Finding**: AO `v0.13.0` invokes Agy interactively using `--prompt-interactive`. Official Agy separately supports headless print mode (`--print`, `--output-format stream-json`, `--json-schema`).

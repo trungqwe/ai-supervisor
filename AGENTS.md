@@ -52,7 +52,7 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003 ADR-016 ACCEPTED — CANONICAL RECONCILIATION PLANNING
+# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003 ADR-016 RECONCILIATION EXECUTION
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
@@ -73,16 +73,21 @@ This document establishes immutable operational directives for all AI coding age
 > External re-audit 005 of ADR-016 Revision 5 (commit `68b3699cfdeb38a9ecb93771fe3a5f2823938a18`) verified findings `ADR16R5-004` and `ADR16R5-005` CLOSED, `ADR16R5-003` SUBSTANTIVELY_CLOSED, `ADR16R5-002` PARTIALLY_CLOSED, `ADR16R4-008` and `ADR16R5-001` NOT_CLOSED, and recorded findings `ADR16R6-001` through `ADR16R6-004` with verdict `ADR_016 = REVISION_6_REQUIRED` in `docs/audits/P03_ADR_016_EXTERNAL_REAUDIT_005.md`.
 > External re-audit 006 of ADR-016 Revision 6 (commit `40d51ffe9af4dab5545f060d5bee2ffd441b6109`) verified findings `ADR16R6-001` through `ADR16R6-004`, `ADR16R4-008`, `ADR16R5-001`, and `ADR16R5-002` CLOSED with verdict `ADR_016 = EXTERNAL_APPROVED` and `ADR_016_ACCEPTANCE = GRANTED` in `docs/audits/P03_ADR_016_EXTERNAL_REAUDIT_006.md`.
 > ADR-016 is formally **ACCEPTED** (`ADR_016 = EXTERNAL_APPROVED`, `ADR_016_ACCEPTANCE = GRANTED`).
+> Scope of `PLAN-P03-CANONICAL-RECONCILIATION-ADR-016.md` (Items S1–S9) was formally **APPROVED** by External Supervisor at commit `906d5969347773bd7cf5bbe273b34fd4f549efce` with mandatory pinned AO restore route correction (`POST /api/v1/sessions/{sessionId}/restore`, `operationId: restoreSession`).
+> Blocker `ADR16-PLAN-BLOCKER-001` is **CLOSED**.
+> Historical canonical reconciliation baseline remains locked (`P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED`, Revision 3).
+> Single-pass canonical documentation reconciliation (Items S1–S9) pursuant to accepted ADR-016 is **COMPLETE**: `P03_ADR_016_CANONICAL_RECONCILIATION = READY_FOR_EXTERNAL_AUDIT`.
+> Task Contract for documentation reconciliation `CONTRACT-TASK-P03-DOC-RECONCILIATION-01` completed (`docs/tasks/TASK_CONTRACT_P03_CANONICAL_RECONCILIATION_ADR_016.md`).
 > Architecture classification established: `P03_ARCHITECTURE_CHANGE = YES`, `P03_ADR_REQUIRED = YES`.
 > Production coding remains strictly **`HELD_PENDING_CANONICAL_RECONCILIATION_AND_TASK_CONTRACT`** (`TASK_P03_003 = NOT_RELEASED`).
-> The active phase gate is **`CANONICAL_SPEC_RECONCILIATION_PLANNING`**.
+> The active phase gate is **`READY_FOR_EXTERNAL_AUDIT`**.
 
-1. **CANONICAL SPECIFICATION RECONCILIATION PLANNING SCOPE**:
-   - The next approved action is formulating the reconciliation scope for canonical specifications (`docs/04`, `docs/05`, `docs/06`, `docs/08`, `docs/12`, `docs/14`, `docs/22`) pursuant to accepted ADR-016 and `docs/24_CHANGE_GOVERNANCE.md`.
-   - Absolutely ZERO modification to canonical specifications in this turn;
-   - Absolutely ZERO Task Contract creation or release;
+1. **CANONICAL SPECIFICATION RECONCILIATION AUDIT GATE**:
+   - Single-pass reconciliation for canonical specifications (`docs/04`, `docs/05`, `docs/06`, `docs/08`, `docs/12`, `docs/14`, `docs/22`), phase spec (`docs/phases/P03_AO_INTEGRATION.md`), and traceability matrix (`docs/21`) is complete.
+   - Target files are prepared and submitted for complete document external audit.
    - Absolutely ZERO production code implementation (`internal/**/*.go`);
-   - Absolutely ZERO schema or database migration implementation.
+   - Absolutely ZERO schema or database migration implementation;
+   - Absolutely ZERO production Task Contract release for `TASK-P03-003`.
 
 2. **TASK-P03-003 PRODUCTION CODE GUARD**:
    - Production coding of TASK-P03-003 remains strictly **HELD** (`TASK_P03_003 = NOT_RELEASED`).
@@ -95,10 +100,12 @@ This document establishes immutable operational directives for all AI coding age
    - Absolutely NO synthetic worker heartbeat generation;
    - Absolutely NO SSE or `/api/v1/events` integration;
    - Absolutely NO workspace file fetching or WorkerReport handling;
-   - Absolutely NO canonical doc mutation.
+   - Absolutely NO Go production code modification (`internal/**/*.go`);
+   - Absolutely NO modification to accepted ADR-016 or proposals.
 
 4. **FINAL GOVERNANCE STATE**:
-   - `P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED`
+   - `P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED` (Historical Baseline A)
+   - `P03_ADR_016_CANONICAL_RECONCILIATION = READY_FOR_EXTERNAL_AUDIT`
    - `TASK_P03_001 = EXTERNAL_AUDIT_APPROVED`
    - `TASK_P03_002 = EXTERNAL_AUDIT_APPROVED`
    - `PROPOSAL_P03_002 = EXTERNAL_APPROVED`
@@ -108,4 +115,4 @@ This document establishes immutable operational directives for all AI coding age
    - `ADR_016_ACCEPTANCE = GRANTED`
    - `TASK_P03_003 = NOT_RELEASED`
    - `P03_CODE = HELD_PENDING_CANONICAL_RECONCILIATION_AND_TASK_CONTRACT`
-   - `ACTIVE_GATE = CANONICAL_SPEC_RECONCILIATION_PLANNING`
+   - `ACTIVE_GATE = READY_FOR_EXTERNAL_AUDIT`
