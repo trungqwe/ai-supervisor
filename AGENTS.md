@@ -52,7 +52,7 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003 ADR-016 REVISION 1
+# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003 ADR-016 REVISION 2
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
@@ -66,13 +66,13 @@ This document establishes immutable operational directives for all AI coding age
 > External re-audit of `PROPOSAL-P03-002 Revision 5` (commit `fac2d5b3d763796077505f9f368a4b46056ec140`) recorded finding `P03T3PR6-001` in `docs/audits/P03_TASK_003_PROPOSAL_EXTERNAL_REAUDIT_005.md`.
 > Proposal `PROPOSAL-P03-002 Revision 6` (commit `8709af4b6aaf8613c69a10514971e320e3f90048`) is **EXTERNAL_APPROVED** in `docs/audits/P03_TASK_003_PROPOSAL_EXTERNAL_REAUDIT_006.md`.
 > External audit of ADR-016 draft (commit `928b0d110058d8ca90d8d9b68d9aa478c1ee089a`) recorded findings `ADR16R1-001` through `ADR16R1-009` with verdict `ADR_016 = REVISION_1_REQUIRED` in `docs/audits/P03_ADR_016_EXTERNAL_AUDIT.md`.
-> ADR-016 has been remediated to Revision 1 (`ADR_016 = REVISION_1_READY_FOR_EXTERNAL_REAUDIT`, `ADR_016_ACCEPTANCE = NOT_GRANTED`).
+> ADR-016 has been remediated to Revision 1 (`ADR_016 = REVISION_2_READY_FOR_EXTERNAL_REAUDIT`, `ADR_016_ACCEPTANCE = NOT_GRANTED`).
 > Architecture classification established: `P03_ARCHITECTURE_CHANGE = YES`, `P03_ADR_REQUIRED = YES`.
 > Production coding remains strictly **`HELD_PENDING_ADR_016_APPROVAL`** (`TASK_P03_003 = NOT_RELEASED`).
 > The active phase gate is **`EXTERNAL_SUPERVISOR_P03_ADR_016_REAUDIT_001`**.
 
-1. **TASK-P03-003 ADR-016 REVISION 1 SCOPE**:
-   - Scope is strictly confined to ADR-016 Revision 1 remediation and governance tracking.
+1. **TASK-P03-003 ADR-016 REVISION 2 SCOPE**:
+   - Scope is strictly confined to ADR-016 Revision 2 remediation and governance tracking.
    - Absolutely ZERO production code implementation (`internal/**/*.go`);
    - Absolutely ZERO schema or database migration implementation;
    - Absolutely ZERO canonical document mutation.
@@ -97,8 +97,8 @@ This document establishes immutable operational directives for all AI coding age
    - `PROPOSAL_P03_002 = EXTERNAL_APPROVED`
    - `P03_ARCHITECTURE_CHANGE = YES`
    - `P03_ADR_REQUIRED = YES`
-   - `ADR_016 = REVISION_1_READY_FOR_EXTERNAL_REAUDIT`
+   - `ADR_016 = REVISION_2_READY_FOR_EXTERNAL_REAUDIT`
    - `ADR_016_ACCEPTANCE = NOT_GRANTED`
    - `TASK_P03_003 = NOT_RELEASED`
    - `P03_CODE = HELD_PENDING_ADR_016_APPROVAL`
-   - `ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_ADR_016_REAUDIT_001`
+   - `ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_ADR_016_REAUDIT_002`
