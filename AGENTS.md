@@ -52,7 +52,7 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-002 REVISION 1
+# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003 PRE-CODE RECONCILIATION
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
@@ -60,42 +60,36 @@ This document establishes immutable operational directives for all AI coding age
 > Core directions of `PROPOSAL-P03-001` are **EXTERNAL_APPROVED** by External Supervisor decision.
 > Canonical specifications (`docs/02`, `docs/12`, `docs/14`, `docs/17`, `docs/21`, `docs/22`, `docs/phases/P03_AO_INTEGRATION.md`) have been reconciled under Revision 3 and approved by External Supervisor (`P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED`).
 > Task TASK-P03-001 is **EXTERNAL_AUDIT_APPROVED** (`docs/audits/P03_TASK_001_EXTERNAL_REAUDIT_002.md`, commit `e5d3337772f4243ca0f85b4105430d1aa9329bd3`).
-> External audit of commit `056629ff4d38bbf4caaa94fc860825a2e9991a7c` identified finding `P03T2R1-001` (`ACTIVITY_PROTOCOL_ERROR_STATUS_MISREPORTED`).
-> Revision 1 remediates finding `P03T2R1-001` by making `validateCanonicalActivityState` status-aware and preserving observed HTTP response status (`201` on spawn, `200` on get/restore).
-> The active phase gate is **`EXTERNAL_SUPERVISOR_P03_TASK_002_REAUDIT`**.
-> Production coding is **`HELD_FOR_EXTERNAL_AUDIT`** (`TASK_P03_002 = REVISION_1_READY_FOR_EXTERNAL_REAUDIT`, `TASK_P03_003 = NOT_RELEASED`).
+> Task TASK-P03-002 is **EXTERNAL_AUDIT_APPROVED** (`docs/audits/P03_TASK_002_EXTERNAL_REAUDIT_001.md`, commit `b85ddf686b7432f087ef776444eaabe183176e67`), and finding `P03T2R1-001` is **CLOSED**.
+> Seven pre-code findings (`P03T3-PRE-001` through `P03T3-PRE-007`) are recorded in `docs/audits/P03_TASK_003_PRECODE_EXTERNAL_AUDIT.md`.
+> Proposal `PROPOSAL-P03-002` has been prepared and submitted as `PENDING_EXTERNAL_APPROVAL`.
+> Production coding is strictly **`HELD_FOR_TASK_P03_003_PRECODE_RECONCILIATION`** (`TASK_P03_003 = NOT_RELEASED`).
+> The active phase gate is **`EXTERNAL_SUPERVISOR_P03_TASK_003_PRECODE_AUDIT`**.
 
-1. **TASK-P03-002 REVISION 1 SCOPE & BOUNDARY**:
-   - Scope is strictly confined to fixing finding `P03T2R1-001` (preserving exact observed HTTP status code in activity state protocol errors).
-   - Allowed operations:
-     - `CreateWorkerSession(ctx, projectID, harness)` via `POST /api/v1/sessions` (exact HTTP 201, minimal wire contract, protocol errors report 201);
-     - `DispatchTaskContract(ctx, sessionID, message)` via `POST /api/v1/sessions/{id}/send` (exact HTTP 200, immutable message transmission);
-     - `StopWorker(ctx, sessionID)` via `POST /api/v1/sessions/{id}/kill` (exact HTTP 200, honest `freed` outcome reporting);
-     - `ResumeWorker(ctx, sessionID)` via `POST /api/v1/sessions/{id}/restore` (exact HTTP 200, valid `restoreMode` and activity state validation, protocol errors report 200).
+1. **TASK-P03-003 PRE-CODE RECONCILIATION SCOPE**:
+   - Scope is strictly confined to architectural analysis, pre-code audit recording, and change-governance proposal creation.
+   - Absolutely ZERO production code implementation (`internal/**/*.go`);
+   - Absolutely ZERO schema or database migration implementation;
+   - Absolutely ZERO ADR implementation (ADR remains required, to be drafted upon proposal approval).
 
-2. **EXPLICITLY FORBIDDEN IN TASK-P03-002**:
-   - Absolutely NO session activity polling loop (`TASK-P03-003`);
-   - Absolutely NO raw session workspace file fetch (`TASK-P03-004`);
-   - Absolutely NO `StateStore` dependency or direct SQLite access inside `internal/ao` (`AOADAPTER_STATESTORE_DEPENDENCY = FORBIDDEN`);
-   - Absolutely NO Task attempt allocation, task state transition, or lifecycle event classification (`DISPATCHED`, `RUNNING`, `worker.started`, `worker.stopped`, etc.);
-   - Absolutely NO modification of `internal/domain`, `internal/workflow`, `internal/store`, `internal/contract`, `internal/audit`;
-   - Absolutely NO dependency additions (`go.mod`, `go.sum`);
-   - Absolutely NO direct Antigravity CLI (`agy`) invocation code;
-   - Absolutely NO ConPTY process management code;
-   - Absolutely NO custom Git worktree management code;
-   - Absolutely NO AO internal SQLite database access;
-   - Absolutely NO `/mux` terminal stream scraping or parsing;
+2. **TASK-P03-003 PRODUCTION CODE GUARD**:
+   - Production coding of TASK-P03-003 remains strictly **HELD** (`TASK_P03_003 = NOT_RELEASED`).
+   - Implementation becomes authorized only upon formal External Supervisor approval of `PROPOSAL-P03-002`, subsequent ADR acceptance, and Task Contract release.
+
+3. **EXPLICITLY FORBIDDEN IN THIS STAGE**:
+   - Absolutely NO polling loops, tickers, or background worker threads;
+   - Absolutely NO StateStore mutations or new tables;
+   - Absolutely NO invented numeric operational timeout or poll interval defaults;
    - Absolutely NO synthetic worker heartbeat generation;
-   - Absolutely NO default operational timeout decisions (the 8 Supervisor operational policy values remain UNSET).
+   - Absolutely NO SSE or `/api/v1/events` integration;
+   - Absolutely NO workspace file fetching or WorkerReport handling;
+   - Absolutely NO canonical doc mutation.
 
-3. **TASK-P03-003 CODE GUARD**:
-   - Lifecycle polling and authoritative activity loop implementation remains strictly **HELD** (`TASK_P03_003 = NOT_RELEASED`).
-   - Implementation of `TASK-P03-003` becomes authorized only upon formal audit approval and task contract release by External Supervisor.
-
-4. **FINAL TASK-P03-002 REVISION 1 GOVERNANCE STATE**:
+4. **FINAL PRE-CODE RECONCILIATION GOVERNANCE STATE**:
    - `P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED`
    - `TASK_P03_001 = EXTERNAL_AUDIT_APPROVED`
-   - `P03_CODE = HELD_FOR_EXTERNAL_AUDIT`
-   - `TASK_P03_002 = REVISION_1_READY_FOR_EXTERNAL_REAUDIT`
+   - `TASK_P03_002 = EXTERNAL_AUDIT_APPROVED`
+   - `P03_CODE = HELD_FOR_TASK_P03_003_PRECODE_RECONCILIATION`
    - `TASK_P03_003 = NOT_RELEASED`
-   - `ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_TASK_002_REAUDIT`
+   - `PROPOSAL_P03_002 = PENDING_EXTERNAL_APPROVAL`
+   - `ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_TASK_003_PRECODE_AUDIT`
