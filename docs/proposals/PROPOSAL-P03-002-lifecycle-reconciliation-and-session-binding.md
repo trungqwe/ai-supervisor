@@ -1,14 +1,14 @@
 # PROPOSAL-P03-002: Lifecycle Reconciliation, Durable Dispatch Saga, and Session Binding Specification
 
 > **Proposal ID**: `PROPOSAL-P03-002`
-> **Revision**: `4`
-> **Status**: `REVISION_4_PENDING_EXTERNAL_REAUDIT`
+> **Revision**: `5`
+> **Status**: `REVISION_5_PENDING_EXTERNAL_REAUDIT`
 > **Task Binding**: `TASK-P03-003` (Lifecycle Reconciliation and State Transitions)
-> **Baseline Commit**: `00910f769368a28954ad03920da55a8885769ca7`
+> **Baseline Commit**: `38154d7fa65888cbf25b0bc5206384198a9a8a40`
 > **Pinned AO Authority**: `Untrivial-ai/agent-orchestrator` v0.13.0 (Commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`)
 > **Architecture Classification**: `P03_ARCHITECTURE_CHANGE = YES`, `P03_ADR_REQUIRED = YES`, `ADR_016 = NOT_AUTHORIZED_TO_DRAFT_YET`
 > **Implementation Guard**: `TASK_P03_003 = NOT_RELEASED`, `P03_CODE = HELD_FOR_TASK_P03_003_PRECODE_RECONCILIATION`
-> **Active Gate**: `EXTERNAL_SUPERVISOR_P03_TASK_003_PROPOSAL_REAUDIT_004`
+> **Active Gate**: `EXTERNAL_SUPERVISOR_P03_TASK_003_PROPOSAL_REAUDIT_005`
 
 ---
 
@@ -16,14 +16,14 @@
 
 This proposal establishes the architectural specifications, lifecycle reconciliation rules, durable dispatch saga mechanics, and restart recovery protocols for `TASK-P03-003` under pinned Agent Orchestrator (`AO`) v0.13.0 (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`).
 
-Revision 4 surgically addresses and resolves the final findings of External Re-Audit `P03T3PR4-001` and `P03T3PR4-002`:
-1. **Prior Execution Quarantine Resolution (`P03T3PR4-001`)**: Formally establishes the invariant:
-   ```text
-   NEW_SESSION_OR_GENERATION != RESOLUTION_OF_PRIOR_UNCERTAIN_EXECUTION
-   ```
-   A new session or generation provides a prospective execution target; it does **not** prove that the prior uncertain execution stopped running. The uncertain-delivery quarantine remains strictly bound to the original `(task_id, attempt_id, session_id, terminal_generation)` lineage and cannot be cleared by simply allocating a new session or generation. Detailed resolution classes (confirmed termination, authoritative absence, human risk acceptance) and prohibited clear conditions are codified.
-2. **ADR Decision Ledger Status & Scope Alignment (`P03T3PR4-002`)**: Restructures the ADR-016 Decision Ledger to clearly separate source-determined upstream facts from Supervisor architectural policy decisions across all entries (D1 through D13). Corrects over-labeled statuses (D7 pre-send admissibility, D11 stop provenance, D12 atomic terminal transaction) from `SOURCE_DETERMINED` to `UNRESOLVED_FOR_ADR`, reserving `SOURCE_DETERMINED` strictly for items where zero architectural discretion remains.
-3. **Preservation of All Revision-3 Closures**: Strictly preserves dispatch saga attribution gating, `SEND_REQUESTED` pre-effect intent semantics, canonical state transition paths (zero direct `DISPATCHED -> HUMAN_REQUIRED`), wire route `/kill`, pre-spawn decoupling boundaries, valid pinned activity states, `REPORT_READY` ownership separation, V1 `agy` TUI generation scope, Model A/B/C persistence comparison, and `UNSET` operational policies.
+Revision 5 surgically addresses and resolves the internal consistency findings of External Re-Audit `P03T3PR5-001`, `P03T3PR5-002`, and `P03T3PR5-003`:
+1. **Quarantine Resolution Ledger Consistency (`P03T3PR5-001`)**: Formally establishes the semantic distinction between:
+   - `PHYSICAL_EXECUTION_RESOLUTION`: Positive evidence that old execution can no longer continue (e.g. old generation confirmed terminated via `POST /api/v1/sessions/{sessionId}/kill` followed by authoritative `isTerminated == true` public observation).
+   - `ADMINISTRATIVE_RISK_RESOLUTION`: Operator explicitly acknowledges the inability to prove physical termination and authorizes a governed replacement/recovery path. This MUST be durably audited and must NOT be reported as `TERMINATION_CONFIRMED` or `WORKER_STOPPED`.
+   Reconciles D5 and D6 with Section 9 resolution classes so that if ADR-016 chooses automatic `/kill` reconciliation, quarantine clears strictly after confirmed termination of the old execution; if ADR-016 chooses Class B (authoritative absence) or Class C (human risk acceptance), the ADR defines resolution type, required evidence, operator authority, durable audit record, whether future dispatch is permitted, and preserves that old execution remains physically unresolved without collapsing into `TERMINATED`.
+2. **TASK-P03-003 Scope Guard & Removal of Report Probing (`P03T3PR5-002`)**: Enforces strict task boundaries established in `PROPOSAL-P03-001`: TASK-P03-003 is strictly Lifecycle Observation & State Reconciliation; TASK-P03-004 owns raw `GetWorkspaceFile` transport; P04 owns WorkerReport semantic interpretation and evidence collection. Removes all candidate/recommended wording proposing that TASK-P03-003 probe report artifacts or workspace files in D8 (`MISSED_ACTIVE_WINDOW`). Confines D8 strictly to lifecycle-level choices (fail closed vs preserve DISPATCHED and escalate ambiguity vs persist ambiguity disposition and hand off downstream).
+3. **BLOCKED / Attempt End Semantics Alignment (`P03T3PR5-003`)**: Separates the StateStore atomicity invariant from whether `BLOCKED` ends a `TaskAttempt`. Terminal failure transitions (`RUNNING/DISPATCHED -> FAILED`) atomically commit TaskState + `ended_at = now` + audit event append. For `RUNNING -> BLOCKED`, whether it terminates an attempt is `UNRESOLVED_FOR_ADR` and cross-referenced between D10 and D12: IF ADR-016 decides BLOCKED ends the attempt, transition + `ended_at = now` + audit persistence occur atomically; IF ADR-016 retains the open attempt, `ended_at` remains NULL; IF ADR-016 chooses no transition, attempt remains open. Canonical `BLOCKED` is not labeled as an unconditional terminal outcome.
+4. **Preservation of All Prior Closures**: Strictly preserves `NEW_SESSION_OR_GENERATION != RESOLUTION_OF_PRIOR_UNCERTAIN_EXECUTION`, dispatch saga attribution gating on `SEND_CONFIRMED`, `SEND_REQUESTED` pre-effect intent semantics, zero blind resend, zero direct `DISPATCHED -> HUMAN_REQUIRED`, wire route `/kill`, pre-spawn decoupling boundaries, valid pinned activity states, `REPORT_READY` ownership separation, V1 `agy` TUI generation scope, Model A/B/C persistence comparison, and `UNSET` operational policies.
 
 ---
 
@@ -239,15 +239,21 @@ An attempt or session with `DELIVERY_OUTCOME = UNKNOWN` **MUST NOT** become elig
 
 A fresh session or generation provides a prospective execution target; it does **not** prove that the prior uncertain execution stopped running. Therefore, uncertain-delivery quarantine remains strictly bound to the original `(task_id, attempt_id, session_id, terminal_generation)` lineage until that prior execution is positively resolved.
 
+#### Required Semantic Distinction:
+- **`PHYSICAL_EXECUTION_RESOLUTION`**: Positive evidence that old execution can no longer continue.
+  *Examples*: Old generation confirmed terminated by authoritative public AO observation (`isTerminated == true`) following an intentional stop operation (`POST /api/v1/sessions/{sessionId}/kill`); or another ADR-approved authoritative physical resolution.
+- **`ADMINISTRATIVE_RISK_RESOLUTION`**: Operator explicitly acknowledges the inability to prove physical termination and authorizes a governed replacement/recovery path.
+  *Audit & Truth Mandate*: This MUST be durably recorded in the append-only audit trail. Do NOT report administrative acceptance as `TERMINATION_CONFIRMED`. Do NOT report `WORKER_STOPPED` unless intentional termination evidence actually proves it. The system state must honestly reflect that old execution remains physically unresolved.
+
 #### Acceptable Resolution Classes:
-1. **Class A: Old Execution Termination Confirmed**:
-   The known old `(session_id, terminal_generation)` is positively confirmed terminated by authoritative public AO observation (`isTerminated == true`) following an intentional stop/cleanup operation (`POST /api/v1/sessions/{sessionId}/kill`). Only after confirmed termination of the old execution may the uncertainty be marked resolved, allowing subsequent replacement dispatch.
-2. **Class B: Old Session Authoritatively Absent**:
-   The public AO contract returns an approved deterministic absence result (e.g. HTTP 404 Not Found on `GET /api/v1/sessions/{id}`). ADR-016 must decide whether absence alone is sufficient to retire uncertainty or whether human confirmation remains required. Absence alone must not be silently classified as a crash.
-3. **Class C: Human Risk Acceptance**:
-   An operator explicitly acknowledges that delivery may have occurred and old execution cannot be positively recovered. This decision is durable and auditable. ADR-016 determines whether this permits replacement dispatch and what cleanup/quarantine evidence is required.
-4. **Class D: Other Source-Backed Resolution**:
-   Permissible only if explicitly justified by canonical authority.
+1. **Class A: Old Execution Termination Confirmed (`PHYSICAL_EXECUTION_RESOLUTION`)**:
+   The known old `(session_id, terminal_generation)` is positively confirmed terminated by authoritative public AO observation (`isTerminated == true`) following an intentional stop/cleanup operation (`POST /api/v1/sessions/{sessionId}/kill`). Only after confirmed termination of the old execution may the uncertainty be marked physically resolved, allowing subsequent replacement dispatch.
+2. **Class B: Old Session Authoritatively Absent (`ADMINISTRATIVE_RISK_RESOLUTION` / Absence Disposition)**:
+   The public AO contract returns an approved deterministic absence result (e.g. HTTP 404 Not Found on `GET /api/v1/sessions/{id}`). ADR-016 must decide whether absence alone is sufficient to retire uncertainty or whether human confirmation remains required. Absence alone must not be silently classified as a crash. If ADR-016 chooses Class B, the ADR must explicitly define the resolution type, required evidence, operator authority, durable audit record, whether future dispatch is permitted, and record that old execution remains physically unresolved without collapsing into `TERMINATED`.
+3. **Class C: Human Risk Acceptance (`ADMINISTRATIVE_RISK_RESOLUTION`)**:
+   An operator explicitly acknowledges that delivery may have occurred and old execution cannot be positively proven stopped. This decision is durable and auditable. ADR-016 determines whether this permits replacement dispatch and what cleanup/quarantine evidence is required. It MUST NOT be reported as `TERMINATION_CONFIRMED` or `WORKER_STOPPED`.
+4. **Class D: Other Source-Backed / Canonical-Approved Resolution**:
+   Permissible only if explicitly justified by canonical authority and ADR approval.
 
 #### Prohibited Clear Conditions:
 The following alone **MUST NOT** clear quarantine:
@@ -268,11 +274,11 @@ The following alone **MUST NOT** clear quarantine:
   -> DISPATCHED -> FAILED (reason: UNCERTAIN_DELIVERY_CRASH)
   -> UNCERTAIN_DELIVERY_QUARANTINE (bound to original attempt lineage)
   -> FAILED -> HUMAN_REQUIRED
-  -> Explicit reconciliation of OLD execution (Class A, B, or C)
-  -> QUARANTINE_RESOLVED
+  -> Explicit reconciliation of OLD execution (Class A physical, or Class B/C administrative)
+  -> QUARANTINE_RESOLVED (or ADMINISTRATIVE_RISK_ACCEPTED)
   -> Only then may a future retry path (e.g. HUMAN_REQUIRED -> DRAFT -> READY) be considered.
   ```
-  Automated transition `FAILED -> READY` is strictly prohibited while quarantine is active.
+  Automated transition `FAILED -> READY` is strictly prohibited while quarantine is active (`resolution_state = UNRESOLVED`).
 
 ### 9.4 Pre-Dispatch Retry Guard Options Analysis (For ADR-016)
 
@@ -338,7 +344,7 @@ Pinned AO `ActivityExited` denotes that an agent process exited while the manage
 | `DISPATCHED` | `DISPATCH_BOUND` | `isTerminated: true` | Matches | Session dead before send | Crash (cause unproven) | `DISPATCHED -> FAILED` | Set `ended_at = now` | None | **DECIDED** | Pre-send failure |
 | `DISPATCHED` | `SEND_REQUESTED` | Any activity | Matches / Any | Send intent durably recorded; delivery unknown | Network delivery or task execution | `DISPATCHED -> FAILED` (Path to `HUMAN_REQUIRED`) | Set `ended_at = now` | **`UNCERTAIN_DELIVERY_QUARANTINE`** | **UNRESOLVED_DECISION** | D5, D6 (Quarantine guard) |
 | `DISPATCHED` | `SEND_CONFIRMED` | `active` | Matches | Prompt confirmed; agent executing turn | Task completion | `DISPATCHED -> RUNNING` | Do NOT set | None | **DECIDED** | Standard execution entry |
-| `DISPATCHED` | `SEND_CONFIRMED` | `idle` | Matches | Prompt confirmed; session idle | Whether prompt ran or was missed | `UNRESOLVED_DECISION` | Do NOT set | Potential quarantine | **UNRESOLVED_DECISION** | D8 (Missed Active Window) |
+| `DISPATCHED` | `SEND_CONFIRMED` | `idle` | Matches | Prompt confirmed; session idle | Whether prompt ran or was missed; does NOT authorize TASK-P03-003 report probing (report read owned by downstream TASK-P03-004 / P04) | `UNRESOLVED_DECISION` | Do NOT set in P03 | Potential quarantine | **UNRESOLVED_DECISION** | D8 (Missed Active Window lifecycle policy) |
 | `DISPATCHED` | `SEND_CONFIRMED` | `waiting_input` | Matches | Prompt confirmed; agent paused | Failure or task completion | `UNRESOLVED_DECISION` | Do NOT set | None | **UNRESOLVED_DECISION** | D9 (waiting_input mapping) |
 | `DISPATCHED` | `SEND_CONFIRMED` | `blocked` | Matches | Prompt confirmed; agent blocked on decision | TaskState BLOCKED | `UNRESOLVED_DECISION` | Do NOT set | None | **UNRESOLVED_DECISION** | D10 (blocked mapping) |
 | `DISPATCHED` | `SEND_CONFIRMED` | `exited` | Matches | AO process exit signal observed | Session termination | **NO AUTOMATIC TRANSITION** | Do NOT set | None | **DECIDED** (observation rule) | Process exit rule |
@@ -346,7 +352,7 @@ Pinned AO `ActivityExited` denotes that an agent process exited while the manage
 | `RUNNING` | `SEND_CONFIRMED` | `active` | Matches | Agent actively executing tools | Task completion | **NO TRANSITION** (remain `RUNNING`) | Do NOT set | None | **DECIDED** | Normal turn polling |
 | `RUNNING` | `SEND_CONFIRMED` | `idle` | Matches | Agent turn completed | Report validity (`AO_IDLE != REPORT_READY`) | **NO TRANSITION** (remain `RUNNING` for P04) | Do NOT set in P03 (P04 sets) | None | **DECIDED** | ADR-011 turn observation |
 | `RUNNING` | `SEND_CONFIRMED` | `waiting_input` | Matches | Agent paused awaiting input | Failure | `UNRESOLVED_DECISION` | Do NOT set | None | **UNRESOLVED_DECISION** | D9 (waiting_input mapping) |
-| `RUNNING` | `SEND_CONFIRMED` | `blocked` | Matches | Agent blocked on permission dialog | TaskState BLOCKED | `UNRESOLVED_DECISION` | Do NOT set | None | **UNRESOLVED_DECISION** | D10 (blocked mapping) |
+| `RUNNING` | `SEND_CONFIRMED` | `blocked` | Matches | Agent blocked on permission dialog | TaskState BLOCKED or attempt termination (ADR policy) | `UNRESOLVED_DECISION` | UNRESOLVED_FOR_ADR (see D10/D12) | None | **UNRESOLVED_DECISION** | D10, D12 (blocked TaskState and attempt-end policy) |
 | `RUNNING` | `SEND_CONFIRMED` | `exited` | Matches | AO process exit signal observed | Session termination | **NO AUTOMATIC TRANSITION** | Do NOT set | None | **DECIDED** (observation rule) | Process exit rule |
 | `RUNNING` | `SEND_CONFIRMED` | `isTerminated: true` | Matches | Session terminated | Crash without evidence | `RUNNING -> FAILED` | Set `ended_at = now` | None | **DECIDED** | Stop/unknown failure |
 | `RUNNING` | `SEND_CONFIRMED` | AO 404 Not Found | N/A | Session purged upstream | Purge reason | `RUNNING -> FAILED` | Set `ended_at = now` | None | **DECIDED** | REC-014 / Approved ADR |
@@ -379,6 +385,7 @@ WORKER_CRASHED_PUBLIC_BASELINE = NOT_CURRENTLY_PROVABLE
 - Baseline classification:
   - `isTerminated == true` + matching intentional-stop provenance -> `WORKER_STOPPED`.
   - `isTerminated == true` without positive cause evidence -> `WORKER_TERMINATION_UNKNOWN` (Task transitions to `FAILED`, honestly logging `WORKER_TERMINATION_UNKNOWN`).
+  - Administrative risk acceptance (`ADMINISTRATIVE_RISK_RESOLUTION`) MUST NEVER be reported as `WORKER_STOPPED` or `TERMINATION_CONFIRMED`.
 
 ---
 
@@ -409,14 +416,14 @@ This ledger defines the exact architectural decisions and handoff contract for A
 | **D2** | ADR-012 Section 10 amendment | Accepted ADR-012 Section 10 states external calls occur strictly after durable `DISPATCHED`. | Task prompt transmission (`/send`) occurs strictly after `TaskAttempt` allocation and durable `DISPATCHED`. | Whether `createWorkerSession` is decoupled as a Pair session lifecycle side effect permissible before task dispatch. | Formally amend ADR-012 Section 10 for session creation timing vs retain strict post-dispatch session spawn | **Amend ADR-012 Section 10** | `UNRESOLVED_FOR_ADR` |
 | **D3** | Spawn uncertainty / orphan handling | Pinned AO `POST /api/v1/sessions` has `PINNED_SPAWN_IDEMPOTENCY = ABSENT`. | `P03T3_SESSION_SPAWN_RECOVERY = UNRESOLVED_BLOCKER`. Client cannot deterministically rediscover session on crash. | Policy for handling possible orphan sessions created in crash window T2 -> T3. | Heuristic project-session query vs background/startup orphan cleanup reaper vs operator audit tool | **Background / manual reaper** | `UNRESOLVED_FOR_ADR` |
 | **D4** | Dispatch saga durable representation | Pinned `POST /api/v1/sessions/{id}/send` has `PINNED_SEND_IDEMPOTENCY = ABSENT`. | 3-stage lifecycle: `DISPATCH_BOUND`, `SEND_REQUESTED`, `SEND_CONFIRMED`. `AOAdapter` remains stateless. | Exact database table / column representation of dispatch saga states. | Dedicated `dispatch_operations` table vs columns on `task_attempts` vs audit log derivation | **Dedicated table (`GIẢ ĐỊNH`)** | `UNRESOLVED_FOR_ADR` |
-| **D5** | `SEND_REQUESTED` uncertain-delivery disposition | Crash after `SEND_REQUESTED` before `SEND_CONFIRMED` leaves `DELIVERY_OUTCOME = UNKNOWN`. Blind resend prohibited. Canonical edges: `DISPATCHED -> FAILED`, `FAILED -> HUMAN_REQUIRED`. | Legal transition path is `DISPATCHED -> FAILED`, followed by `FAILED -> HUMAN_REQUIRED`. No direct `DISPATCHED -> HUMAN_REQUIRED`. | Specific disposition policy (auto-kill old session vs pause and alert operator vs manual audit). Quarantine clears only after old execution termination is authoritatively confirmed. | Issue `/kill` on old session + transition `FAILED -> HUMAN_REQUIRED` vs transition `FAILED -> HUMAN_REQUIRED` without auto-kill | **Auto-kill session + FAILED -> HUMAN_REQUIRED (`GIẢ ĐỊNH`)** | `UNRESOLVED_FOR_ADR` |
-| **D6** | Uncertain-delivery retry quarantine guard | Canonical graph allows `FAILED -> READY`. An unquarantined retry risks duplicate execution while uncertain execution runs. | `UNCERTAIN_DELIVERY_QUARANTINE = MANDATORY`. Bound to original `(attempt_id, session_id, terminal_generation)`. Replacement generation alone is NOT resolution. | Persistence mechanism and clearance protocol for quarantine guard. | Option A (Pair metadata), Option B (Op flag), Option C (Attempt disposition), Option D (Combination) | **Option D: Combo (`GIẢ ĐỊNH`)** | `UNRESOLVED_FOR_ADR` |
+| **D5** | `SEND_REQUESTED` uncertain-delivery disposition | Crash after `SEND_REQUESTED` before `SEND_CONFIRMED` leaves `DELIVERY_OUTCOME = UNKNOWN`. Blind resend prohibited. Canonical edges: `DISPATCHED -> FAILED`, `FAILED -> HUMAN_REQUIRED`. | Legal transition path is `DISPATCHED -> FAILED`, followed by `FAILED -> HUMAN_REQUIRED`. Zero direct `DISPATCHED -> HUMAN_REQUIRED`. | Specific disposition policy. If ADR-016 chooses automatic `/kill` reconciliation: quarantine MUST NOT clear merely because StopWorker returned HTTP success; it clears through that path only AFTER authoritative old execution termination confirmation (`PHYSICAL_EXECUTION_RESOLUTION`). If ADR-016 chooses Class B (authoritative absence) or Class C (administrative risk acceptance), ADR-016 must explicitly define: resolution type, required evidence, operator authority, durable audit record, whether future dispatch is permitted, and preserve that old execution remains physically unresolved. Do not collapse all classes into `TERMINATED`. | Auto-kill session with physical termination verification (Class A) vs operator pause/escalation with administrative risk acceptance (Class C) vs absence verification (Class B) | **Auto-kill session with physical termination confirmation or explicit administrative risk acceptance (`GIẢ ĐỊNH`)** | `UNRESOLVED_FOR_ADR` |
+| **D6** | Uncertain-delivery retry quarantine guard | Canonical graph allows `FAILED -> READY`. An unquarantined retry risks duplicate execution while uncertain execution runs. | `UNCERTAIN_DELIVERY_QUARANTINE = MANDATORY`. Bound to original `(attempt_id, session_id, terminal_generation)`. Automated retry remains prohibited while `resolution_state = UNRESOLVED`. Replacement session/generation alone remains insufficient. | Durable state model and clearance protocol for quarantine guard across candidate resolution classes (physical termination vs administrative risk acceptance). | Option A (Pair metadata), Option B (Op flag), Option C (Attempt disposition), Option D (Combination) | **Option D: Combo (`GIẢ ĐỊNH`)** | `UNRESOLVED_FOR_ADR` |
 | **D7** | Pre-send admissibility by AO activity state | Pinned SessionGuard prohibits writes on `blocked` (`SuppressedAwaitingUser`), `exited` (`SuppressedExited`), `terminated` (`SuppressedTerminated`). `waiting_input` accepts input. `idle` is clean prompt. Generation mismatch breaks fence. | `blocked`, `exited`, `terminated`, and generation mismatch are strictly `SEND_PROHIBITED`. | Admissibility of `active` before task send, and whether Supervisor enforces strict whitelist (`idle`, `waiting_input`) or includes unblocking routines. | Strict whitelist (`idle`, `waiting_input` permitted; all others prohibited) vs retry wait loop for `active` vs automatic nudge | **Strict whitelist (`idle`, `waiting_input` only) (`GIẢ ĐỊNH`)** | `UNRESOLVED_FOR_ADR` |
-| **D8** | Missed-active-window policy | `SEND_CONFIRMED` committed, but subsequent observation snapshot is `idle`. | Does not prove whether prompt ran or was missed. Cannot auto-transition `DISPATCHED -> RUNNING -> REPORT_READY`. | Policy for resolving `SEND_CONFIRMED + idle` (fail attempt vs report artifact probe vs operator escalation). | Transition `FAILED` (`MISSED_ACTIVE_WINDOW`) vs probe for report artifact before transition vs escalate to operator | **Inspect generation, probe report, escalate if ambiguous (`GIẢ ĐỊNH`)** | `UNRESOLVED_FOR_ADR` |
+| **D8** | Missed-active-window policy | `SEND_CONFIRMED` committed, but subsequent observation snapshot is `idle`. | Does not prove whether prompt ran or was missed. Cannot auto-transition `DISPATCHED -> RUNNING -> REPORT_READY`. TASK-P03-003 does NOT perform report artifact reads, workspace file probing, or report validation (strictly owned by TASK-P03-004 and P04). | Lifecycle reconciliation choice for `MISSED_ACTIVE_WINDOW`: (A) fail closed `DISPATCHED -> FAILED`, (B) preserve `DISPATCHED` and escalate lifecycle ambiguity to operator, (C) persist ambiguity disposition and hand off to downstream authorized phase (TASK-P03-004 / P04), or (D) other canonical lifecycle architecture. | Option A (Fail closed: `DISPATCHED -> FAILED`) vs Option B (Preserve `DISPATCHED` and escalate ambiguity) vs Option C (Persist ambiguity disposition and hand off to downstream phase) | **Option C: Persist ambiguity disposition and hand off to downstream phase (or Option A fail-closed) (`GIẢ ĐỊNH`)** | `UNRESOLVED_FOR_ADR` |
 | **D9** | `waiting_input` TaskState mapping | Pinned AO `waiting_input` means agent paused at empty prompt. | Normalized observation is `AO_WAITING_INPUT`. | Whether `waiting_input` transitions TaskState from `RUNNING` or remains in `RUNNING`. | Remain in `RUNNING` and emit telemetry warning vs transition `RUNNING -> BLOCKED` (reason: `UNEXPECTED_INPUT_PROMPT`) | **Remain in `RUNNING` + operator alert (`GIẢ ĐỊNH`)** | `UNRESOLVED_FOR_ADR` |
-| **D10** | `blocked` TaskState mapping | Pinned AO `blocked` means agent stopped on tool permission / approval decision. Automated input prohibited. | Normalized observation is `AO_BLOCKED_DECISION`. Do NOT set `TaskAttempt.ended_at`. | Whether `blocked` observation triggers `RUNNING -> BLOCKED` in workflow state machine. | Transition `RUNNING -> BLOCKED` (followed by `BLOCKED -> HUMAN_REQUIRED`) vs pause observation poller in `RUNNING` awaiting operator decision | **Evaluate `RUNNING -> BLOCKED` (`GIẢ ĐỊNH`)** | `UNRESOLVED_FOR_ADR` |
+| **D10** | `blocked` TaskState mapping | Pinned AO `blocked` means agent stopped on tool permission / approval decision. Automated input prohibited. | Normalized observation is `AO_BLOCKED_DECISION`. Under current unresolved baseline, `TaskAttempt.ended_at` is NOT set unless ADR-016 decides BLOCKED terminates the attempt (see D12). Canonical TaskState `BLOCKED` is not terminal (permits `BLOCKED -> HUMAN_REQUIRED`). | Whether `blocked` observation triggers `RUNNING -> BLOCKED` in workflow state machine, and whether such transition terminates the current TaskAttempt (cross-referenced with D12). | Transition `RUNNING -> BLOCKED` (with attempt termination or retaining open attempt) vs pause observation poller in `RUNNING` awaiting operator decision | **Evaluate `RUNNING -> BLOCKED` (attempt-termination policy unresolved, see D12) (`GIẢ ĐỊNH`)** | `UNRESOLVED_FOR_ADR` |
 | **D11** | Intentional-stop operation provenance | Pinned route is `POST /api/v1/sessions/{sessionId}/kill` returning `KillSessionResponse`. HTTP success does not substitute for observed termination. | Termination classification requires generation-matched stop provenance; HTTP 200 alone does not confirm termination. | Multi-stage durable audit/operation representation (`STOP_REQUESTED`, `STOP_CALL_SUCCEEDED / FAILED`, `STOP_TERMINATION_CONFIRMED`). | 3-stage durable operation bound to attempt/generation vs synchronous blocking kill in StateStore | **3-stage durable operation lifecycle (`GIẢ ĐỊNH`)** | `UNRESOLVED_FOR_ADR` |
-| **D12** | Atomic terminal transition + `ended_at` ownership | ADR-015 specifies SQLite engine and transactional audit log. Canonical auditability requires crash-consistent state transitions. | Terminal outcomes (`RUNNING -> FAILED`, `DISPATCHED -> FAILED`, `RUNNING -> BLOCKED`) must atomically commit Task state + `ended_at = now` + audit event append. Success `ended_at` owned by P04. | StateStore API signature and transaction coordination method for atomic terminal updates. | Unified `AtomicTerminalTransition(...)` method vs explicit multi-entity transaction closure | **Unified StateStore atomic transition method (`GIẢ ĐỊNH`)** | `UNRESOLVED_FOR_ADR` |
+| **D12** | Atomic terminal transition + `ended_at` ownership | ADR-015 specifies SQLite engine and transactional audit log. Canonical auditability requires crash-consistent state transitions. | Terminal failure transitions (`RUNNING -> FAILED`, `DISPATCHED -> FAILED`) must atomically commit Task state + `ended_at = now` + audit event append. Success `ended_at` owned by P04. For `RUNNING -> BLOCKED`, whether it ends an attempt is `UNRESOLVED_FOR_ADR` (see D10): IF ADR-016 decides `RUNNING -> BLOCKED` and `BLOCKED` ends the attempt, then TaskState transition + `ended_at = now` + audit persistence must occur atomically; IF ADR-016 decides `RUNNING -> BLOCKED` while retaining the open attempt, `ended_at` remains NULL; IF ADR-016 chooses no transition on blocked, attempt remains open. Do NOT label `RUNNING -> BLOCKED` as an unconditional terminal outcome. | Whether `BLOCKED` ends the current TaskAttempt (jointly decided with D10) and the StateStore API signature / transaction coordination method for atomic terminal updates. | Unified `AtomicTerminalTransition(...)` method with conditional attempt close vs explicit multi-entity transaction closure | **Unified StateStore atomic transition method (`GIẢ ĐỊNH`)** | `UNRESOLVED_FOR_ADR` |
 | **D13** | Restart scanner coverage for `DISPATCHED` / `RUNNING` | Power loss leaves in-flight tasks in `DISPATCHED` or `RUNNING` with open attempts (`ended_at IS NULL`). | In-flight tasks must be reconciled upon startup without assuming success or failure. | Implementation architecture of the restart recovery scanner (on-startup blocking phase vs background poller integration). | Synchronous pre-flight startup scan vs lazy poller-driven attempt reconciliation | **Synchronous startup recovery sweep (`GIẢ ĐỊNH`)** | `UNRESOLVED_FOR_ADR` |
 
 ---
@@ -454,13 +461,13 @@ ADR_016 = NOT_AUTHORIZED_TO_DRAFT_YET
 ## 19. External Approval Gate
 
 ```text
-PROPOSAL_P03_002 = REVISION_4_PENDING_EXTERNAL_REAUDIT
+PROPOSAL_P03_002 = REVISION_5_PENDING_EXTERNAL_REAUDIT
 P03_ARCHITECTURE_CHANGE = YES
 P03_ADR_REQUIRED = YES
 ADR_016 = NOT_AUTHORIZED_TO_DRAFT_YET
 TASK_P03_003 = NOT_RELEASED
 P03_CODE = HELD_FOR_TASK_P03_003_PRECODE_RECONCILIATION
-ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_TASK_003_PROPOSAL_REAUDIT_004
+ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_TASK_003_PROPOSAL_REAUDIT_005
 ```
 
-Execution is halted awaiting independent External Supervisor re-audit of Proposal Revision 4.
+Execution is halted awaiting independent External Supervisor re-audit of Proposal Revision 5.
