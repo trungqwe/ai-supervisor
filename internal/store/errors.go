@@ -26,4 +26,8 @@ var (
 	ErrStaleContractRevision   = errors.New("store: contract revision is not the latest revision for the task")
 	ErrInvalidContractLineage  = errors.New("store: invalid contract revision lineage")
 	ErrPairBusy                = errors.New("store: pair already has an active task in DISPATCHED, RUNNING, or REVIEWING")
+
+	// Revision 3 additions
+	ErrReadyContractRequired = errors.New("store: ready state requires governing task contract")
+	ErrContractInsertState   = errors.New("store: contract cannot be inserted in current task lifecycle state")
 )

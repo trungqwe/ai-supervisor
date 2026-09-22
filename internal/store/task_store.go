@@ -120,6 +120,7 @@ WHERE task_id = ?
 // TransitionTask executes a compare-and-set state transition on a Task using canonical workflow validation.
 // The READY -> DISPATCHED transition is exclusively owned by PrepareDispatch and is rejected here.
 // When transitioning into active lane states (RUNNING or REVIEWING), the pair active-lane invariant is enforced.
+// When transitioning into READY, governing contract preconditions are enforced inside the same transaction (Finding R3-001).
 func (s *Store) TransitionTask(ctx context.Context, taskID string, expectedFrom, to domain.TaskState) error {
 	// Reject generic READY -> DISPATCHED bypass (Finding R2-001)
 	if expectedFrom == domain.StateReady && to == domain.StateDispatched {
@@ -150,7 +151,46 @@ func (s *Store) TransitionTask(ctx context.Context, taskID string, expectedFrom,
 		return fmt.Errorf("%w: task %q is in state %q, expected %q", ErrStateConflict, taskID, currentState, expectedFrom)
 	}
 
-	// 2. Pair active-lane invariant: exactly one task may be in DISPATCHED, RUNNING, or REVIEWING per Pair (Finding R2-006)
+	// 2. READY-entry contract preconditions inside same transaction (Finding R3-001)
+	if to == domain.StateReady {
+		var revNum int64
+		var isImmutableInt int
+		contractQuery := `
+SELECT revision_number, is_immutable
+FROM task_contracts
+WHERE task_id = ?
+ORDER BY revision_number DESC
+LIMIT 1`
+		err = tx.QueryRowContext(ctx, contractQuery, taskID).Scan(&revNum, &isImmutableInt)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%w: task %q has no persisted contract", ErrReadyContractRequired, taskID)
+			}
+			return fmt.Errorf("store: failed to query task contract for ready check: %w", err)
+		}
+
+		isImmutable := (isImmutableInt == 1)
+
+		switch expectedFrom {
+		case domain.StateDraft:
+			// DRAFT -> READY requires at least one persisted TaskContract revision (guaranteed by err == nil above)
+		case domain.StateRevisionRequired:
+			// REVISION_REQUIRED -> READY requires a NEW latest contract revision that is still is_immutable = false
+			if isImmutable {
+				return fmt.Errorf("%w: transition from REVISION_REQUIRED to READY requires new mutable contract revision (latest rev %d is immutable)", ErrReadyContractRequired, revNum)
+			}
+		case domain.StateFailed:
+			// FAILED -> READY is retry-without-spec-change: requires latest contract is_immutable = true
+			if !isImmutable {
+				return fmt.Errorf("%w: retry from FAILED to READY requires immutable contract revision (latest rev %d is mutable)", ErrReadyContractRequired, revNum)
+			}
+		default:
+			// Any other transition to READY (fail closed)
+			return fmt.Errorf("%w: unsupported transition to READY from %q", ErrReadyContractRequired, expectedFrom)
+		}
+	}
+
+	// 3. Pair active-lane invariant: exactly one task may be in DISPATCHED, RUNNING, or REVIEWING per Pair (Finding R2-006)
 	if to == domain.StateRunning || to == domain.StateReviewing {
 		var activeTaskID, activeState string
 		checkPairQuery := `
@@ -168,7 +208,7 @@ LIMIT 1`
 		}
 	}
 
-	// 3. Execute compare-and-set update
+	// 4. Execute compare-and-set update
 	now := formatTime(timeNow())
 	query := `
 UPDATE tasks

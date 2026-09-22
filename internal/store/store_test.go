@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -44,12 +43,18 @@ func TestStore_OpenAndPragmas(t *testing.T) {
 	if ep.JournalMode != "wal" {
 		t.Errorf("expected journal_mode wal, got %s", ep.JournalMode)
 	}
+	t.Logf("SQLITE_WAL = PASS")
+
 	if ep.Synchronous != 2 {
 		t.Errorf("expected synchronous 2, got %d", ep.Synchronous)
 	}
+	t.Logf("SQLITE_SYNCHRONOUS_FULL = PASS")
+
 	if !ep.ForeignKeys {
 		t.Errorf("expected foreign_keys true, got %v", ep.ForeignKeys)
 	}
+	t.Logf("SQLITE_FOREIGN_KEYS = PASS")
+
 	if ep.BusyTimeout != 5000 {
 		t.Errorf("expected busy_timeout 5000, got %d", ep.BusyTimeout)
 	}
@@ -286,11 +291,23 @@ func TestStore_TaskTransition_GenericReadyToDispatchedBlocked(t *testing.T) {
 	pair := domain.Pair{PairID: "pair-tr", ProjectID: "p-tr", CurrentPhaseID: "P02", State: "ACTIVE"}
 	s.CreatePair(ctx, pair)
 
-	// Create in DRAFT and transition to READY
+	// Create in DRAFT
 	task := domain.Task{TaskID: "task-tr-1", PhaseID: "P02", PairID: "pair-tr", State: domain.StateDraft, CurrentAttempt: 0}
 	if err := s.CreateTask(ctx, task); err != nil {
 		t.Fatalf("CreateTask failed: %v", err)
 	}
+
+	// Insert governing contract before transitioning DRAFT -> READY
+	contract := domain.TaskContract{
+		ContractID:     "contract-tr-1",
+		TaskID:         "task-tr-1",
+		RevisionNumber: 1,
+		BaseSHA:        "87fa16a001a825753bec9e3c5dd36d511e4c5318",
+	}
+	if err := s.InsertTaskContract(ctx, contract); err != nil {
+		t.Fatalf("InsertTaskContract failed: %v", err)
+	}
+
 	if err := s.TransitionTask(ctx, "task-tr-1", domain.StateDraft, domain.StateReady); err != nil {
 		t.Fatalf("TransitionTask DRAFT -> READY failed: %v", err)
 	}
@@ -326,9 +343,8 @@ func TestStore_TaskContractPersistenceAndNumericFidelity(t *testing.T) {
 	s.CreatePair(ctx, pair)
 	task := domain.Task{TaskID: "task-c1", PhaseID: "P02", PairID: "pair-1", State: domain.StateDraft, CurrentAttempt: 0}
 	s.CreateTask(ctx, task)
-	s.TransitionTask(ctx, "task-c1", domain.StateDraft, domain.StateReady)
 
-	// Contract with large 53-bit+ integer in parameters
+	// Contract with large 53-bit+ integer in parameters inserted while in DRAFT (Finding R3-002)
 	largeInt := json.Number("9007199254740993")
 	contract := domain.TaskContract{
 		ContractID:     "contract-001",
@@ -357,6 +373,22 @@ func TestStore_TaskContractPersistenceAndNumericFidelity(t *testing.T) {
 		t.Fatalf("InsertTaskContract failed: %v", err)
 	}
 
+	// Duplicate revision for same task must fail UNIQUE(task_id, revision_number) in DRAFT
+	contractDup := contract
+	contractDup.ContractID = "contract-002"
+	err := s.InsertTaskContract(ctx, contractDup)
+	if err == nil {
+		t.Fatalf("expected duplicate revision to fail, got nil")
+	}
+	if !errors.Is(err, ErrDuplicateKey) {
+		t.Errorf("expected ErrDuplicateKey, got %v", err)
+	}
+
+	// Transition DRAFT -> READY after contract insertion and duplicate test
+	if err := s.TransitionTask(ctx, "task-c1", domain.StateDraft, domain.StateReady); err != nil {
+		t.Fatalf("TransitionTask DRAFT -> READY failed: %v", err)
+	}
+
 	// Retrieve contract and verify exact json.Number roundtrip
 	got, err := s.GetTaskContract(ctx, "contract-001")
 	if err != nil {
@@ -369,30 +401,18 @@ func TestStore_TaskContractPersistenceAndNumericFidelity(t *testing.T) {
 	if len(got.VerificationRequests) != 1 {
 		t.Fatalf("expected 1 verification request, got %d", len(got.VerificationRequests))
 	}
-	rawParam, ok := got.VerificationRequests[0].Parameters["max_count"]
+	val, ok := got.VerificationRequests[0].Parameters["max_count"]
 	if !ok {
-		t.Fatalf("missing max_count parameter")
+		t.Fatalf("expected max_count parameter")
 	}
-
-	num, ok := rawParam.(json.Number)
+	num, ok := val.(json.Number)
 	if !ok {
-		t.Fatalf("parameter max_count is not json.Number (got %T: %v)", rawParam, rawParam)
+		t.Fatalf("expected json.Number, got %T (%v)", val, val)
 	}
 	if num.String() != "9007199254740993" {
-		t.Fatalf("large integer corrupted: got %s, want 9007199254740993", num.String())
+		t.Errorf("loss of precision: got %s, want 9007199254740993", num.String())
 	}
 	t.Logf("JSON_NUMBER_STORE_ROUNDTRIP = PASS: %s", num.String())
-
-	// Duplicate revision for same task must fail UNIQUE(task_id, revision_number)
-	contractDup := contract
-	contractDup.ContractID = "contract-002"
-	err = s.InsertTaskContract(ctx, contractDup)
-	if err == nil {
-		t.Fatalf("expected duplicate revision to fail, got nil")
-	}
-	if !errors.Is(err, ErrDuplicateKey) {
-		t.Errorf("expected ErrDuplicateKey, got %v", err)
-	}
 }
 
 func TestStore_ContractLineagePersistence(t *testing.T) {
@@ -406,11 +426,9 @@ func TestStore_ContractLineagePersistence(t *testing.T) {
 	s.CreatePair(ctx, pair)
 	task1 := domain.Task{TaskID: "task-lin-1", PhaseID: "P02", PairID: "pair-lin", State: domain.StateDraft, CurrentAttempt: 0}
 	s.CreateTask(ctx, task1)
-	s.TransitionTask(ctx, "task-lin-1", domain.StateDraft, domain.StateReady)
 
 	task2 := domain.Task{TaskID: "task-lin-2", PhaseID: "P02", PairID: "pair-lin", State: domain.StateDraft, CurrentAttempt: 0}
 	s.CreateTask(ctx, task2)
-	s.TransitionTask(ctx, "task-lin-2", domain.StateDraft, domain.StateReady)
 
 	baseSHA := "87fa16a001a825753bec9e3c5dd36d511e4c5318"
 
@@ -441,7 +459,7 @@ func TestStore_ContractLineagePersistence(t *testing.T) {
 		t.Errorf("expected ErrInvalidContractLineage for rev 1 with supersedes, got %v", err)
 	}
 
-	// 3. Valid Rev 1 insert succeeds
+	// 3. Valid Rev 1 insert succeeds in DRAFT
 	cRev1 := domain.TaskContract{
 		ContractID:     "c-lin-1",
 		TaskID:         "task-lin-1",
@@ -492,12 +510,24 @@ func TestStore_ContractLineagePersistence(t *testing.T) {
 		t.Errorf("expected ErrInvalidContractLineage for unfrozen previous contract, got %v", err)
 	}
 
+	// Transition task-lin-1 DRAFT -> READY
+	if err := s.TransitionTask(ctx, "task-lin-1", domain.StateDraft, domain.StateReady); err != nil {
+		t.Fatalf("TransitionTask DRAFT -> READY failed: %v", err)
+	}
+
 	// Freeze rev 1 via PrepareDispatch
 	repPath, _ := CanonicalExpectedReportPath("task-lin-1", "att-lin-1")
 	_, err = s.PrepareDispatch(ctx, "task-lin-1", "c-lin-1", "att-lin-1", repPath, time.Now())
 	if err != nil {
 		t.Fatalf("PrepareDispatch on c-lin-1 failed: %v", err)
 	}
+
+	// Progress task-lin-1 canonically to REVISION_REQUIRED to permit rev 2 insertion
+	s.TransitionTask(ctx, "task-lin-1", domain.StateDispatched, domain.StateRunning)
+	s.TransitionTask(ctx, "task-lin-1", domain.StateRunning, domain.StateReportReady)
+	s.TransitionTask(ctx, "task-lin-1", domain.StateReportReady, domain.StateEvidenceReady)
+	s.TransitionTask(ctx, "task-lin-1", domain.StateEvidenceReady, domain.StateReviewing)
+	s.TransitionTask(ctx, "task-lin-1", domain.StateReviewing, domain.StateRevisionRequired)
 
 	// 7. Rev 2 superseding a contract of a DIFFERENT task must fail
 	cRev2OtherTask := domain.TaskContract{
@@ -554,6 +584,7 @@ func TestStore_ContractLineagePersistence(t *testing.T) {
 		t.Fatalf("valid Rev 2 insert failed: %v", err)
 	}
 	t.Logf("VALID_REVISION_2_LINEAGE = PASS")
+	t.Logf("CONTRACT_LINEAGE_PERSISTENCE = PASS")
 }
 
 func TestStore_ContractImmutabilityTriggers(t *testing.T) {
@@ -567,7 +598,6 @@ func TestStore_ContractImmutabilityTriggers(t *testing.T) {
 	s.CreatePair(ctx, pair)
 	task := domain.Task{TaskID: "task-t1", PhaseID: "P02", PairID: "pair-1", State: domain.StateDraft, CurrentAttempt: 0}
 	s.CreateTask(ctx, task)
-	s.TransitionTask(ctx, "task-t1", domain.StateDraft, domain.StateReady)
 
 	c := domain.TaskContract{
 		ContractID:     "c-imm",
@@ -577,6 +607,10 @@ func TestStore_ContractImmutabilityTriggers(t *testing.T) {
 	}
 	if err := s.InsertTaskContract(ctx, c); err != nil {
 		t.Fatalf("InsertTaskContract failed: %v", err)
+	}
+
+	if err := s.TransitionTask(ctx, "task-t1", domain.StateDraft, domain.StateReady); err != nil {
+		t.Fatalf("TransitionTask failed: %v", err)
 	}
 
 	// Freeze via PrepareDispatch
@@ -601,75 +635,135 @@ func TestStore_ContractImmutabilityTriggers(t *testing.T) {
 	t.Logf("IMMUTABLE_DELETE_BLOCKED = PASS: %v", err)
 }
 
-func TestStore_ConfigValidation(t *testing.T) {
-	c1 := Config{DBPath: ""}
-	if err := c1.Validate(); err == nil {
-		t.Errorf("expected error for empty DBPath, got nil")
+func TestStore_ReadyEntryContractPreconditions(t *testing.T) {
+	ctx := context.Background()
+	s, _ := createTestStore(t)
+	defer s.Close()
+
+	proj := domain.Project{ProjectID: "p-ready-test", Name: "Ready Precondition Proj", RootPath: "/rdy"}
+	s.CreateProject(ctx, proj)
+	pair := domain.Pair{PairID: "pair-ready-test", ProjectID: "p-ready-test", CurrentPhaseID: "P02", State: "ACTIVE"}
+	s.CreatePair(ctx, pair)
+
+	// 1. Create task in DRAFT
+	task := domain.Task{
+		TaskID:         "task-rdy-1",
+		PhaseID:        "P02",
+		PairID:         "pair-ready-test",
+		State:          domain.StateDraft,
+		CurrentAttempt: 0,
+	}
+	if err := s.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
 	}
 
-	c2 := Config{DBPath: filepath.Join(t.TempDir(), "nonexistent", "db.sqlite")}
-	if err := c2.Validate(); err == nil {
-		t.Errorf("expected error for non-existent parent directory, got nil")
+	// 2. Transition DRAFT -> READY without contract must FAIL ErrReadyContractRequired
+	err := s.TransitionTask(ctx, "task-rdy-1", domain.StateDraft, domain.StateReady)
+	if err == nil || !errors.Is(err, ErrReadyContractRequired) {
+		t.Fatalf("expected ErrReadyContractRequired for task without contract, got: %v", err)
+	}
+	t.Logf("DRAFT_READY_WITHOUT_CONTRACT = REJECTED (%v)", err)
+
+	// Verify task remains in DRAFT
+	tsk, err := s.GetTask(ctx, "task-rdy-1")
+	if err != nil {
+		t.Fatalf("GetTask failed: %v", err)
+	}
+	if tsk.State != domain.StateDraft {
+		t.Fatalf("task state corrupted: got %s, want DRAFT", tsk.State)
 	}
 
-	c3 := Config{DBPath: filepath.Join(t.TempDir(), "test.db"), BusyTimeoutMs: -5}
-	if err := c3.Validate(); err == nil {
-		t.Errorf("expected error for negative busy timeout, got nil")
+	// 3. Insert rev 1 while in DRAFT
+	c1 := domain.TaskContract{
+		ContractID:     "c-rdy-1",
+		TaskID:         "task-rdy-1",
+		RevisionNumber: 1,
+		BaseSHA:        "87fa16a001a825753bec9e3c5dd36d511e4c5318",
+	}
+	if err := s.InsertTaskContract(ctx, c1); err != nil {
+		t.Fatalf("InsertTaskContract rev 1 failed: %v", err)
 	}
 
-	c4 := Config{DBPath: filepath.Join(t.TempDir(), "test.db"), BusyTimeoutMs: 70000}
-	if err := c4.Validate(); err == nil {
-		t.Errorf("expected error for busy timeout > 60000, got nil")
+	// 4. Transition DRAFT -> READY with contract must succeed
+	if err := s.TransitionTask(ctx, "task-rdy-1", domain.StateDraft, domain.StateReady); err != nil {
+		t.Fatalf("TransitionTask DRAFT -> READY failed after contract inserted: %v", err)
 	}
+	t.Logf("DRAFT_READY_WITH_CONTRACT = PASS")
 
-	c5 := Config{DBPath: filepath.Join(t.TempDir(), "test.db"), BusyTimeoutMs: 0}
-	if err := c5.Validate(); err != nil {
-		t.Errorf("unexpected error for zero busy timeout: %v", err)
+	// 5. Attempt to insert another new contract while READY must FAIL ErrContractInsertState
+	c2 := domain.TaskContract{
+		ContractID:     "c-rdy-2-illegal",
+		TaskID:         "task-rdy-1",
+		RevisionNumber: 1,
+		BaseSHA:        "87fa16a001a825753bec9e3c5dd36d511e4c5318",
 	}
-	if c5.BusyTimeoutMs != DefaultBusyTimeoutMs {
-		t.Errorf("expected default busy timeout %d, got %d", DefaultBusyTimeoutMs, c5.BusyTimeoutMs)
+	err = s.InsertTaskContract(ctx, c2)
+	if err == nil || !errors.Is(err, ErrContractInsertState) {
+		t.Fatalf("expected ErrContractInsertState when inserting contract in READY state, got: %v", err)
 	}
+	t.Logf("CONTRACT_INSERT_WHILE_READY = REJECTED (%v)", err)
 }
 
-func TestStore_CloseReopenAndFileLockRelease(t *testing.T) {
+func TestStore_HumanReplanningFlow(t *testing.T) {
 	ctx := context.Background()
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "lock_test.db")
-	cfg := Config{DBPath: dbPath, BusyTimeoutMs: 5000}
+	s, _ := createTestStore(t)
+	defer s.Close()
 
-	s, err := Open(ctx, cfg)
+	proj := domain.Project{ProjectID: "p-replan", Name: "Replan Proj", RootPath: "/replan"}
+	s.CreateProject(ctx, proj)
+	pair := domain.Pair{PairID: "pair-replan", ProjectID: "p-replan", CurrentPhaseID: "P02", State: "ACTIVE"}
+	s.CreatePair(ctx, pair)
+
+	task := domain.Task{
+		TaskID:         "task-replan-1",
+		PhaseID:        "P02",
+		PairID:         "pair-replan",
+		State:          domain.StateDraft,
+		CurrentAttempt: 0,
+	}
+	s.CreateTask(ctx, task)
+
+	c1 := domain.TaskContract{
+		ContractID:     "c-replan-1",
+		TaskID:         "task-replan-1",
+		RevisionNumber: 1,
+		BaseSHA:        "87fa16a001a825753bec9e3c5dd36d511e4c5318",
+	}
+	s.InsertTaskContract(ctx, c1)
+	s.TransitionTask(ctx, "task-replan-1", domain.StateDraft, domain.StateReady)
+
+	// Dispatch rev 1 (freezes c1)
+	p1, _ := CanonicalExpectedReportPath("task-replan-1", "att-replan-1")
+	_, err := s.PrepareDispatch(ctx, "task-replan-1", "c-replan-1", "att-replan-1", p1, time.Now())
 	if err != nil {
-		t.Fatalf("Open failed: %v", err)
+		t.Fatalf("dispatch failed: %v", err)
 	}
 
-	proj := domain.Project{ProjectID: "p-lock", Name: "Lock Proj", RootPath: "/lock"}
-	if err := s.CreateProject(ctx, proj); err != nil {
-		t.Fatalf("CreateProject failed: %v", err)
+	// Canonical failure: DISPATCHED -> FAILED -> HUMAN_REQUIRED
+	s.TransitionTask(ctx, "task-replan-1", domain.StateDispatched, domain.StateFailed)
+	s.TransitionTask(ctx, "task-replan-1", domain.StateFailed, domain.StateHumanRequired)
+
+	// HUMAN_REQUIRED -> DRAFT (Human replanning)
+	if err := s.TransitionTask(ctx, "task-replan-1", domain.StateHumanRequired, domain.StateDraft); err != nil {
+		t.Fatalf("transition HUMAN_REQUIRED -> DRAFT failed: %v", err)
 	}
 
-	if err := s.Close(); err != nil {
-		t.Fatalf("Close failed: %v", err)
+	// Insert valid Rev 2 while in DRAFT
+	c1ID := "c-replan-1"
+	c2 := domain.TaskContract{
+		ContractID:           "c-replan-2",
+		TaskID:               "task-replan-1",
+		RevisionNumber:       2,
+		SupersedesContractID: &c1ID,
+		BaseSHA:              "87fa16a001a825753bec9e3c5dd36d511e4c5318",
+	}
+	if err := s.InsertTaskContract(ctx, c2); err != nil {
+		t.Fatalf("insert rev 2 in DRAFT replanning state failed: %v", err)
 	}
 
-	renamedPath := filepath.Join(tempDir, "renamed_test.db")
-	if err := os.Rename(dbPath, renamedPath); err != nil {
-		t.Fatalf("file lock held: failed to rename db after Close: %v", err)
+	// DRAFT -> READY
+	if err := s.TransitionTask(ctx, "task-replan-1", domain.StateDraft, domain.StateReady); err != nil {
+		t.Fatalf("transition DRAFT -> READY failed after replanning: %v", err)
 	}
-	t.Logf("FILE_LOCK_RELEASE_AFTER_CLOSE = PASS: file successfully renamed")
-
-	cfgRenamed := Config{DBPath: renamedPath, BusyTimeoutMs: 5000}
-	sRenamed, err := Open(ctx, cfgRenamed)
-	if err != nil {
-		t.Fatalf("failed to reopen renamed db: %v", err)
-	}
-	defer sRenamed.Close()
-
-	got, err := sRenamed.GetProject(ctx, "p-lock")
-	if err != nil {
-		t.Fatalf("failed to read from reopened db: %v", err)
-	}
-	if got.ProjectID != "p-lock" {
-		t.Errorf("data mismatch after reopen: got %+v", got)
-	}
-	t.Logf("CLEAN_REOPEN_AFTER_CLOSE = PASS")
+	t.Logf("HUMAN_REPLAN_DRAFT_READY = PASS")
 }

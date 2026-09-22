@@ -13,7 +13,8 @@ import (
 	"modernc.org/sqlite"
 )
 
-// InsertTaskContract persists a new TaskContract and enforces durable revision lineage invariants (ADR-012).
+// InsertTaskContract persists a new TaskContract and enforces durable revision lineage invariants (ADR-012)
+// and task lifecycle state authority (Finding R3-002).
 func (s *Store) InsertTaskContract(ctx context.Context, c domain.TaskContract) error {
 	if strings.TrimSpace(c.ContractID) == "" {
 		return errors.New("store: contract_id must not be empty")
@@ -33,12 +34,45 @@ func (s *Store) InsertTaskContract(ctx context.Context, c domain.TaskContract) e
 		return fmt.Errorf("%w: new task contract must not be immutable on insert", ErrInvalidContractLineage)
 	}
 
-	// Lineage checks per ADR-012
+	// Prepare JSON serialization before opening transaction
+	payloadBytes, err := json.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("store: failed to serialize task contract: %w", err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: failed to begin contract insert transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// 1. Read task state
+	var taskStateStr string
+	err = tx.QueryRowContext(ctx, "SELECT state FROM tasks WHERE task_id = ?", c.TaskID).Scan(&taskStateStr)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrTaskNotFound
+		}
+		return fmt.Errorf("store: failed to query task state for contract insert: %w", err)
+	}
+	taskState := domain.TaskState(taskStateStr)
+
+	// 2. Validate allowed insertion state (Finding R3-002)
+	// Revision 1 requires task state = DRAFT
+	// Revision > 1 requires task state = REVISION_REQUIRED or DRAFT (supporting human replanning)
+	// All other states reject insertion with ErrContractInsertState
 	if c.RevisionNumber == 1 {
+		if taskState != domain.StateDraft {
+			return fmt.Errorf("%w: contract revision 1 requires task state DRAFT, got %q", ErrContractInsertState, taskState)
+		}
 		if c.SupersedesContractID != nil && strings.TrimSpace(*c.SupersedesContractID) != "" {
 			return fmt.Errorf("%w: revision 1 must not specify supersedes_contract_id", ErrInvalidContractLineage)
 		}
 	} else {
+		if taskState != domain.StateRevisionRequired && taskState != domain.StateDraft {
+			return fmt.Errorf("%w: contract revision %d requires task state REVISION_REQUIRED or DRAFT, got %q", ErrContractInsertState, c.RevisionNumber, taskState)
+		}
+
 		if c.SupersedesContractID == nil || strings.TrimSpace(*c.SupersedesContractID) == "" {
 			return fmt.Errorf("%w: revision %d must specify supersedes_contract_id", ErrInvalidContractLineage, c.RevisionNumber)
 		}
@@ -54,7 +88,7 @@ SELECT task_id, revision_number, base_sha, is_immutable
 FROM task_contracts
 WHERE contract_id = ?
 `
-		err := s.db.QueryRowContext(ctx, queryPrev, prevID).Scan(&prevTaskID, &prevRev, &prevBaseSHA, &prevIsImmutable)
+		err := tx.QueryRowContext(ctx, queryPrev, prevID).Scan(&prevTaskID, &prevRev, &prevBaseSHA, &prevIsImmutable)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("%w: superseded contract %q not found", ErrInvalidContractLineage, prevID)
@@ -76,11 +110,6 @@ WHERE contract_id = ?
 		}
 	}
 
-	payloadBytes, err := json.Marshal(c)
-	if err != nil {
-		return fmt.Errorf("store: failed to serialize task contract: %w", err)
-	}
-
 	query := `
 INSERT INTO task_contracts (
     contract_id, task_id, revision_number, supersedes_contract_id,
@@ -88,7 +117,7 @@ INSERT INTO task_contracts (
 ) VALUES (?, ?, ?, ?, ?, ?, 0)
 `
 
-	_, err = s.db.ExecContext(ctx, query,
+	_, err = tx.ExecContext(ctx, query,
 		c.ContractID,
 		c.TaskID,
 		c.RevisionNumber,
@@ -107,6 +136,10 @@ INSERT INTO task_contracts (
 			}
 		}
 		return fmt.Errorf("store: failed to insert task contract: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: failed to commit contract insert: %w", err)
 	}
 
 	return nil

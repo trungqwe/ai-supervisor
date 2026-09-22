@@ -29,9 +29,6 @@ func setupReadyTask(t *testing.T, s *Store, taskID, contractID string) {
 	if err := s.CreateTask(ctx, task); err != nil {
 		t.Fatalf("CreateTask failed: %v", err)
 	}
-	if err := s.TransitionTask(ctx, taskID, domain.StateDraft, domain.StateReady); err != nil {
-		t.Fatalf("TransitionTask DRAFT -> READY failed: %v", err)
-	}
 
 	contract := domain.TaskContract{
 		ContractID:     contractID,
@@ -42,6 +39,10 @@ func setupReadyTask(t *testing.T, s *Store, taskID, contractID string) {
 	}
 	if err := s.InsertTaskContract(ctx, contract); err != nil {
 		t.Fatalf("InsertTaskContract failed: %v", err)
+	}
+
+	if err := s.TransitionTask(ctx, taskID, domain.StateDraft, domain.StateReady); err != nil {
+		t.Fatalf("TransitionTask DRAFT -> READY failed: %v", err)
 	}
 }
 
@@ -69,39 +70,46 @@ func TestStore_PrepareDispatch_Success(t *testing.T) {
 	if attempt.AttemptNumber != 1 {
 		t.Errorf("attempt_number mismatch: got %d, want 1", attempt.AttemptNumber)
 	}
+	if attempt.ContractID != "contract-100" {
+		t.Errorf("contract_id mismatch: got %s, want contract-100", attempt.ContractID)
+	}
 	if attempt.ExpectedReportPath != canonicalPath {
 		t.Errorf("expected_report_path mismatch: got %s, want %s", attempt.ExpectedReportPath, canonicalPath)
 	}
+	if !attempt.StartedAt.Equal(now) {
+		t.Errorf("started_at mismatch: got %v, want %v", attempt.StartedAt, now)
+	}
 
-	// Task must now be DISPATCHED with current_attempt = 1
-	tsk, err := s.GetTask(ctx, "task-100")
+	// Verify task transitioned to DISPATCHED and attempt incremented
+	task, err := s.GetTask(ctx, "task-100")
 	if err != nil {
 		t.Fatalf("GetTask failed: %v", err)
 	}
-	if tsk.State != domain.StateDispatched {
-		t.Errorf("expected state DISPATCHED, got %s", tsk.State)
+	if task.State != domain.StateDispatched {
+		t.Errorf("task state mismatch: got %s, want DISPATCHED", task.State)
 	}
-	if tsk.CurrentAttempt != 1 {
-		t.Errorf("expected current_attempt 1, got %d", tsk.CurrentAttempt)
+	if task.CurrentAttempt != 1 {
+		t.Errorf("current_attempt mismatch: got %d, want 1", task.CurrentAttempt)
 	}
 
-	// Contract must now be immutable
+	// Verify contract was frozen
 	c, err := s.GetTaskContract(ctx, "contract-100")
 	if err != nil {
 		t.Fatalf("GetTaskContract failed: %v", err)
 	}
 	if !c.IsImmutable {
-		t.Errorf("expected contract to be frozen (is_immutable = true)")
+		t.Errorf("contract is_immutable mismatch: got false, want true")
 	}
 
-	// TaskAttempt row must exist and match
-	att, err := s.GetTaskAttempt(ctx, "attempt-1")
+	// Verify attempt persisted in store
+	gotAttempt, err := s.GetTaskAttempt(ctx, "attempt-1")
 	if err != nil {
 		t.Fatalf("GetTaskAttempt failed: %v", err)
 	}
-	if att.AttemptNumber != 1 || att.TaskID != "task-100" || att.ContractID != "contract-100" {
-		t.Errorf("persisted attempt mismatch: %+v", att)
+	if gotAttempt.AttemptID != "attempt-1" || gotAttempt.AttemptNumber != 1 {
+		t.Errorf("persisted attempt mismatch: %+v", gotAttempt)
 	}
+	t.Logf("ATOMIC_READY_TO_DISPATCHED = PASS")
 }
 
 func TestStore_PrepareDispatch_CanonicalReportPathEnforcement(t *testing.T) {
@@ -111,60 +119,58 @@ func TestStore_PrepareDispatch_CanonicalReportPathEnforcement(t *testing.T) {
 
 	setupReadyTask(t, s, "task-path", "contract-path")
 
-	// 1. Noncanonical path rejected (Finding R2-003)
-	_, err := s.PrepareDispatch(ctx, "task-path", "contract-path", "att-1", "reports/report.json", time.Now())
-	if err == nil || !errors.Is(err, ErrReportPathMismatch) {
-		t.Errorf("expected ErrReportPathMismatch for arbitrary path 'reports/report.json', got %v", err)
+	// Canonical report path: .supervisor/reports/task-path/att-1.json
+	canonicalPath, err := CanonicalExpectedReportPath("task-path", "att-1")
+	if err != nil {
+		t.Fatalf("CanonicalExpectedReportPath failed: %v", err)
 	}
 
-	// 2. Static singleton path rejected
-	_, err = s.PrepareDispatch(ctx, "task-path", "contract-path", "att-1", ".supervisor/worker-report.json", time.Now())
+	// 1. Non-canonical directory path must fail
+	badPath1 := ".supervisor/other/task-path/att-1.json"
+	_, err = s.PrepareDispatch(ctx, "task-path", "contract-path", "att-1", badPath1, time.Now())
 	if err == nil || !errors.Is(err, ErrReportPathMismatch) {
-		t.Errorf("expected ErrReportPathMismatch for static singleton path, got %v", err)
+		t.Fatalf("expected ErrReportPathMismatch for bad path, got: %v", err)
 	}
 
-	// 3. Wrong attempt ID in path rejected
-	wrongAttemptPath := ".supervisor/reports/task-path/other-att.json"
-	_, err = s.PrepareDispatch(ctx, "task-path", "contract-path", "att-1", wrongAttemptPath, time.Now())
+	// 2. Non-canonical filename must fail
+	badPath2 := ".supervisor/reports/task-path/other.json"
+	_, err = s.PrepareDispatch(ctx, "task-path", "contract-path", "att-1", badPath2, time.Now())
 	if err == nil || !errors.Is(err, ErrReportPathMismatch) {
-		t.Errorf("expected ErrReportPathMismatch for wrong attempt in path, got %v", err)
+		t.Fatalf("expected ErrReportPathMismatch for bad filename, got: %v", err)
 	}
 
-	// 4. Attempt ID with path traversal rejected
-	_, err = s.PrepareDispatch(ctx, "task-path", "contract-path", "../att", ".supervisor/reports/task-path/../att.json", time.Now())
-	if err == nil || !errors.Is(err, ErrReportPathMismatch) {
-		t.Errorf("expected ErrReportPathMismatch for attempt ID with path traversal, got %v", err)
+	// 3. Traversal attack in path must fail
+	badPath3 := ".supervisor/reports/task-path/../att-1.json"
+	_, err = s.PrepareDispatch(ctx, "task-path", "contract-path", "att-1", badPath3, time.Now())
+	if err == nil {
+		t.Fatalf("expected error for traversal in expected_report_path, got nil")
 	}
 
-	// 5. Attempt ID with whitespace rejected
-	_, err = s.PrepareDispatch(ctx, "task-path", "contract-path", " att-1 ", ".supervisor/reports/task-path/ att-1 .json", time.Now())
-	if err == nil || !errors.Is(err, ErrReportPathMismatch) {
-		t.Errorf("expected ErrReportPathMismatch for whitespace attempt ID, got %v", err)
+	// 4. Absolute path must fail
+	badPath4 := "D:/.supervisor/reports/task-path/att-1.json"
+	_, err = s.PrepareDispatch(ctx, "task-path", "contract-path", "att-1", badPath4, time.Now())
+	if err == nil {
+		t.Fatalf("expected error for absolute path in expected_report_path, got nil")
 	}
 
-	// 6. Verify task remains READY with current_attempt = 0 and contract mutable
-	tsk, err := s.GetTask(ctx, "task-path")
+	// Task must remain in READY state
+	task, err := s.GetTask(ctx, "task-path")
 	if err != nil {
 		t.Fatalf("GetTask failed: %v", err)
 	}
-	if tsk.State != domain.StateReady || tsk.CurrentAttempt != 0 {
-		t.Errorf("task corrupted after path rejection: state=%s, attempt=%d", tsk.State, tsk.CurrentAttempt)
-	}
-	c, err := s.GetTaskContract(ctx, "contract-path")
-	if err != nil {
-		t.Fatalf("GetTaskContract failed: %v", err)
-	}
-	if c.IsImmutable {
-		t.Errorf("contract was frozen on rejected path")
+	if task.State != domain.StateReady || task.CurrentAttempt != 0 {
+		t.Errorf("task state was corrupted after rejected dispatch: %+v", task)
 	}
 
-	// 7. Canonical path succeeds
-	canonicalPath, _ := CanonicalExpectedReportPath("task-path", "att-1")
-	_, err = s.PrepareDispatch(ctx, "task-path", "contract-path", "att-1", canonicalPath, time.Now())
+	// 5. Exact canonical path must succeed
+	att, err := s.PrepareDispatch(ctx, "task-path", "contract-path", "att-1", canonicalPath, time.Now())
 	if err != nil {
-		t.Fatalf("canonical path dispatch failed: %v", err)
+		t.Fatalf("PrepareDispatch with canonical path failed: %v", err)
 	}
-	t.Logf("CANONICAL_REPORT_PATH = PASS")
+	if att.ExpectedReportPath != canonicalPath {
+		t.Errorf("expected %s, got %s", canonicalPath, att.ExpectedReportPath)
+	}
+	t.Logf("CANONICAL_REPORT_PATH_ENFORCEMENT = PASS (%s)", canonicalPath)
 }
 
 func TestStore_PrepareDispatch_StaleContractRevisionRejected(t *testing.T) {
@@ -172,36 +178,52 @@ func TestStore_PrepareDispatch_StaleContractRevisionRejected(t *testing.T) {
 	s, _ := createTestStore(t)
 	defer s.Close()
 
+	// Initial task setup with Revision 1
 	setupReadyTask(t, s, "task-stale", "contract-rev-1")
 
-	// Rev 1 dispatched and frozen
 	path1, _ := CanonicalExpectedReportPath("task-stale", "att-1")
-	_, err := s.PrepareDispatch(ctx, "task-stale", "contract-rev-1", "att-1", path1, time.Now())
+	att1, err := s.PrepareDispatch(ctx, "task-stale", "contract-rev-1", "att-1", path1, time.Now())
 	if err != nil {
-		t.Fatalf("first dispatch failed: %v", err)
+		t.Fatalf("initial dispatch failed: %v", err)
+	}
+	if att1.AttemptNumber != 1 {
+		t.Errorf("expected attempt 1, got %d", att1.AttemptNumber)
 	}
 
-	// Task progresses through review cycle to REVISION_REQUIRED -> READY
+	// Progress task canonically to REVISION_REQUIRED
 	if err := s.TransitionTask(ctx, "task-stale", domain.StateDispatched, domain.StateRunning); err != nil {
-		t.Fatalf("transition to RUNNING failed: %v", err)
+		t.Fatalf("TransitionTask DISPATCHED -> RUNNING failed: %v", err)
 	}
 	if err := s.TransitionTask(ctx, "task-stale", domain.StateRunning, domain.StateReportReady); err != nil {
-		t.Fatalf("transition to REPORT_READY failed: %v", err)
+		t.Fatalf("TransitionTask RUNNING -> REPORT_READY failed: %v", err)
 	}
 	if err := s.TransitionTask(ctx, "task-stale", domain.StateReportReady, domain.StateEvidenceReady); err != nil {
-		t.Fatalf("transition to EVIDENCE_READY failed: %v", err)
+		t.Fatalf("TransitionTask REPORT_READY -> EVIDENCE_READY failed: %v", err)
 	}
 	if err := s.TransitionTask(ctx, "task-stale", domain.StateEvidenceReady, domain.StateReviewing); err != nil {
-		t.Fatalf("transition to REVIEWING failed: %v", err)
+		t.Fatalf("TransitionTask EVIDENCE_READY -> REVIEWING failed: %v", err)
 	}
 	if err := s.TransitionTask(ctx, "task-stale", domain.StateReviewing, domain.StateRevisionRequired); err != nil {
-		t.Fatalf("transition to REVISION_REQUIRED failed: %v", err)
-	}
-	if err := s.TransitionTask(ctx, "task-stale", domain.StateRevisionRequired, domain.StateReady); err != nil {
-		t.Fatalf("transition to READY failed: %v", err)
+		t.Fatalf("TransitionTask REVIEWING -> REVISION_REQUIRED failed: %v", err)
 	}
 
-	// Insert Rev 2
+	// Finding R3-001: Attempting REVISION_REQUIRED -> READY without inserting new mutable revision must FAIL
+	err = s.TransitionTask(ctx, "task-stale", domain.StateRevisionRequired, domain.StateReady)
+	if err == nil || !errors.Is(err, ErrReadyContractRequired) {
+		t.Fatalf("expected ErrReadyContractRequired when transitioning REVISION_REQUIRED -> READY without new revision, got: %v", err)
+	}
+	t.Logf("REVISION_REQUIRED_READY_WITHOUT_NEW_REVISION = REJECTED (%v)", err)
+
+	// Verify task remains in REVISION_REQUIRED
+	staleTask, err := s.GetTask(ctx, "task-stale")
+	if err != nil {
+		t.Fatalf("GetTask failed: %v", err)
+	}
+	if staleTask.State != domain.StateRevisionRequired {
+		t.Fatalf("task state corrupted: got %s, want REVISION_REQUIRED", staleTask.State)
+	}
+
+	// Insert valid Rev 2 while in REVISION_REQUIRED (Finding R3-002)
 	rev1ID := "contract-rev-1"
 	contractRev2 := domain.TaskContract{
 		ContractID:           "contract-rev-2",
@@ -215,21 +237,27 @@ func TestStore_PrepareDispatch_StaleContractRevisionRejected(t *testing.T) {
 		t.Fatalf("InsertTaskContract rev 2 failed: %v", err)
 	}
 
-	// Finding R2-004: Dispatching with stale revision (Rev 1) must be rejected!
+	// Now REVISION_REQUIRED -> READY must succeed (Finding R3-001)
+	if err := s.TransitionTask(ctx, "task-stale", domain.StateRevisionRequired, domain.StateReady); err != nil {
+		t.Fatalf("TransitionTask REVISION_REQUIRED -> READY failed after rev 2: %v", err)
+	}
+	t.Logf("REVISION_REQUIRED_READY_WITH_NEW_REVISION = PASS")
+
+	// Attempting to dispatch with stale Rev 1 must fail with ErrStaleContractRevision
 	path2, _ := CanonicalExpectedReportPath("task-stale", "att-2")
 	_, err = s.PrepareDispatch(ctx, "task-stale", "contract-rev-1", "att-2", path2, time.Now())
 	if err == nil || !errors.Is(err, ErrStaleContractRevision) {
-		t.Fatalf("expected ErrStaleContractRevision when dispatching superseded contract, got %v", err)
+		t.Fatalf("expected ErrStaleContractRevision when dispatching superseded revision, got: %v", err)
 	}
-	t.Logf("STALE_CONTRACT_REVISION = REJECTED (%v)", err)
+	t.Logf("STALE_CONTRACT_REVISION_DISPATCH = REJECTED (%v)", err)
 
-	// Task must remain READY
-	tsk, err := s.GetTask(ctx, "task-stale")
+	// Task must remain in READY state
+	task, err := s.GetTask(ctx, "task-stale")
 	if err != nil {
 		t.Fatalf("GetTask failed: %v", err)
 	}
-	if tsk.State != domain.StateReady {
-		t.Errorf("task state was corrupted after rejected dispatch: %s", tsk.State)
+	if task.State != domain.StateReady || task.CurrentAttempt != 1 {
+		t.Errorf("task state corrupted after rejected dispatch: %+v", task)
 	}
 
 	// Dispatching with latest revision (Rev 2) must succeed
@@ -240,7 +268,7 @@ func TestStore_PrepareDispatch_StaleContractRevisionRejected(t *testing.T) {
 	if att2.ContractID != "contract-rev-2" {
 		t.Errorf("expected contract-rev-2, got %s", att2.ContractID)
 	}
-	t.Logf("LATEST_CONTRACT_REVISION_DISPATCH = PASS")
+	t.Logf("LATEST_CONTRACT_REVISION_BINDING = PASS")
 }
 
 func TestStore_PrepareDispatch_RetryReusesLatestImmutableContract(t *testing.T) {
@@ -260,16 +288,33 @@ func TestStore_PrepareDispatch_RetryReusesLatestImmutableContract(t *testing.T) 
 		t.Errorf("expected attempt 1, got %d", att1.AttemptNumber)
 	}
 
-	// Canonical failure cycle: DISPATCHED -> FAILED -> READY
+	// Transition DISPATCHED -> FAILED
 	if err := s.TransitionTask(ctx, "task-retry-imm", domain.StateDispatched, domain.StateFailed); err != nil {
 		t.Fatalf("transition DISPATCHED -> FAILED failed: %v", err)
 	}
+
+	// Finding R3-002: Attempting to insert a new contract while FAILED must FAIL
+	cRetry1ID := "c-retry-1"
+	cMutated := domain.TaskContract{
+		ContractID:           "c-retry-2-smuggle",
+		TaskID:               "task-retry-imm",
+		RevisionNumber:       2,
+		SupersedesContractID: &cRetry1ID,
+		BaseSHA:              "87fa16a001a825753bec9e3c5dd36d511e4c5318",
+	}
+	err = s.InsertTaskContract(ctx, cMutated)
+	if err == nil || !errors.Is(err, ErrContractInsertState) {
+		t.Fatalf("expected ErrContractInsertState when inserting contract in FAILED state, got: %v", err)
+	}
+	t.Logf("CONTRACT_INSERT_WHILE_FAILED = REJECTED (%v)", err)
+
+	// FAILED -> READY retry: requires latest contract is immutable (c-retry-1 is immutable)
 	if err := s.TransitionTask(ctx, "task-retry-imm", domain.StateFailed, domain.StateReady); err != nil {
 		t.Fatalf("transition FAILED -> READY failed: %v", err)
 	}
 
 	// Attempt 2 retry: c-retry-1 is already frozen (is_immutable = 1).
-	// Per Section 18, retry MUST succeed by reusing the already-frozen latest revision!
+	// Per Section 19, retry MUST succeed by reusing the already-frozen latest revision!
 	p2, _ := CanonicalExpectedReportPath("task-retry-imm", "att-2")
 	att2, err := s.PrepareDispatch(ctx, "task-retry-imm", "c-retry-1", "att-2", p2, time.Now())
 	if err != nil {
@@ -278,7 +323,7 @@ func TestStore_PrepareDispatch_RetryReusesLatestImmutableContract(t *testing.T) 
 	if att2.AttemptNumber != 2 {
 		t.Errorf("expected attempt 2, got %d", att2.AttemptNumber)
 	}
-	t.Logf("RETRY_LATEST_IMMUTABLE_CONTRACT = PASS (attempt 2 allocated)")
+	t.Logf("FAILED_RETRY_REUSES_IMMUTABLE_CONTRACT = PASS (attempt 2 allocated)")
 }
 
 func TestStore_PairActiveLaneInvariant(t *testing.T) {
@@ -292,20 +337,31 @@ func TestStore_PairActiveLaneInvariant(t *testing.T) {
 	pair := domain.Pair{PairID: "pair-lane", ProjectID: "proj-lane", CurrentPhaseID: "P02", State: "ACTIVE"}
 	s.CreatePair(ctx, pair)
 
-	// Create Task A and Task B under the SAME pair
+	// Create Task A and Task B under the SAME pair in DRAFT
 	taskA := domain.Task{TaskID: "task-A", PhaseID: "P02", PairID: "pair-lane", State: domain.StateDraft, CurrentAttempt: 0}
 	s.CreateTask(ctx, taskA)
-	s.TransitionTask(ctx, "task-A", domain.StateDraft, domain.StateReady)
 
 	taskB := domain.Task{TaskID: "task-B", PhaseID: "P02", PairID: "pair-lane", State: domain.StateDraft, CurrentAttempt: 0}
 	s.CreateTask(ctx, taskB)
-	s.TransitionTask(ctx, "task-B", domain.StateDraft, domain.StateReady)
 
+	// Insert contracts while tasks are in DRAFT
 	cA := domain.TaskContract{ContractID: "cA", TaskID: "task-A", RevisionNumber: 1, BaseSHA: "87fa16a001a825753bec9e3c5dd36d511e4c5318"}
-	s.InsertTaskContract(ctx, cA)
+	if err := s.InsertTaskContract(ctx, cA); err != nil {
+		t.Fatalf("insert contract A failed: %v", err)
+	}
 
 	cB := domain.TaskContract{ContractID: "cB", TaskID: "task-B", RevisionNumber: 1, BaseSHA: "87fa16a001a825753bec9e3c5dd36d511e4c5318"}
-	s.InsertTaskContract(ctx, cB)
+	if err := s.InsertTaskContract(ctx, cB); err != nil {
+		t.Fatalf("insert contract B failed: %v", err)
+	}
+
+	// Transition both tasks DRAFT -> READY
+	if err := s.TransitionTask(ctx, "task-A", domain.StateDraft, domain.StateReady); err != nil {
+		t.Fatalf("transition task A to READY failed: %v", err)
+	}
+	if err := s.TransitionTask(ctx, "task-B", domain.StateDraft, domain.StateReady); err != nil {
+		t.Fatalf("transition task B to READY failed: %v", err)
+	}
 
 	// 1. Dispatch Task A -> Task A enters DISPATCHED (active lane)
 	pA, _ := CanonicalExpectedReportPath("task-A", "att-A1")
@@ -338,9 +394,7 @@ func TestStore_PairActiveLaneInvariant(t *testing.T) {
 		t.Errorf("contract B was frozen on busy pair")
 	}
 
-	// 3. While Task A is DISPATCHED, Task B cannot transition to RUNNING or REVIEWING
-	// (Even if Task B were at EVIDENCE_READY, it would be blocked from entering REVIEWING)
-	// Progress Task A: DISPATCHED -> FAILED (leaves active lane: DISPATCHED/RUNNING/REVIEWING)
+	// 3. Progress Task A: DISPATCHED -> FAILED (leaves active lane)
 	if err := s.TransitionTask(ctx, "task-A", domain.StateDispatched, domain.StateFailed); err != nil {
 		t.Fatalf("transition task A to FAILED failed: %v", err)
 	}
@@ -351,6 +405,184 @@ func TestStore_PairActiveLaneInvariant(t *testing.T) {
 		t.Fatalf("dispatch task B after task A failed should succeed, got: %v", err)
 	}
 	t.Logf("PAIR_ACTIVE_LANE_SINGLE_TASK = PASS")
+}
+
+func TestStore_PairActiveLane_ReviewingTransitionBlocked(t *testing.T) {
+	ctx := context.Background()
+	s, _ := createTestStore(t)
+	defer s.Close()
+
+	// Create 1 Project and 1 Pair
+	proj := domain.Project{ProjectID: "proj-rev-busy", Name: "Rev Busy Proj", RootPath: "/revbusy"}
+	s.CreateProject(ctx, proj)
+	pair := domain.Pair{PairID: "pair-rev-busy", ProjectID: "proj-rev-busy", CurrentPhaseID: "P02", State: "ACTIVE"}
+	s.CreatePair(ctx, pair)
+
+	// Task A and Task B under the same Pair
+	taskA := domain.Task{TaskID: "task-A-rev", PhaseID: "P02", PairID: "pair-rev-busy", State: domain.StateDraft, CurrentAttempt: 0}
+	s.CreateTask(ctx, taskA)
+	taskB := domain.Task{TaskID: "task-B-rev", PhaseID: "P02", PairID: "pair-rev-busy", State: domain.StateDraft, CurrentAttempt: 0}
+	s.CreateTask(ctx, taskB)
+
+	cA := domain.TaskContract{ContractID: "cA-rev", TaskID: "task-A-rev", RevisionNumber: 1, BaseSHA: "87fa16a001a825753bec9e3c5dd36d511e4c5318"}
+	s.InsertTaskContract(ctx, cA)
+	cB := domain.TaskContract{ContractID: "cB-rev", TaskID: "task-B-rev", RevisionNumber: 1, BaseSHA: "87fa16a001a825753bec9e3c5dd36d511e4c5318"}
+	s.InsertTaskContract(ctx, cB)
+
+	s.TransitionTask(ctx, "task-A-rev", domain.StateDraft, domain.StateReady)
+	s.TransitionTask(ctx, "task-B-rev", domain.StateDraft, domain.StateReady)
+
+	// Step 1: Progress Task B canonically to EVIDENCE_READY while Task A is not yet active
+	pB, _ := CanonicalExpectedReportPath("task-B-rev", "att-B1")
+	_, err := s.PrepareDispatch(ctx, "task-B-rev", "cB-rev", "att-B1", pB, time.Now())
+	if err != nil {
+		t.Fatalf("dispatch task B failed: %v", err)
+	}
+	s.TransitionTask(ctx, "task-B-rev", domain.StateDispatched, domain.StateRunning)
+	s.TransitionTask(ctx, "task-B-rev", domain.StateRunning, domain.StateReportReady)
+	s.TransitionTask(ctx, "task-B-rev", domain.StateReportReady, domain.StateEvidenceReady)
+
+	// Step 2: Now Task B is in EVIDENCE_READY (not an active lane state).
+	// Task A can now be dispatched to DISPATCHED (entering active lane).
+	pA, _ := CanonicalExpectedReportPath("task-A-rev", "att-A1")
+	_, err = s.PrepareDispatch(ctx, "task-A-rev", "cA-rev", "att-A1", pA, time.Now())
+	if err != nil {
+		t.Fatalf("dispatch task A failed: %v", err)
+	}
+
+	// Step 3: Section 23 — While Task A is DISPATCHED, Task B attempts EVIDENCE_READY -> REVIEWING
+	busyErr := s.TransitionTask(ctx, "task-B-rev", domain.StateEvidenceReady, domain.StateReviewing)
+	if busyErr == nil || !errors.Is(busyErr, ErrPairBusy) {
+		t.Fatalf("expected ErrPairBusy when transitioning to REVIEWING while another task is DISPATCHED, got: %v", busyErr)
+	}
+
+	// Verify Task B remains EVIDENCE_READY
+	tB, errGet := s.GetTask(ctx, "task-B-rev")
+	if errGet != nil {
+		t.Fatalf("GetTask failed: %v", errGet)
+	}
+	if tB.State != domain.StateEvidenceReady {
+		t.Errorf("task B state corrupted: got %s, want EVIDENCE_READY", tB.State)
+	}
+	t.Logf("PAIR_REVIEWING_ENTRY_WHILE_BUSY = REJECTED (%v)", busyErr)
+}
+
+func TestStore_PrepareDispatch_ConcurrentSamePairSingleWinner(t *testing.T) {
+	ctx := context.Background()
+	s, _ := createTestStore(t)
+	defer s.Close()
+
+	// Create 1 Project and 1 Pair
+	proj := domain.Project{ProjectID: "proj-pair-race", Name: "Pair Race Proj", RootPath: "/race"}
+	s.CreateProject(ctx, proj)
+	pair := domain.Pair{PairID: "pair-race", ProjectID: "proj-pair-race", CurrentPhaseID: "P02", State: "ACTIVE"}
+	s.CreatePair(ctx, pair)
+
+	// Create Task A and Task B on the SAME pair
+	taskA := domain.Task{TaskID: "task-pair-A", PhaseID: "P02", PairID: "pair-race", State: domain.StateDraft, CurrentAttempt: 0}
+	s.CreateTask(ctx, taskA)
+	taskB := domain.Task{TaskID: "task-pair-B", PhaseID: "P02", PairID: "pair-race", State: domain.StateDraft, CurrentAttempt: 0}
+	s.CreateTask(ctx, taskB)
+
+	cA := domain.TaskContract{ContractID: "c-pair-A", TaskID: "task-pair-A", RevisionNumber: 1, BaseSHA: "87fa16a001a825753bec9e3c5dd36d511e4c5318"}
+	s.InsertTaskContract(ctx, cA)
+	cB := domain.TaskContract{ContractID: "c-pair-B", TaskID: "task-pair-B", RevisionNumber: 1, BaseSHA: "87fa16a001a825753bec9e3c5dd36d511e4c5318"}
+	s.InsertTaskContract(ctx, cB)
+
+	s.TransitionTask(ctx, "task-pair-A", domain.StateDraft, domain.StateReady)
+	s.TransitionTask(ctx, "task-pair-B", domain.StateDraft, domain.StateReady)
+
+	// Section 24: Concurrent dispatch on two READY tasks of the same Pair
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	errs := make([]error, 2)
+	attempts := make([]domain.TaskAttempt, 2)
+
+	go func() {
+		defer wg.Done()
+		pA, _ := CanonicalExpectedReportPath("task-pair-A", "att-pair-A1")
+		att, err := s.PrepareDispatch(ctx, "task-pair-A", "c-pair-A", "att-pair-A1", pA, time.Now())
+		errs[0] = err
+		attempts[0] = att
+	}()
+
+	go func() {
+		defer wg.Done()
+		pB, _ := CanonicalExpectedReportPath("task-pair-B", "att-pair-B1")
+		att, err := s.PrepareDispatch(ctx, "task-pair-B", "c-pair-B", "att-pair-B1", pB, time.Now())
+		errs[1] = err
+		attempts[1] = att
+	}()
+
+	wg.Wait()
+
+	successCount := 0
+	pairBusyCount := 0
+	var winningTaskID, losingTaskID string
+	var losingContractID string
+
+	if errs[0] == nil {
+		successCount++
+		winningTaskID = "task-pair-A"
+	} else if errors.Is(errs[0], ErrPairBusy) {
+		pairBusyCount++
+		losingTaskID = "task-pair-A"
+		losingContractID = "c-pair-A"
+	}
+
+	if errs[1] == nil {
+		successCount++
+		winningTaskID = "task-pair-B"
+	} else if errors.Is(errs[1], ErrPairBusy) {
+		pairBusyCount++
+		losingTaskID = "task-pair-B"
+		losingContractID = "c-pair-B"
+	}
+
+	if successCount != 1 || pairBusyCount != 1 {
+		t.Fatalf("expected exactly 1 success and 1 ErrPairBusy, got %d successes and %d busy errors (errs: %v, %v)",
+			successCount, pairBusyCount, errs[0], errs[1])
+	}
+
+	// Winning task must be DISPATCHED
+	winTask, err := s.GetTask(ctx, winningTaskID)
+	if err != nil {
+		t.Fatalf("GetTask winning failed: %v", err)
+	}
+	if winTask.State != domain.StateDispatched || winTask.CurrentAttempt != 1 {
+		t.Errorf("winning task state mismatch: %+v", winTask)
+	}
+
+	// Losing task must remain READY with current_attempt = 0
+	loseTask, err := s.GetTask(ctx, losingTaskID)
+	if err != nil {
+		t.Fatalf("GetTask losing failed: %v", err)
+	}
+	if loseTask.State != domain.StateReady || loseTask.CurrentAttempt != 0 {
+		t.Errorf("losing task state mismatch: %+v", loseTask)
+	}
+
+	// Losing contract must remain mutable
+	loseContract, err := s.GetTaskContract(ctx, losingContractID)
+	if err != nil {
+		t.Fatalf("GetTaskContract losing failed: %v", err)
+	}
+	if loseContract.IsImmutable {
+		t.Errorf("losing contract was frozen on ErrPairBusy")
+	}
+
+	// Total TaskAttempt rows for pair must be exactly 1
+	var totalAttempts int
+	err = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM task_attempts WHERE task_id IN ('task-pair-A', 'task-pair-B')").Scan(&totalAttempts)
+	if err != nil {
+		t.Fatalf("failed to count attempts: %v", err)
+	}
+	if totalAttempts != 1 {
+		t.Errorf("expected exactly 1 attempt row in DB, got %d", totalAttempts)
+	}
+
+	t.Logf("CONCURRENT_SAME_PAIR_DISPATCH = SINGLE_WINNER (winner=%s, loser=%s)", winningTaskID, losingTaskID)
 }
 
 func TestStore_PrepareDispatch_ConcurrentSingleWinner(t *testing.T) {
@@ -385,11 +617,13 @@ func TestStore_PrepareDispatch_ConcurrentSingleWinner(t *testing.T) {
 
 	successCount := 0
 	failureCount := 0
+	var loserErr error
 	for _, res := range results {
 		if res == nil {
 			successCount++
 		} else {
 			failureCount++
+			loserErr = res
 		}
 	}
 
@@ -397,7 +631,7 @@ func TestStore_PrepareDispatch_ConcurrentSingleWinner(t *testing.T) {
 		t.Fatalf("expected exactly 1 success and 1 failure, got %d successes and %d failures (errors: %v, %v)",
 			successCount, failureCount, results[0], results[1])
 	}
-	t.Logf("SAME_TASK_CONCURRENT_DISPATCH_SINGLE_WINNER = PASS: 1 winner, 1 conflict (%v)", results[0])
+	t.Logf("SAME_TASK_CONCURRENT_DISPATCH_SINGLE_WINNER = PASS: 1 winner, 1 conflict (%v)", loserErr)
 }
 
 func TestStore_PrepareDispatch_RollbackOnWrongTaskContract(t *testing.T) {

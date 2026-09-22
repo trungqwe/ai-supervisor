@@ -43,7 +43,7 @@ func TestStore_RestartRecovery_OpenAttempt(t *testing.T) {
 	if c.Classification != ClassificationExternalReconciliationRequired {
 		t.Errorf("expected EXTERNAL_RECONCILIATION_REQUIRED, got %s", c.Classification)
 	}
-	t.Logf("RECOVERY_OPEN_ATTEMPT = EXTERNAL_RECONCILIATION_REQUIRED (%+v)", c)
+	t.Logf("RECOVERY_NULL_ENDED_AT = EXTERNAL_RECONCILIATION_REQUIRED (%+v)", c)
 }
 
 func TestStore_RestartRecovery_InconsistentNoAttempt(t *testing.T) {
@@ -94,7 +94,7 @@ func TestStore_RestartRecovery_InconsistentEndedAttempt(t *testing.T) {
 		t.Fatalf("PrepareDispatch failed: %v", err)
 	}
 
-	// Finding R2-007: Simulate corrupt state where attempt has ended_at set, but task is still in DISPATCHED state
+	// Finding R2-007 / R3-003: Simulate corrupt state where attempt has valid timestamp ended_at set, but task is still in DISPATCHED state
 	endedTime := formatTime(time.Now().UTC())
 	_, err = s.db.ExecContext(ctx, "UPDATE task_attempts SET ended_at = ? WHERE attempt_id = 'att-rec-ended'", endedTime)
 	if err != nil {
@@ -114,5 +114,40 @@ func TestStore_RestartRecovery_InconsistentEndedAttempt(t *testing.T) {
 	if c.Classification != ClassificationInconsistentPersistedState {
 		t.Errorf("expected INCONSISTENT_PERSISTED_STATE for ended attempt, got %s", c.Classification)
 	}
-	t.Logf("RECOVERY_ENDED_ATTEMPT = INCONSISTENT_PERSISTED_STATE (%+v)", c)
+	t.Logf("RECOVERY_TIMESTAMP_ENDED_AT = INCONSISTENT_PERSISTED_STATE (%+v)", c)
+}
+
+func TestStore_RestartRecovery_InconsistentEmptyEndedAttempt(t *testing.T) {
+	ctx := context.Background()
+	s, _ := createTestStore(t)
+	defer s.Close()
+
+	setupReadyTask(t, s, "task-rec-empty", "contract-rec-empty")
+
+	p, _ := CanonicalExpectedReportPath("task-rec-empty", "att-rec-empty")
+	_, err := s.PrepareDispatch(ctx, "task-rec-empty", "contract-rec-empty", "att-rec-empty", p, time.Now())
+	if err != nil {
+		t.Fatalf("PrepareDispatch failed: %v", err)
+	}
+
+	// Finding R3-003: Simulate corrupt state where attempt has empty string ended_at = '', but task is still in DISPATCHED state
+	_, err = s.db.ExecContext(ctx, "UPDATE task_attempts SET ended_at = '' WHERE attempt_id = 'att-rec-empty'")
+	if err != nil {
+		t.Fatalf("failed to set empty ended_at on attempt: %v", err)
+	}
+
+	// Classify recovery candidates
+	candidates, err := s.ClassifyRestartRecovery(ctx)
+	if err == nil || !errors.Is(err, ErrInconsistentPersistedState) {
+		t.Fatalf("expected ErrInconsistentPersistedState for empty string ended_at with DISPATCHED task, got %v", err)
+	}
+
+	if len(candidates) != 1 {
+		t.Fatalf("expected 1 candidate, got %d", len(candidates))
+	}
+	c := candidates[0]
+	if c.Classification != ClassificationInconsistentPersistedState {
+		t.Errorf("expected INCONSISTENT_PERSISTED_STATE for empty string ended_at, got %s", c.Classification)
+	}
+	t.Logf("RECOVERY_EMPTY_STRING_ENDED_AT = INCONSISTENT_PERSISTED_STATE (%+v)", c)
 }
