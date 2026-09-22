@@ -1,7 +1,7 @@
 # ADR-016: Durable Worker Session Binding, Dispatch Saga, and Lifecycle Reconciliation
 
-> **Status**: `PROPOSED — PENDING EXTERNAL APPROVAL`
-> **Date**: 2026-09-22
+> **Status**: `PROPOSED  -  PENDING EXTERNAL REAUDIT` (Revision 1)
+> **Date**: 2026-09-22 (Revision 1: 2026-09-23)
 > **Authority**: Architecture Decision Record
 > **Proposal Authority**: `PROPOSAL-P03-002 Revision 6` (`EXTERNAL_APPROVED`, commit `8709af4b6aaf8613c69a10514971e320e3f90048`)
 > **Deciders**: External Supervisor, Engineering Team
@@ -15,14 +15,16 @@
 
 In Phase P01, runtime proof activities demonstrated that the Agent Orchestrator (`AO`) daemon provides process isolation, ConPTY virtual terminal management, git worktree lifecycle integration, and public session monitoring (`docs/audits/P01_A_AO_RUNTIME_PROOF.md`). In Phase P02, the Supervisor Control Plane domain model, state machine, and SQLite persistence engine were formally implemented and verified (`docs/audits/P02_FINAL_AUDIT = EXTERNAL_AUDIT_APPROVED`).
 
-During pre-code architectural analysis for `TASK-P03-003` (Lifecycle Reconciliation and State Transitions), multiple structural gaps and contract contradictions were identified between the canonical specifications, accepted ADRs, and upstream AO server behavior:
+During pre-code architectural analysis for `TASK-P03-003` (Lifecycle Reconciliation and State Transitions), multiple structural gaps and contract contradictions were identified between canonical specifications, accepted ADRs, and upstream AO server behavior:
 1. **Relational Tension**: Canonical `docs/05_DOMAIN_MODEL.md` mandates `Pair "1" o-- "1" WorkerSession`, while `docs/14_FAILURE_RECOVERY.md` requires immutable auditability of historical `TaskAttempt` execution identities across session recreation.
 2. **Missing Upstream Idempotency**: Upstream AO v0.13.0 endpoints (`POST /api/v1/sessions` and `POST /api/v1/sessions/{id}/send`) lack client-supplied idempotency keys or deduplication guarantees (`PINNED_SPAWN_IDEMPOTENCY = ABSENT`, `PINNED_SEND_IDEMPOTENCY = ABSENT`).
 3. **Uncertain Delivery Window**: A host crash or network failure after dispatch intent is recorded but before delivery confirmation leaves delivery outcome unknown; blind resend risks catastrophic duplicate code execution.
 4. **ADR-012 Conflict**: Accepted ADR-012 Section 10 stated that external calls (`createWorkerSession`, `sendTask`) occur strictly *after* durable `DISPATCHED`, conflicting with pre-provisioning execution environments for Pairs.
 5. **Observability Boundary**: Upstream AO provides no public worker crash evidence, exit codes, or heartbeat mechanisms in its pinned baseline (`PUBLIC_CRASH_EVIDENCE_AVAILABLE_IN_PINNED_BASELINE = NONE`).
 
-`PROPOSAL-P03-002 Revision 6` resolved these gaps through extensive architectural analysis and was formally approved by External Supervisor Re-Audit 006 (commit `8709af4b6aaf8613c69a10514971e320e3f90048`). This ADR establishes the canonical architectural decisions resulting from that proposal.
+`PROPOSAL-P03-002 Revision 6` resolved these gaps through extensive architectural analysis and was formally approved by External Supervisor Re-Audit 006 (commit `8709af4b6aaf8613c69a10514971e320e3f90048`).
+
+Initial draft of ADR-016 (commit `928b0d110058d8ca90d8d9b68d9aa478c1ee089a`) was independently audited by External Supervisor in `docs/audits/P03_ADR_016_EXTERNAL_AUDIT.md`, recording nine findings (`ADR16R1-001` through `ADR16R1-009`) requiring Revision 1. This document establishes Revision 1, surgically addressing all audit findings while remaining strictly within the approved architectural choice space of Proposal Revision 6.
 
 ---
 
@@ -35,7 +37,7 @@ Specifically, the architecture must resolve:
 2. How to sequence session creation and task dispatch without violating state machine invariants or coupling sandbox provisioning failures to task dispatch.
 3. How to represent dispatch progress durably across crash windows where network delivery cannot be verified.
 4. How to prevent duplicate execution when delivery outcome is unknown without violating canonical state machine transitions.
-5. How to reconcile upstream activity observations (`active`, `idle`, `waiting_input`, `blocked`, `exited`) into canonical TaskStates without over-interpreting unproven signals.
+5. How to reconcile upstream activity observations (`active`, `idle`, `waiting_input`, `blocked`, `exited`) into canonical TaskStates without violating the canonical state graph or over-interpreting unproven signals.
 6. How to execute intentional stop operations with cryptographic-grade provenance and without race conditions.
 7. How to guarantee crash-consistent state transitions in SQLite without performing network calls inside database transactions.
 8. How to perform startup restart reconciliation without assuming success or premature failure.
@@ -45,24 +47,24 @@ Specifically, the architecture must resolve:
 ## 3. Decision Drivers
 
 - **Zero Duplicate Execution**: Under no circumstances may the Supervisor re-dispatch or resend a prompt to an unquarantined session whose execution state is uncertain (`NEW_SESSION_OR_GENERATION != RESOLUTION_OF_PRIOR_UNCERTAIN_EXECUTION`).
-- **Strict Canonical State Machine Adherence**: All transitions must execute via valid edges in the canonical workflow graph (`docs/06_WORKFLOW_STATE_MACHINE.md`). No invented TaskStates are permitted.
+- **Strict Canonical State Machine Adherence**: All transitions must execute via valid edges in the canonical workflow graph (`docs/06_WORKFLOW_STATE_MACHINE.md`). No invented TaskStates or illegal transitions (such as `BLOCKED -> RUNNING`) are permitted.
 - **Transactional SQLite Invariants**: In accordance with ADR-015, database transactions must remain short, local, and synchronous. Absolutely NO network or AO API calls are permitted inside SQLite transactions.
-- **Strict Component Boundaries**: Per `PROPOSAL-P03-001`, TASK-P03-003 owns lifecycle observation and state transitions only. TASK-P03-004 owns raw workspace file transport. Phase P04 owns WorkerReport semantic ingestion and validation. TASK-P03-003 must never read files or transition `REPORT_READY`.
+- **Strict Component Boundaries**: Per `PROPOSAL-P03-001`, TASK-P03-003 owns lifecycle observation and state transitions only. TASK-P03-004 owns raw workspace file transport. Phase P04 owns WorkerReport semantic ingestion and validation. TASK-P03-003 must never read files, evaluate semantic report validity, or transition `REPORT_READY`.
 - **Honest Observability**: The Supervisor logs only what is positively proven by authoritative evidence. Absences of evidence must never be synthesized into facts (e.g., termination without cause evidence is logged as `WORKER_TERMINATION_UNKNOWN`, never `WORKER_CRASHED`).
-- **Configurable Operational Policies**: Numeric operational parameters (timeouts, intervals, deadlines) remain strictly unhardcoded (`UNSET`), requiring caller injection.
+- **Configurable Operational Policies**: Numeric operational parameters (timeouts, intervals, deadlines) remain strictly unhardcoded (`UNSET`), requiring caller injection using existing approved policy surfaces.
 
 ---
 
 ## 4. Pinned AO Public Facts
 
 All architecture decisions in this ADR are derived strictly from the verified behavior of `Untrivial-ai/agent-orchestrator` v0.13.0 (Commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`):
-1. **Spawn Wire Route**: `POST /api/v1/sessions` generates an upstream session, allocates a git worktree, and spawns a ConPTY terminal. Returns `201 Created` with a server-generated UUID. Lacks caller-provided idempotency keys (`PINNED_SPAWN_IDEMPOTENCY = ABSENT`).
-2. **Send Wire Route**: `POST /api/v1/sessions/{id}/send` writes text/prompt to the terminal. Returns `200 OK` on write success. Lacks caller-provided message IDs or idempotency keys (`PINNED_SEND_IDEMPOTENCY = ABSENT`).
+1. **Spawn Wire Route**: `POST /api/v1/sessions` generates an upstream session, allocates a git worktree, and spawns a ConPTY terminal. Returns `201 Created` with a server-generated UUID. Lacks caller-provided idempotency keys or correlation fields (`PINNED_SPAWN_IDEMPOTENCY = ABSENT`).
+2. **Send Wire Route**: `POST /api/v1/sessions/{id}/send` writes text/prompt to the terminal. Returns `200 OK` on write acceptance. Lacks caller-provided message IDs or idempotency keys (`PINNED_SEND_IDEMPOTENCY = ABSENT`). HTTP 200 proves only that the upstream write was accepted; it does NOT prove the agent entered `ActivityActive`, does NOT prove the prompt was semantically consumed, and does NOT prove task execution completed.
 3. **Stop Wire Route**: `POST /api/v1/sessions/{sessionId}/kill` terminates the session terminal and marks it terminated (`isTerminated = true`). Returns `200 OK` (`KillSessionResponse`). HTTP `DELETE` does NOT exist in the upstream API.
 4. **Session Observation Wire Route**: `GET /api/v1/sessions/{id}` returns the public `SessionView` struct.
 5. **Activity Taxonomy**: Exactly five (5) activity states exist in pinned AO: `active`, `idle`, `waiting_input`, `blocked`, `exited`.
 6. **SessionGuard Rules**: The upstream session guard refuses automated input writes when activity is `blocked` (`SuppressedAwaitingUser`), `exited` (`SuppressedExited`), `terminated` (`SuppressedTerminated`), or during initial startup (`ErrStartupPending`).
-7. **Execution Generation**: Pinned AO exposes `terminalGeneration` (int) / `RuntimeLaunchID` (string) on `SessionView`. This generation increments on terminal restart or restore, providing an authoritative execution fence for V1 `agy` TUI sessions.
+7. **Execution Generation**: Pinned AO exposes `SessionView.TerminalGeneration` as an opaque `string` (mapping to `Metadata.RuntimeLaunchID`). It serves as an opaque renderer/runtime launch fence for V1 `agy` TUI sessions. It is NOT an integer counter, NOT a monotonic number, and CANNOT be compared using arithmetic ordering (`>` / `<`). Comparisons are strictly equality (`MATCH` vs `MISMATCH`).
 8. **Diagnostic Timestamp**: `lastActivityAt` is an internal diagnostic timestamp updated on terminal activity. It is NOT a heartbeat, NOT a dispatch acknowledgement, and NOT proof of current attempt execution.
 9. **No Public Crash Evidence**: Pinned AO exposes no OS exit codes, signals, or process crash logs on its public API (`PUBLIC_CRASH_EVIDENCE_AVAILABLE_IN_PINNED_BASELINE = NONE`). `ActivityExited` denotes process termination inside an open session, which alone does NOT prove worker crash or session termination.
 
@@ -73,41 +75,41 @@ All architecture decisions in this ADR are derived strictly from the verified be
 1. **Architecture Decision Hierarchy**: Per `docs/24_CHANGE_GOVERNANCE.md`, confirmed user requirements and canonical architecture supersede worker proposals. Modifications to canonical documents require formal external approval.
 2. **TaskState Graph Immutability**: The canonical TaskState graph consists strictly of:
    `DRAFT -> READY -> DISPATCHED -> RUNNING -> REVIEWING -> APPROVED / CANCELLED`
-   with failure and revision branches:
+   with failure, revision, and escalation branches:
    `DISPATCHED -> FAILED`, `RUNNING -> FAILED`, `RUNNING -> BLOCKED`, `BLOCKED -> HUMAN_REQUIRED`, `FAILED -> HUMAN_REQUIRED`, `FAILED -> READY`, `REVIEWING -> REVISION_REQUIRED -> READY`, `HUMAN_REQUIRED -> DRAFT / CANCELLED`.
-   Zero new TaskStates may be added. Saga stages and quarantine flags must reside in auxiliary metadata structures.
+   Zero new TaskStates may be added. There is NO `BLOCKED -> RUNNING` edge. Saga stages and quarantine flags must reside in auxiliary metadata structures.
 3. **Contract Immutability**: Per ADR-010 and ADR-012, once dispatched, a `TaskContract` revision is permanently immutable.
 
 ---
 
 ## 6. Decision Summary
 
-The thirteen core decisions (D1 through D13) established by this ADR are summarized in the decision completeness matrix below. Every decision represents a proposed architectural resolution approved for drafting:
+The thirteen core decisions (D1 through D13) established by this ADR are summarized in the decision completeness matrix below:
 
-### D1–D13 Architectural Decision Completeness Table
+### D1 - D13 Architectural Decision Completeness Table
 
 | Decision ID | Selected Proposed Decision | Primary Rationale | Rejected Alternative(s) | Persistence Impact | TaskState Impact | External Approval Status |
 |---|---|---|---|---|---|---|
-| **D1** | **Model A: Mutable Current Session + Plain Attempt Snapshot** | Preserves canonical `Pair 1 o-- 1 WorkerSession` without cyclic FKs; immutable attempt columns guarantee historical auditability. | Model B (Historical table + active pointer); Model C (Join table). | Adds snapshot columns to `task_attempts`; creates `worker_sessions` table with unique `pair_id`. | None. | `PENDING_EXTERNAL_AUDIT` |
-| **D2** | **Formally Amend ADR-012 Section 10** | Decouples Pair-scoped sandbox provisioning from task-scoped prompt dispatch; `/send` remains strictly post-`DISPATCHED`. | Retain strict post-dispatch session spawn. | None directly. | None. | `PENDING_EXTERNAL_AUDIT` |
-| **D3** | **Fail-Closed Spawn Disposition with Correlation Token and Orphan Reaper** | Pinned AO spawn lacks idempotency; guessing or adopting unproven sessions risks cross-talk; fail-closed ensures integrity. | Heuristic directory adoption; Upstream idempotency assumption. | Pre-spawn audit event with correlation token. | None. | `PENDING_EXTERNAL_AUDIT` |
-| **D4** | **Dedicated `dispatch_operations` Table with 3-Stage Saga Lifecycle** | Cleanly tracks `DISPATCH_BOUND -> SEND_REQUESTED -> SEND_CONFIRMED` without bloating core domain entities; ensures crash recovery. | Columns on `task_attempts`; Pure audit log event sourcing. | Creates `dispatch_operations` table. | None (TaskState remains `DISPATCHED`). | `PENDING_EXTERNAL_AUDIT` |
-| **D5** | **Fail-Closed Terminal Failure (`DISPATCHED -> FAILED`) with Immediate Quarantine** | Pinned `/send` lacks delivery proof on crash; assuming failure and quarantining prevents split-brain execution. | Blind resend; Silent continuation; Direct `DISPATCHED -> HUMAN_REQUIRED`. | Records `resolution_state` in dispatch operations and audit log. | `DISPATCHED -> FAILED -> HUMAN_REQUIRED`. | `PENDING_EXTERNAL_AUDIT` |
-| **D6** | **Option D: Double-Gated Quarantine (Pair Lane Lock + Attempt Quarantine)** | Provides defense-in-depth against duplicate execution across both pair lane and task attempt levels. | Single-level lane check; Single-level attempt check. | `worker_sessions.quarantine_state` and `task_attempts.recovery_disposition`. | Blocks `FAILED -> READY` while quarantined. | `PENDING_EXTERNAL_AUDIT` |
-| **D7** | **Strict Whitelist Pre-Send Admissibility (`idle`, `waiting_input` only)** | SessionGuard blocks writes on `blocked`/`exited`/`terminated`; `active` before send indicates foreign turn. | Permitting `active` before send; Automated dialog nudging. | Records rejection audit event. | Rejection halts dispatch or fails attempt. | `PENDING_EXTERNAL_AUDIT` |
-| **D8** | **Option C: Persist Ambiguity Disposition and Handoff Downstream** | Respects task boundaries (TASK-P03-003 does not read files); allows downstream phases to validate fast-completing turns. | Immediate fail-closed; In-task report probing. | `task_attempts.recovery_disposition = 'MISSED_ACTIVE_WINDOW_AMBIGUITY'`. | `DISPATCHED -> RUNNING` (with ambiguity flag). | `PENDING_EXTERNAL_AUDIT` |
-| **D9** | **Preserve `RUNNING`, Emit Diagnostic Telemetry, Continue Polling** | `waiting_input` indicates worker is at empty prompt; does not indicate failure or permission blockage. | Transition to `BLOCKED`; Transition to `FAILED`. | Diagnostic audit telemetry only. | None (remains `RUNNING`). | `PENDING_EXTERNAL_AUDIT` |
-| **D10** | **Transition `RUNNING -> BLOCKED`, Retain Open Attempt (`ended_at = NULL`)** | Canonical `BLOCKED` allows operator unblocking/escalation; closing attempt would preclude resumption. | Closing attempt (`ended_at = now`); Ignoring blocked activity. | TaskState updated to `BLOCKED`; `ended_at` remains `NULL`. | `RUNNING -> BLOCKED`. | `PENDING_EXTERNAL_AUDIT` |
-| **D11** | **3-Stage Durable Stop Operation Lifecycle via `POST .../kill`** | HTTP 200 proves only kill command acceptance; termination requires authoritative generation-matched observation. | Immediate termination assumption; Using HTTP `DELETE`. | Dedicated `stop_operations` records. | Drives `RUNNING -> FAILED` (`WORKER_STOPPED`). | `PENDING_EXTERNAL_AUDIT` |
-| **D12** | **Unified StateStore Atomic Terminal Transition (`AtomicTerminalTransition`)** | Ensures crash consistency: TaskState CAS, attempt `ended_at`, and audit event committed in one SQLite transaction. | Multi-method non-transactional updates; Network calls inside transactions. | Atomically updates `tasks`, `task_attempts`, `audit_events`. | Executes terminal failure transitions. | `PENDING_EXTERNAL_AUDIT` |
-| **D13** | **Synchronous Startup Recovery Sweep for In-Flight Tasks and Operations** | Reconciles power-loss crash states before accepting new work; handles AO unreachability gracefully without blind failures. | Lazy polling reconciliation; Blind failure of in-flight tasks. | Recovery audit records. | Reconciles in-flight tasks. | `PENDING_EXTERNAL_AUDIT` |
+| **D1** | **Model A: Mutable Current Session + Plain Attempt Snapshot with Canonical Fields** | Preserves canonical `Pair 1 o-- 1 WorkerSession` without cyclic FKs; maps `runtime_type`, `worker_agent_id`, `status`; immutable attempt snapshot columns guarantee historical auditability. | Model B (Historical table + active pointer); Model C (Join table). | Adds snapshot columns to `task_attempts`; creates `worker_sessions` table mapping all canonical fields. | None. | `PENDING_EXTERNAL_REAUDIT` |
+| **D2** | **Formally Amend ADR-012 Section 10** | Decouples Pair-scoped sandbox provisioning from task-scoped prompt dispatch; `/send` remains strictly post-`DISPATCHED`. | Retain strict post-dispatch session spawn. | None directly. | None. | `PENDING_EXTERNAL_REAUDIT` |
+| **D3** | **Fail-Closed Spawn Disposition with Local Audit Correlation and Operator-Audited Cleanup** | Pinned AO spawn exposes no caller correlation ID; unreferenced AO sessions cannot be proven owned by Supervisor; automatic killing of unowned sessions is prohibited; spawn orphan identity is not deterministically recoverable. | Automatic orphan reaper; Heuristic directory adoption. | Audit event `SESSION_SPAWN_REQUESTED` with local correlation token. | None. | `PENDING_EXTERNAL_REAUDIT` |
+| **D4** | **Dedicated `dispatch_operations` Table with Correct Foreign Key** | Tracks `DISPATCH_BOUND -> SEND_REQUESTED -> SEND_CONFIRMED`; correctly references `task_attempts(attempt_id) ON DELETE RESTRICT`. | Referencing non-existent `task_attempts(id)`; Columns on `task_attempts`. | Creates `dispatch_operations` table. | None (TaskState remains `DISPATCHED`). | `PENDING_EXTERNAL_REAUDIT` |
+| **D5** | **Fail-Closed Terminal Failure (`DISPATCHED -> FAILED`) with Immediate Quarantine** | Pinned `/send` lacks delivery proof on crash; assuming failure and quarantining prevents split-brain execution. | Blind resend; Silent continuation; Direct `DISPATCHED -> HUMAN_REQUIRED`. | Records `resolution_state` in dispatch operations and audit log. | `DISPATCHED -> FAILED -> HUMAN_REQUIRED`. | `PENDING_EXTERNAL_REAUDIT` |
+| **D6** | **Option D: Double-Gated Quarantine (Pair Lane Lock + Attempt Quarantine)** | Provides defense-in-depth against duplicate execution across both pair lane and task attempt levels. | Single-level lane check; Single-level attempt check. | `worker_sessions.quarantine_state` and `task_attempts.recovery_disposition`. | Blocks `FAILED -> READY` while quarantined. | `PENDING_EXTERNAL_REAUDIT` |
+| **D7** | **Strict Whitelist Pre-Send Admissibility (`idle`, `waiting_input` only)** | SessionGuard blocks writes on `blocked`/`exited`/`terminated`; `active` before send indicates foreign turn; `terminal_generation` is opaque string. | Permitting `active` before send; Automated dialog nudging. | Records rejection audit event. | Rejection halts dispatch or fails attempt. | `PENDING_EXTERNAL_REAUDIT` |
+| **D8** | **Option C: Persist Ambiguity Disposition and Handoff Downstream without Defining P04 Failure Policy** | Respects task boundaries (TASK-P03-003 does not read files or evaluate evidence); downstream phases evaluate their own report contracts; no modified files does not universally prove failure. | Immediate fail-closed; In-task report probing; Predefining "no modified files = FAILED". | `task_attempts.recovery_disposition = 'MISSED_ACTIVE_WINDOW_AMBIGUITY'`. | `DISPATCHED -> RUNNING` (with ambiguity flag). | `PENDING_EXTERNAL_REAUDIT` |
+| **D9** | **Preserve `RUNNING`, Emit Diagnostic Telemetry, Continue Polling** | `waiting_input` indicates worker is at empty prompt; does not indicate failure or permission blockage. | Transition to `BLOCKED`; Transition to `FAILED`. | Diagnostic audit telemetry only. | None (remains `RUNNING`). | `PENDING_EXTERNAL_REAUDIT` |
+| **D10** | **Graph-Compatible Blocked Handling: Preserve `RUNNING` with `AO_BLOCKED_DECISION` Disposition; One-Way Escalation to `BLOCKED -> HUMAN_REQUIRED`** | Canonical graph has NO `BLOCKED -> RUNNING` edge; AO `blocked` leaves TaskState in `RUNNING` while attempt remains open (`ended_at = NULL`); automated input suppressed; formal escalation follows canonical one-way path. | Claiming `BLOCKED -> RUNNING` resumption; Terminating attempt on blocked observation. | `task_attempts.recovery_disposition = 'AO_BLOCKED_DECISION'`. | TaskState remains `RUNNING` unless formally escalated. | `PENDING_EXTERNAL_REAUDIT` |
+| **D11** | **3-Stage Durable Stop Operation Lifecycle via `POST .../kill` with Complete Provenance Schema** | Full schema binds `pair_id`, `task_id`, `contract_id`, `attempt_id`, timestamps, and actor; HTTP 200 proves only kill acceptance; termination requires authoritative generation-matched observation. | Reduced schema omitting task/attempt keys; Immediate termination assumption; HTTP `DELETE`. | Complete `stop_operations` table schema. | Drives `RUNNING -> FAILED` (`WORKER_STOPPED`). | `PENDING_EXTERNAL_REAUDIT` |
+| **D12** | **Unified StateStore Atomic Terminal Transition (`AtomicTerminalTransition`)** | Ensures crash consistency: TaskState CAS, attempt `ended_at`, and audit event committed in one SQLite transaction; decoupled from non-escalated observation. | Multi-method non-transactional updates; Network calls inside transactions. | Atomically updates `tasks`, `task_attempts`, `audit_events`. | Executes terminal failure transitions. | `PENDING_EXTERNAL_REAUDIT` |
+| **D13** | **Synchronous Startup Recovery Sweep Covering All Non-Terminal Operations with Existing Poll Interval Retry** | Enumerates all non-terminal dispatch and stop operations (`STOP_REQUESTED`, `STOP_CALL_SUCCEEDED`, `SEND_REQUESTED`); uses existing `SUPERVISOR_ACTIVITY_POLL_INTERVAL` when AO unreachable without inventing new policies. | Scanning `STOP_REQUESTED` only; Inventing new recovery retry policies; Blind failure of in-flight tasks. | Recovery audit records. | Reconciles in-flight tasks and sagas. | `PENDING_EXTERNAL_REAUDIT` |
 
 ---
 
-## 7. D1 — Pair / WorkerSession Persistence Model
+## 7. D1: Pair / WorkerSession Persistence Model
 
 ### Source / Canonical Facts
-- Canonical `docs/05_DOMAIN_MODEL.md` defines `Pair "1" o-- "1" WorkerSession`.
+- Canonical `docs/05_DOMAIN_MODEL.md` defines `Pair "1" o-- "1" WorkerSession` with fields: `session_id`, `pair_id`, `runtime_type`, `worktree_path`, `worker_agent_id`, and `status`.
 - Pinned AO `session_id` persists across terminal restore operations.
 - `TaskAttempt` requires immutable record of the execution identity under which work was performed.
 
@@ -115,13 +117,23 @@ The thirteen core decisions (D1 through D13) established by this ADR are summari
 - Model A (`GIẢ ĐỊNH`): Mutable Current Session in `worker_sessions` + Plain Historical Attempt Snapshot in `task_attempts`.
 
 ### Selected PROPOSED_DECISION
-**PROPOSED_DECISION: Adopt Model A (Mutable Current WorkerSession + Self-Contained TaskAttempt Execution Snapshot)**.
-1. The `worker_sessions` table maintains exactly one current active worker session per Pair, keyed by `pair_id TEXT PRIMARY KEY / UNIQUE`. Columns: `pair_id`, `session_id`, `worktree_path`, `terminal_generation`, `quarantine_state`, `created_at`, `updated_at`.
-2. The `task_attempts` table stores self-contained execution snapshot columns: `session_id TEXT` and `terminal_generation TEXT`, populated at `DISPATCH_BOUND` and permanently immutable.
+**PROPOSED_DECISION: Adopt Model A (Mutable Current WorkerSession with Full Canonical Field Mapping + Self-Contained TaskAttempt Execution Snapshot)**.
+1. The `worker_sessions` table maintains exactly one current active worker session per Pair, keyed by `pair_id TEXT PRIMARY KEY / UNIQUE`, explicitly mapping all canonical fields:
+   - `pair_id TEXT PRIMARY KEY REFERENCES pairs(pair_id) ON DELETE RESTRICT`
+   - `session_id TEXT NOT NULL` (upstream AO session UUID)
+   - `runtime_type TEXT NOT NULL` (normalized value for V1: `'agy_tui'` for Agy running in ConPTY TUI mode)
+   - `worktree_path TEXT NOT NULL` (local worktree path provisioned by AO)
+   - `worker_agent_id TEXT NOT NULL` (canonical worker/harness identity bound to the Pair, e.g. `'agy'`)
+   - `status TEXT NOT NULL` (Supervisor-owned normalized status: `'ACTIVE'`, `'IDLE'`, `'TERMINATED'`, `'QUARANTINED'`, distinct from transient AO activity states)
+   - `terminal_generation TEXT NOT NULL` (opaque string launch fence)
+   - `quarantine_state TEXT NOT NULL DEFAULT 'CLEARED'` (`'CLEARED'` or `'QUARANTINED'`)
+   - `created_at TIMESTAMP NOT NULL`
+   - `updated_at TIMESTAMP NOT NULL`
+2. The `task_attempts` table stores self-contained execution snapshot columns: `session_id TEXT` and `terminal_generation TEXT` (opaque string), populated at `DISPATCH_BOUND` and permanently immutable.
 3. No relational Foreign Key constraint exists between `task_attempts.session_id` and `worker_sessions.session_id`.
 4. Session Replacement: If a Pair's session is killed or recreated, `worker_sessions` is updated in place. Existing historical `task_attempts` remain completely unaffected.
-5. Session Restore: Restoring a session within AO preserves `session_id` but increments `terminal_generation`. The `worker_sessions` record updates its generation accordingly.
-6. Stale Observation Protection: Polling and recovery workers match upstream `terminalGeneration` against `task_attempts.terminal_generation`. If they differ, the observation is rejected with `STALE_EXECUTION_GENERATION`.
+5. Session Restore: Restoring a session within AO preserves `session_id` while updating `terminal_generation` to a new opaque string. The `worker_sessions` record updates its generation accordingly.
+6. Stale Observation Protection: Polling and recovery workers match upstream `terminalGeneration` string against `task_attempts.terminal_generation`. If they differ (`MISMATCH`), the observation is rejected with `STALE_EXECUTION_GENERATION`.
 
 ### Rationale
 Model A perfectly preserves the canonical 1:1 relationship between Pair and WorkerSession. It avoids the cyclic Foreign Key constraints that Model B introduces (where `pairs` points to `worker_sessions` and `worker_sessions` points to `pairs`), and avoids the join overhead and entity proliferation of Model C (`attempt_session_bindings`). Historical attempt auditability is completely guaranteed because snapshot columns on `task_attempts` are write-once.
@@ -134,7 +146,7 @@ Model A perfectly preserves the canonical 1:1 relationship between Pair and Work
 Snapshot columns `(session_id, terminal_generation)` on `task_attempts` are permanently immutable once written.
 
 ### Persistence Impact
-Adds columns `session_id TEXT` and `terminal_generation TEXT` to `task_attempts`. Defines `worker_sessions` schema.
+Adds columns `session_id TEXT`, `terminal_generation TEXT`, and `recovery_disposition TEXT` to `task_attempts`. Defines `worker_sessions` schema mapping all canonical fields.
 
 ### State-Machine Impact
 None.
@@ -153,7 +165,7 @@ YES.
 
 ---
 
-## 8. D2 — ADR-012 External-Side-Effect Amendment
+## 8. D2: ADR-012 External-Side-Effect Amendment
 
 ### Source / Canonical Facts
 - Accepted ADR-012 Section 10 currently states: *"External AO API calls (`createWorkerSession`, `sendTask`) occur strictly after the durable `DISPATCHED` record exists."*
@@ -163,7 +175,7 @@ YES.
 
 ### Selected PROPOSED_DECISION
 **PROPOSED_DECISION: Formally Amend ADR-012 Section 10 to Decouple Pair Session Lifecycle Side Effects from Task Execution Side Effects**.
-1. **Pair Session Lifecycle Side Effect (`createWorkerSession`)**: The creation, provisioning, or restoration of a worker session sandbox is classified as infrastructure provisioning scoped to the `Pair`. It MAY occur prior to task dispatch, establishing a durable `WorkerSession` binding on the Pair.
+1. **Pair Session Lifecycle Side Effect (`createWorkerSession`)**: The creation, provisioning, or restoration of a worker session sandbox is classified as infrastructure management scoped to the `Pair`. It MAY occur prior to task dispatch, establishing a durable `WorkerSession` binding on the Pair.
 2. **Task Execution Side Effect (`sendTask` / `/send`)**: The transmission of a task specification and prompt to an agent is classified as task execution. It remains strictly governed by the invariant: `TaskAttempt` MUST be allocated and `TaskState = DISPATCHED` MUST be durably committed in SQLite BEFORE `/send` is called.
 3. Amendment text is formally codified in Section 26 of this ADR.
 
@@ -196,45 +208,48 @@ YES.
 
 ---
 
-## 9. D3 — Spawn Uncertainty / Orphan Handling
+## 9. D3: Spawn Uncertainty / Orphan Handling
 
 ### Source / Canonical Facts
-- Pinned AO `POST /api/v1/sessions` has `PINNED_SPAWN_IDEMPOTENCY = ABSENT`.
-- A crash between upstream session creation (T2) and local database commit (T3) results in an active AO session whose ID is unknown to the Supervisor.
+- Pinned AO `POST /api/v1/sessions` has `PINNED_SPAWN_IDEMPOTENCY = ABSENT` and exposes NO caller correlation field in the spawn request.
+- A crash between upstream session creation (T2) and local database commit (T3) results in an active AO session whose ID is uncommitted in the Supervisor.
+- Fact: `P03_SPAWN_ORPHAN_IDENTITY = NOT_DETERMINISTICALLY_RECOVERABLE`.
+- Safety Invariant: `UNOWNED_OR_UNCORRELATED_AO_SESSION MUST_NOT_BE_AUTOMATICALLY_KILLED`.
 
 ### Proposal Revision-6 Recommendation
-- Fail-closed operational disposition + deterministic identity verification + Background/startup orphan reaper (`GIẢ ĐỊNH`).
+- Fail-closed operational disposition + local audit correlation + operator-audited cleanup (`GIẢ ĐỊNH`).
 
 ### Selected PROPOSED_DECISION
-**PROPOSED_DECISION: Adopt Fail-Closed Spawn Disposition with Client Correlation Tokens and Background/Manual Orphan Reaper**.
-1. When initiating session spawn, the Supervisor generates a unique `client_token` / correlation ID and logs it in the audit trail.
-2. If a crash occurs during spawn before the returned `session_id` is committed:
-   - On restart, the Supervisor does NOT attempt heuristic adoption of upstream sessions based on timestamps or paths.
-   - The Pair provisioning operation is marked `PROVISIONING_FAILED`.
-   - The Supervisor requires a fresh, explicit spawn operation.
-3. Orphan Cleanup: A standalone background/manual reaper tool queries AO for sessions whose paths match the workspace root but whose IDs do not exist in the Supervisor's `worker_sessions` or recent `task_attempts`. These orphaned sessions are safely terminated via `POST /api/v1/sessions/{id}/kill`.
+**PROPOSED_DECISION: Adopt Fail-Closed Spawn Disposition with Local Audit Correlation and Operator-Audited Cleanup**.
+1. **Local Audit Correlation**: When initiating session spawn, the Supervisor generates a unique `client_token` in local durable audit logs prior to calling `POST /api/v1/sessions`. This token is for `LOCAL_AUDIT_CORRELATION_ONLY`. It is NOT transmitted upstream, NOT an AO session identity, NOT an idempotency key, and NOT proof of upstream session ownership.
+2. **Crash Disposition (T2 -> T3)**: If a crash occurs during spawn before the returned `session_id` is committed:
+   - On restart, the Supervisor does NOT attempt heuristic adoption of uncommitted upstream sessions.
+   - The Supervisor does NOT automatically kill upstream sessions solely because they are unreferenced in its database. Another AO session may have been created by manual use, test tooling, or another consumer.
+   - The Pair provisioning operation is marked failed in local durable governance (`PROVISIONING_FAILED`).
+   - The affected Pair lane is quarantined against automatic dispatch until resolved.
+3. **Operator-Audited Cleanup**: A diagnostic cleanup tool may present unreferenced candidate AO sessions to an authorized operator. However, terminating any session via `POST /api/v1/sessions/{id}/kill` requires explicit operator selection and positive scope authority. Automatic unattended reaper deletions are strictly prohibited.
 
 ### Rationale
-Without upstream idempotency keys, heuristic adoption based on worktree paths or creation times is dangerous; it risks binding to a session created by another user, test process, or previous run. Fail-closed behavior guarantees complete identity correctness.
+Because pinned AO spawn provides no client correlation field, unreferenced sessions cannot be proven to belong to the Supervisor. The same principle that forbids heuristic adoption (path does not prove identity) equally forbids automatic killing (path does not prove ownership). Operator-audited cleanup guarantees safety.
 
 ### Rejected Alternatives
+- **Automatic Background Orphan Reaper**: Rejected under Finding `ADR16R1-001` as dangerous; risks destroying sessions created by other tools or users sharing the AO daemon.
 - **Heuristic Path Adoption**: Rejected as unsafe; path matching cannot prove that a session was created for the specific pending dispatch.
-- **Upstream Idempotency Assumption**: Rejected as factually false under pinned AO v0.13.0.
 
 ### Safety Invariant
-The Supervisor never adopts or binds an upstream session without an authoritative, committed record of its assignment.
+No upstream AO session is ever automatically terminated without an authoritative local record of its ownership or explicit operator authorization.
 
 ### Persistence Impact
-Records `SESSION_SPAWN_REQUESTED` audit event with client correlation token.
+Records `SESSION_SPAWN_REQUESTED` audit event with local correlation token.
 
 ### State-Machine Impact
 None.
 
 ### Restart Impact
-Crashed spawn attempts do not block Supervisor startup; flagged as uncommitted and safe to re-attempt.
+Crashed spawn operations do not block Supervisor startup; Pair marked `PROVISIONING_FAILED` awaiting operator attention.
 
 ### Auditability Impact
-Audit log explicitly documents failed spawn attempts and subsequent cleanup operations.
+Audit log explicitly documents failed spawn attempts and operator-authorized cleanup actions.
 
 ### Implementation Ownership
 TASK-P03-003.
@@ -244,52 +259,53 @@ YES.
 
 ---
 
-## 10. D4 — Durable Dispatch Saga Representation
+## 10. D4: Durable Dispatch Saga Representation
 
 ### Source / Canonical Facts
 - Pinned AO `POST /api/v1/sessions/{id}/send` has `PINNED_SEND_IDEMPOTENCY = ABSENT`.
+- Current P02 database schema defines `task_attempts` primary key as `attempt_id` (there is NO `task_attempts.id` column).
 - Client `AOAdapter` must remain strictly stateless.
 
 ### Proposal Revision-6 Recommendation
 - Dedicated table (`dispatch_operations`) (`GIẢ ĐỊNH`).
 
 ### Selected PROPOSED_DECISION
-**PROPOSED_DECISION: Implement Dedicated `dispatch_operations` Table with 3-Stage Lifecycle**.
+**PROPOSED_DECISION: Implement Dedicated `dispatch_operations` Table with Correct Foreign Key Reference to `task_attempts(attempt_id)`**.
 1. Dispatch execution is tracked via a dedicated table:
    ```sql
    CREATE TABLE dispatch_operations (
        operation_id TEXT PRIMARY KEY,
-       attempt_id TEXT NOT NULL,
-       pair_id TEXT NOT NULL,
-       task_id TEXT NOT NULL,
+       attempt_id TEXT NOT NULL REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+       pair_id TEXT NOT NULL REFERENCES pairs(pair_id) ON DELETE RESTRICT,
+       task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
        session_id TEXT NOT NULL,
        terminal_generation TEXT NOT NULL,
-       stage TEXT NOT NULL,
+       stage TEXT NOT NULL CHECK (stage IN ('DISPATCH_BOUND', 'SEND_REQUESTED', 'SEND_CONFIRMED')),
        requested_at TIMESTAMP NOT NULL,
        confirmed_at TIMESTAMP,
-       resolution_state TEXT,
-       FOREIGN KEY (attempt_id) REFERENCES task_attempts(id)
+       resolution_state TEXT
    );
    ```
 2. The 3 semantic stages:
    - `DISPATCH_BOUND`: TaskState committed `DISPATCHED`, `TaskAttempt` allocated, session and generation bound.
    - `SEND_REQUESTED`: Pre-effect intent durably committed immediately before calling `POST /api/v1/sessions/{id}/send`.
    - `SEND_CONFIRMED`: Committed immediately upon HTTP 200 response from AO `/send`.
-3. `AOAdapter` remains completely stateless.
-4. Attribution Rule: Upstream execution activity is attributed to a task ONLY if `stage == SEND_CONFIRMED` and both `session_id` and `terminal_generation` match.
+3. **Evidence Boundary**: `SEND_CONFIRMED` denotes that the upstream HTTP `/send` write was accepted. It does NOT prove the agent entered `ActivityActive`, does NOT prove prompt semantic consumption, and does NOT prove task completion.
+4. `AOAdapter` remains completely stateless.
+5. Attribution Rule: Upstream execution activity is attributed to a task attempt ONLY if `stage == SEND_CONFIRMED`, `session_id` matches, and `terminal_generation` matches.
 
 ### Rationale
-A dedicated table keeps the core `task_attempts` domain entity clean of transient saga tracking state, simplifies crash recovery queries, and provides an auditable history of network dispatch attempts.
+Fixes Finding `ADR16R1-002` by referencing the canonical primary key `task_attempts(attempt_id)`. A dedicated table keeps execution saga state distinct from domain aggregate entities, simplifies crash recovery queries, and guarantees crash-consistent state reconstruction.
 
 ### Rejected Alternatives
+- **Foreign Key to `task_attempts(id)`**: Rejected as invalid; column `id` does not exist in `task_attempts`.
 - **Columns on `task_attempts`**: Rejected because multiple dispatch sagas may occur across retries, cluttering attempt records.
-- **Pure Audit Log Event Sourcing**: Rejected because querying saga states during restart via JSON audit event parsing is inefficient and error-prone.
 
 ### Safety Invariant
 `POST .../send` is never invoked unless `stage = SEND_REQUESTED` is durably committed in SQLite.
 
 ### Persistence Impact
-Creates table `dispatch_operations` with indices on `attempt_id` and `stage`.
+Creates table `dispatch_operations` with valid foreign keys.
 
 ### State-Machine Impact
 None (TaskState remains `DISPATCHED` across all saga stages).
@@ -308,7 +324,7 @@ YES.
 
 ---
 
-## 11. D5 — SEND_REQUESTED Unknown-Delivery Disposition
+## 11. D5: SEND_REQUESTED Unknown-Delivery Disposition
 
 ### Source / Canonical Facts
 - Crash between `SEND_REQUESTED` and `SEND_CONFIRMED` leaves `DELIVERY_OUTCOME = UNKNOWN`.
@@ -361,7 +377,7 @@ YES.
 
 ---
 
-## 12. D6 — Uncertain-Delivery Quarantine Guard
+## 12. D6: Uncertain-Delivery Quarantine Guard
 
 ### Source / Canonical Facts
 - Canonical graph allows `FAILED -> READY`. An unquarantined retry risks duplicate execution while uncertain execution runs.
@@ -407,16 +423,17 @@ YES.
 
 ---
 
-## 13. D7 — Pre-Send Admissibility
+## 13. D7: Pre-Send Admissibility
 
 ### Source / Canonical Facts
 - Pinned AO SessionGuard prohibits writes on `blocked`, `exited`, `terminated`. `waiting_input` accepts input. `idle` is clean prompt. Generation mismatch breaks fence.
+- `terminalGeneration` is an opaque `string` launch fence (`Metadata.RuntimeLaunchID`).
 
 ### Proposal Revision-6 Recommendation
 - Strict whitelist (`idle`, `waiting_input` permitted; all others prohibited) (`GIẢ ĐỊNH`).
 
 ### Selected PROPOSED_DECISION
-**PROPOSED_DECISION: Enforce Strict Whitelist Admissibility for Pre-Send Verification**.
+**PROPOSED_DECISION: Enforce Strict Whitelist Admissibility for Pre-Send Verification with Opaque String Generation Matching**.
 1. Immediately before transitioning from `DISPATCH_BOUND` to `SEND_REQUESTED`, the Supervisor inspects session activity via `GET /api/v1/sessions/{id}`.
 2. Admissibility Rules:
    - `idle`: **SAFE_TO_SEND**. SessionGuard is authoritative startup safety gate; proceed to send.
@@ -425,18 +442,18 @@ YES.
    - `exited`: **SEND_PROHIBITED**. Agent process has exited; halt dispatch, require session restore.
    - `isTerminated: true`: **SEND_PROHIBITED**. Session dead; fail attempt (`DISPATCHED -> FAILED`).
    - `active`: **SEND_PROHIBITED**. Supervisor has not yet sent current task; session is executing foreign or lingering work. Halt dispatch, do not interleave prompts.
-   - Generation Mismatch: **SEND_PROHIBITED**. Fence broken; fail attempt (`STALE_EXECUTION_GENERATION`).
+   - Generation Mismatch: **SEND_PROHIBITED**. Upstream `terminalGeneration` string does not equal `task_attempts.terminal_generation` string (`MISMATCH`); fence broken; fail attempt (`STALE_EXECUTION_GENERATION`).
 3. Automated Nudging: Absolutely NO automated keystrokes, simulated Enter keys, or blind prompts may be sent to clear blocked dialogs.
 
 ### Rationale
-A strict whitelist guarantees that prompts are delivered only when the upstream terminal is in a receptive state, completely preventing input corruption or shell command execution in exited panes.
+A strict whitelist guarantees that prompts are delivered only when the upstream terminal is in a receptive state, completely preventing input corruption or shell command execution in exited panes. Treating terminal generation as an opaque string adheres strictly to the pinned AO DTO contract.
 
 ### Rejected Alternatives
 - **Permitting `active` before send**: Catastrophic risk of interleaving prompts mid-turn; rejected.
 - **Automated unblock nudges**: Violates human supervision boundaries and risks unintended tool approvals; rejected.
 
 ### Safety Invariant
-Task prompt `/send` is never called unless pre-send activity check confirms `idle` or `waiting_input` with matching generation.
+Task prompt `/send` is never called unless pre-send activity check confirms `idle` or `waiting_input` with matching generation string.
 
 ### Persistence Impact
 Rejection records audit event `PRE_SEND_ADMISSIBILITY_REJECTED`.
@@ -458,32 +475,35 @@ YES.
 
 ---
 
-## 14. D8 — Missed Active Window
+## 14. D8: Missed Active Window
 
 ### Source / Canonical Facts
 - `SEND_CONFIRMED` committed, but subsequent observation snapshot is `idle`. Does not prove whether prompt ran or was missed. Cannot auto-transition `DISPATCHED -> RUNNING -> REPORT_READY`.
 - Strict Boundary: TASK-P03-003 does NOT perform report artifact reads, workspace file probing, or report validation (owned by TASK-P03-004 and P04).
+- Finding `ADR16R1-008`: ADR-016 must NOT predefine downstream failure policy (such as "no modified files = FAILED"). Analysis or verification tasks may legitimately produce no modified files.
 
 ### Proposal Revision-6 Recommendation
-- Option C (Persist ambiguity disposition and hand off downstream) with Option A fail-closed fallback (`GIẢ ĐỊNH`).
+- Option C (Persist ambiguity disposition and hand off downstream) (`GIẢ ĐỊNH`).
 
 ### Selected PROPOSED_DECISION
-**PROPOSED_DECISION: Adopt Option C (Persist Ambiguity Disposition and Hand Off Downstream to Authorized Phase)**.
+**PROPOSED_DECISION: Adopt Option C (Persist Ambiguity Disposition and Hand Off Downstream without Predefining Downstream Failure Policy)**.
 1. When the Supervisor observes `idle` following `SEND_CONFIRMED` without having observed an intervening `active` state:
    - TASK-P03-003 does NOT assume failure and does NOT assume success.
    - TASK-P03-003 does NOT inspect workspace files or probe report artifacts.
    - It marks the attempt: `task_attempts.recovery_disposition = 'MISSED_ACTIVE_WINDOW_AMBIGUITY'`.
    - It transitions `DISPATCHED -> RUNNING` with the ambiguity disposition flag set.
-2. Downstream Handoff: The task is passed to the downstream authorized phases (TASK-P03-004 workspace file transport and Phase P04 Evidence Collector).
-   - If downstream phase verifies that a valid `WorkerReport` was generated matching this attempt's execution identity, the ambiguity is resolved as successful turn execution.
-   - If downstream phase discovers no valid report or no modified files, downstream phase executes terminal failure (`RUNNING -> FAILED`, reason: `MISSED_ACTIVE_WINDOW_NO_OUTPUT`).
+2. Downstream Handoff Boundary:
+   - The task is passed to downstream authorized phases: TASK-P03-004 (raw workspace file transport) and Phase P04 (Evidence Collector / report semantic validation).
+   - TASK-P03-003 supplies the verified execution identity `(session_id, terminal_generation)` and ambiguity disposition to the handoff contract.
+   - Downstream phases independently evaluate their own authorized evidence contracts and report schemas.
+   - ADR-016 explicitly refrains from dictating downstream failure rules.
 3. Fallback: If downstream phase handoff is disabled or unavailable, the Supervisor fails closed (`DISPATCHED -> FAILED`).
 
 ### Rationale
-Short CLI commands or cached tool turns can execute and return to `idle` in sub-second intervals between polling ticks. Immediately failing the task would abort valid quick executions; immediately completing it would violate verification boundaries. Handing off with an explicit ambiguity flag preserves task boundaries and ensures full semantic verification downstream.
+Resolves Finding `ADR16R1-008`. Short CLI commands or cached tool turns can execute and return to `idle` in sub-second intervals between polling ticks. Handing off with an explicit ambiguity flag preserves task boundaries and allows downstream components to evaluate reports against specific contract requirements.
 
 ### Rejected Alternatives
-- **Immediate Fail-Closed in TASK-P03-003**: Causes false-positive aborts on fast-completing commands; rejected.
+- **Predefining "no modified files = FAILED"**: Rejected under Finding `ADR16R1-008` as factually incorrect for read-only or analysis contracts.
 - **Probing Report Files in TASK-P03-003**: Strict violation of component boundaries defined in PROPOSAL-P03-001; rejected.
 
 ### Safety Invariant
@@ -509,7 +529,7 @@ YES.
 
 ---
 
-## 15. D9 — waiting_input Mapping
+## 15. D9: waiting_input Mapping
 
 ### Source / Canonical Facts
 - Pinned AO `waiting_input` means agent process paused at an empty prompt awaiting instruction. Normalized observation is `AO_WAITING_INPUT`.
@@ -553,47 +573,52 @@ YES.
 
 ---
 
-## 16. D10 — blocked Mapping
+## 16. D10: blocked Mapping
 
 ### Source / Canonical Facts
 - Pinned AO `blocked` means agent stopped on tool permission or human approval dialog. Automated input is suppressed by SessionGuard (`SuppressedAwaitingUser`).
-- Normalized observation is `AO_BLOCKED_DECISION`. Under canonical state machine, `BLOCKED` is non-terminal (allows `BLOCKED -> HUMAN_REQUIRED`).
+- Canonical State Machine (`internal/workflow/state_machine.go`): The ONLY transition out of `BLOCKED` is `{From: "BLOCKED", To: "HUMAN_REQUIRED"}`. There is NO `BLOCKED -> RUNNING` edge.
+- Finding `ADR16R1-003`: Claiming that operator unblocking resumes execution from `BLOCKED` to `RUNNING` under the same attempt violates the canonical state graph.
 
 ### Proposal Revision-6 Recommendation
-- Transition `RUNNING -> BLOCKED` while retaining open `TaskAttempt` (`ended_at = NULL`) (`GIẢ ĐỊNH`).
+- Preserve `RUNNING` with `AO_BLOCKED_DECISION` disposition; one-way formal escalation to `BLOCKED -> HUMAN_REQUIRED` (`GIẢ ĐỊNH`).
 
 ### Selected PROPOSED_DECISION
-**PROPOSED_DECISION: Transition `RUNNING -> BLOCKED`, Retain Open TaskAttempt (`ended_at = NULL`), Halt Poller Input, and Await Operator Resolution**.
-1. Upon observing `blocked` during `RUNNING`:
-   - Transition TaskState: `RUNNING -> BLOCKED` (reason: `AO_BLOCKED_DECISION`).
-   - Attempt Status: `TaskAttempt.ended_at` remains `NULL`. The attempt remains open because execution is suspended awaiting human approval, not terminated.
-   - Observation Poller: Halts automated progress polling; transitions to waiting for operator decision or unblock event.
-   - Audit Event: Emits `WORKER_BLOCKED_DECISION` recording the blocked tool dialog.
-2. Resumption / Escalation:
-   - If the operator resolves the dialog upstream, the poller detects activity change and resumes execution.
-   - If the operator rejects or cannot resolve, workflow transitions `BLOCKED -> HUMAN_REQUIRED`.
+**PROPOSED_DECISION: Preserve `TaskState = RUNNING` with `AO_BLOCKED_DECISION` Lifecycle Disposition; Execute One-Way Workflow Escalation (`RUNNING -> BLOCKED -> HUMAN_REQUIRED`) Only on Formal Escalation**.
+1. **Observation-Level Handling**:
+   - When AO activity `blocked` is observed during task execution, the TaskState remains `RUNNING`.
+   - The Supervisor records `task_attempts.recovery_disposition = 'AO_BLOCKED_DECISION'`.
+   - `TaskAttempt.ended_at` remains `NULL` (the attempt remains open).
+   - Automated task input remains strictly prohibited (SessionGuard suppression respected).
+   - The poller continues authoritative read-only observation.
+   - If the operator resolves the tool permission dialog upstream in AO while no workflow escalation has occurred, the session returns to `active` or `idle`. The task remains in `RUNNING`, and normal lifecycle observation continues without any invalid state machine transition.
+2. **Formal Workflow Escalation**:
+   - If the operator or policy dictates formal workflow escalation, the workflow state machine executes the canonical one-way path:
+     `RUNNING -> BLOCKED` followed by `BLOCKED -> HUMAN_REQUIRED`.
+   - `TaskAttempt.ended_at` remains `NULL` upon entering `BLOCKED`, and is closed only if terminal failure or replacement occurs.
+   - Under no circumstances does the Supervisor attempt a non-existent `BLOCKED -> RUNNING` transition.
 
 ### Rationale
-In the canonical state machine, `BLOCKED` is a non-terminal waiting state. Setting `ended_at = now` would terminate the attempt, making it impossible to resume execution under the same attempt identity if the operator approves the tool permission.
+Resolves Finding `ADR16R1-003`. Strictly conforms to `state_machine.go` where `BLOCKED` has no return edge to `RUNNING`. Separating observation-level tool approval pauses from formal workflow escalation allows interactive dialogs to be cleared upstream without corrupting the state graph.
 
 ### Rejected Alternatives
-- **Terminate Attempt (`ended_at = now`)**: Destroys attempt lineage for resumable permissions; rejected.
-- **Ignore `blocked` and Remain in `RUNNING`**: Leaves the Supervisor blind to an agent waiting indefinitely for user input; rejected.
+- **Same-Attempt `BLOCKED -> RUNNING` Resumption**: Rejected under Finding `ADR16R1-003` as an illegal transition edge absent from the canonical state machine.
+- **Immediate Termination on Blocked**: Aborts executions that merely require brief operator confirmation; rejected.
 
 ### Safety Invariant
-`TaskAttempt.ended_at` is set strictly for terminal failure or completion transitions, never for non-terminal `BLOCKED`.
+The Supervisor never attempts a state transition that violates the canonical workflow state graph defined in `internal/workflow/state_machine.go`.
 
 ### Persistence Impact
-TaskState updated to `BLOCKED`. `ended_at` remains `NULL`.
+`task_attempts.recovery_disposition = 'AO_BLOCKED_DECISION'`.
 
 ### State-Machine Impact
-Executes canonical edge `RUNNING -> BLOCKED`.
+TaskState remains `RUNNING` during observation; one-way canonical path `RUNNING -> BLOCKED -> HUMAN_REQUIRED` used for formal escalation.
 
 ### Restart Impact
-Restart recovery identifies `BLOCKED` tasks and preserves open attempt state.
+Restart scanner preserves `AO_BLOCKED_DECISION` disposition and open attempt status.
 
 ### Auditability Impact
-Detailed audit event documenting blocked tool permission.
+Audit event `WORKER_BLOCKED_ON_DECISION` recorded.
 
 ### Implementation Ownership
 TASK-P03-003.
@@ -603,45 +628,64 @@ YES.
 
 ---
 
-## 17. D11 — Intentional Stop Provenance
+## 17. D11: Intentional Stop Provenance
 
 ### Source / Canonical Facts
 - Pinned AO wire route is `POST /api/v1/sessions/{sessionId}/kill` (`sessions.go:206`). HTTP `DELETE` does not exist.
-- HTTP `200 OK` indicates that AO accepted the kill signal; it does NOT prove process termination.
+- HTTP `200 OK` indicates only that AO accepted the kill signal; it does NOT prove process termination.
+- Finding `ADR16R1-006`: The persistence schema must completely bind all provenance keys established by the D11 invariant.
 
 ### Proposal Revision-6 Recommendation
-- 3-stage durable stop operation lifecycle (`GIẢ ĐỊNH`).
+- 3-stage durable stop operation lifecycle with complete relational provenance (`GIẢ ĐỊNH`).
 
 ### Selected PROPOSED_DECISION
-**PROPOSED_DECISION: Implement 3-Stage Durable Stop Operation Lifecycle Bound to `(operation_id, pair_id, task_id, attempt_id, session_id, terminal_generation)` via `POST /kill`**.
+**PROPOSED_DECISION: Implement 3-Stage Durable Stop Operation Lifecycle Bound to Complete Relational Provenance Schema via `POST .../kill`**.
 1. Stop operations execute through three durable stages:
    - `STOP_REQUESTED`: Durably committed to SQLite immediately *before* calling `POST /api/v1/sessions/{sessionId}/kill`.
    - `STOP_CALL_SUCCEEDED` / `STOP_CALL_FAILED`: Committed immediately upon receiving HTTP response (`KillSessionResponse`).
-   - `STOP_TERMINATION_CONFIRMED`: Committed ONLY when a subsequent authoritative observation snapshot returns `isTerminated == true` matching the execution generation.
-2. All stages are bound to: `(operation_id, pair_id, task_id, attempt_id, session_id, terminal_generation, timestamp, actor)`.
-3. Invariant: Terminal state change (`RUNNING -> FAILED`, reason: `WORKER_STOPPED`) and attempt `ended_at = now` are committed strictly upon `STOP_TERMINATION_CONFIRMED`.
+   - `STOP_TERMINATION_CONFIRMED`: Committed ONLY when a subsequent authoritative observation snapshot returns `isTerminated == true` matching the execution generation string.
+2. Complete Provenance Schema:
+   ```sql
+   CREATE TABLE stop_operations (
+       operation_id TEXT PRIMARY KEY,
+       pair_id TEXT NOT NULL REFERENCES pairs(pair_id) ON DELETE RESTRICT,
+       task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT,
+       contract_id TEXT REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
+       attempt_id TEXT REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+       session_id TEXT NOT NULL,
+       terminal_generation TEXT NOT NULL,
+       stage TEXT NOT NULL CHECK (stage IN ('STOP_REQUESTED', 'STOP_CALL_SUCCEEDED', 'STOP_CALL_FAILED', 'STOP_TERMINATION_CONFIRMED')),
+       actor TEXT NOT NULL,
+       requested_at TIMESTAMP NOT NULL,
+       call_completed_at TIMESTAMP,
+       termination_confirmed_at TIMESTAMP,
+       resolution_state TEXT
+   );
+   ```
+3. All operations are transactionally correlated with append-only entries in `audit_events` through `operation_id`.
+4. Invariant: Terminal state change (`RUNNING -> FAILED`, reason: `WORKER_STOPPED`) and attempt `ended_at = now` are committed strictly upon `STOP_TERMINATION_CONFIRMED`.
 
 ### Rationale
-Process teardown and resource deallocation in operating systems is asynchronous. Assuming immediate termination upon HTTP 200 causes race conditions if files are still being flushed or locks held.
+Resolves Finding `ADR16R1-006`. Binds every stop operation to its full task attempt, contract revision, and execution generation lineage, preventing unrecorded or dangling terminations.
 
 ### Rejected Alternatives
-- **Synchronous Termination Assumption on HTTP 200**: Race condition hazard; rejected.
-- **HTTP `DELETE` Wire Route**: Non-existent in upstream API; rejected.
+- **Reduced Schema Omitting Task/Attempt Keys**: Rejected under Finding `ADR16R1-006` as insufficient for generation-safe provenance.
+- **Synchronous Immediate Termination Assumption**: Race condition hazard; rejected.
 
 ### Safety Invariant
 `WORKER_STOPPED` is recorded only after authoritative `isTerminated == true` is verified.
 
 ### Persistence Impact
-Creates `stop_operations` tracking table or structured audit entries.
+Creates table `stop_operations` with full relational provenance.
 
 ### State-Machine Impact
 Drives terminal failure `RUNNING -> FAILED` (reason: `WORKER_STOPPED`).
 
 ### Restart Impact
-Unfinished stop operations are resumed and checked on restart.
+Startup scanner reconciles all non-terminal stop operations.
 
 ### Auditability Impact
-Full multi-stage provenance of stop operations recorded.
+Full multi-stage provenance of stop operations recorded in both dedicated table and audit log.
 
 ### Implementation Ownership
 TASK-P03-003.
@@ -651,7 +695,7 @@ YES.
 
 ---
 
-## 18. D12 — Atomic Terminal Transition & ended_at Ownership
+## 18. D12: Atomic Terminal Transition & ended_at Ownership
 
 ### Source / Canonical Facts
 - ADR-015 specifies SQLite engine and transactional audit log. Canonical auditability requires crash-consistent state transitions.
@@ -671,19 +715,22 @@ YES.
      4. audit_events row append (TASK_STATE_TRANSITION)
      5. dispatch/recovery disposition update
      ```
-2. For non-terminal transitions (`RUNNING -> BLOCKED`):
+2. Decoupling Observation from State CAS:
+   - Mere observation of transient activity states (such as `waiting_input` or `blocked` without formal escalation) does NOT trigger a TaskState CAS update.
+   - Metadata dispositions (`task_attempts.recovery_disposition`) are updated without modifying `tasks.state` or `task_attempts.ended_at`.
+3. If formal escalation occurs (`RUNNING -> BLOCKED`):
    - Atomically committed: TaskState CAS update to `BLOCKED` + audit event append.
-   - `task_attempts.ended_at` remains `NULL` (per D10).
-3. Success Closure (`RUNNING -> REPORT_READY`):
+   - `task_attempts.ended_at` remains `NULL` because `BLOCKED` is non-terminal.
+4. Success Closure (`RUNNING -> REPORT_READY`):
    - Strictly NOT owned by TASK-P03-003. Owned exclusively by Phase P04 Evidence Collector upon report validation.
-4. Transaction Rule: All upstream AO queries occur *before* opening the SQLite transaction. The transaction performs only local SQLite writes and commits immediately.
+5. Transaction Rule: All upstream AO queries occur *before* opening the SQLite transaction. The transaction performs only local SQLite writes and commits immediately.
 
 ### Rationale
-Crash consistency requires that the database never contains a failed task with an open attempt, or an ended attempt without an audit event. A unified method guarantees atomicity without risking SQLite database lock contention.
+Ensures crash consistency without risking SQLite database lock contention or introducing spurious state machine transitions for read-only observations.
 
 ### Rejected Alternatives
 - **Separate Un-coordinated Store Calls**: Risks partial writes on crash; rejected.
-- **Network Calls Inside Transactions**: Violates ADR-015 and causes database deadlocks; strictly prohibited.
+- **Network Calls Inside Transactions**: Violates ADR-015; strictly prohibited.
 
 ### Safety Invariant
 Zero network operations inside SQLite transaction blocks.
@@ -708,34 +755,48 @@ YES.
 
 ---
 
-## 19. D13 — Restart Scanner Architecture
+## 19. D13: Restart Scanner Architecture
 
 ### Source / Canonical Facts
-- Daemon crash or power loss leaves in-flight tasks in `DISPATCHED` or `RUNNING` with open attempts (`ended_at IS NULL`).
+- Power loss leaves in-flight tasks in `DISPATCHED` or `RUNNING` with open attempts (`ended_at IS NULL`).
+- Finding `ADR16R1-007`: Startup recovery must enumerate ALL non-terminal stop operations (`STOP_REQUESTED` and `STOP_CALL_SUCCEEDED`), not just `STOP_REQUESTED`.
+- Finding `ADR16R1-009`: No approved recovery retry policy exists. Recovery must use existing policy surfaces (`SUPERVISOR_ACTIVITY_POLL_INTERVAL`) without inventing new policies or numbers.
 
 ### Proposal Revision-6 Recommendation
-- Synchronous startup recovery sweep for in-flight tasks and unresolved operations (`GIẢ ĐỊNH`).
+- Synchronous startup recovery sweep covering all in-flight tasks and non-terminal operations with existing poll cadence (`GIẢ ĐỊNH`).
 
 ### Selected PROPOSED_DECISION
-**PROPOSED_DECISION: Implement Synchronous Startup Recovery Sweep for In-Flight Tasks and Operations with Non-Blocking Failure Handling**.
-1. On Supervisor daemon startup, prior to accepting incoming client API requests:
-   - Query StateStore for all tasks in `DISPATCHED` or `RUNNING` state.
-   - Query for unresolved `dispatch_operations` (`stage = SEND_REQUESTED`) and `stop_operations` (`stage = STOP_REQUESTED`).
-2. AO Daemon Availability Check:
-   - Probe AO availability via `GET /api/v1/sessions`.
-   - **If AO is Unreachable**: Do NOT fail tasks. Mark in-flight tasks with `recovery_disposition = 'RECOVERY_PENDING'`, do not block daemon startup, and schedule background reconciliation retries.
-   - **If AO is Reachable**: Reconcile each in-flight task against public `SessionView`:
-     - If session missing (404) or `isTerminated == true`: execute `AtomicTerminalTransition` (`-> FAILED`, `ended_at = now`, reason: `WORKER_TERMINATION_UNKNOWN` or `WORKER_STOPPED`).
-     - If `terminalGeneration` mismatch: execute `AtomicTerminalTransition` (`-> FAILED`, reason: `STALE_EXECUTION_GENERATION`).
-     - If `stage == SEND_REQUESTED`: execute D5 uncertain delivery failure and quarantine.
+**PROPOSED_DECISION: Implement Synchronous Startup Recovery Sweep Covering All Non-Terminal Operations with Existing Poll Cadence Retry**.
+1. **Startup Enumeration**:
+   On Supervisor daemon startup, prior to accepting incoming client API requests:
+   - Query all tasks in `DISPATCHED` or `RUNNING` state.
+   - Query all non-terminal `dispatch_operations` (`stage = 'SEND_REQUESTED'`).
+   - Query all non-terminal `stop_operations` (`stage IN ('STOP_REQUESTED', 'STOP_CALL_SUCCEEDED')`).
+2. **Stop Operation Recovery Protocol**:
+   - `STOP_REQUESTED`: Reconcile against AO public `SessionView`. If `isTerminated == true`, advance to `STOP_TERMINATION_CONFIRMED`. If alive, reissue `POST .../kill` and await confirmation. If 404, mark `STOP_TERMINATION_CONFIRMED`.
+   - `STOP_CALL_SUCCEEDED`: Kill signal was accepted upstream; observe until `isTerminated == true` or 404, then advance to `STOP_TERMINATION_CONFIRMED` and finalize attempt `ended_at = now`.
+   - Terminal stop states: `STOP_TERMINATION_CONFIRMED` (completed) and `STOP_CALL_FAILED` (escalated).
+3. **Dispatch & In-Flight Task Recovery**:
+   - Probe AO daemon availability via `GET /api/v1/sessions`.
+   - **If AO is Reachable**:
+     - Reconcile in-flight tasks against public `SessionView` using opaque string generation matching.
+     - If `stage == 'SEND_REQUESTED'`: execute D5 uncertain delivery failure and quarantine.
+     - If session missing (404) or `isTerminated == true`: execute `AtomicTerminalTransition` (`-> FAILED`, `ended_at = now`).
+     - If generation mismatch: fail attempt with `STALE_EXECUTION_GENERATION`.
      - If session active/idle with matching generation: resume standard lifecycle observation.
+   - **If AO is Unreachable**:
+     - Do NOT blindly fail in-flight tasks.
+     - Mark tasks with `recovery_disposition = 'RECOVERY_PENDING'`.
+     - Lock affected Pair lanes against new task dispatch.
+     - Schedule background reconciliation retries using the existing caller-injected `SUPERVISOR_ACTIVITY_POLL_INTERVAL` as the checking cadence.
+     - Do NOT introduce any new operational policies, retry counts, or backoff formulas.
 
 ### Rationale
-A synchronous startup sweep ensures that lingering crash states are reconciled before new tasks can be dispatched to those Pairs, completely eliminating race conditions between old executions and new work.
+Resolves Findings `ADR16R1-007` and `ADR16R1-009`. Enumerating all non-terminal stop operations closes the crash window where kill was accepted but termination was unconfirmed. Using `SUPERVISOR_ACTIVITY_POLL_INTERVAL` leverages existing unhardcoded policy surfaces without inventing unapproved configuration parameters.
 
 ### Rejected Alternatives
-- **Lazy Polling-Driven Reconciliation**: Leaves a race window where new tasks could be dispatched to tainted Pairs before the poller wakes up; rejected.
-- **Blind Termination of All In-Flight Tasks**: Aborts long-running worker tasks that may have survived the Supervisor daemon restart; rejected.
+- **Scanning `STOP_REQUESTED` only**: Rejected under Finding `ADR16R1-007`; misses operations in `STOP_CALL_SUCCEEDED`.
+- **Inventing New Recovery Policies**: Rejected under Finding `ADR16R1-009`; violates policy freeze.
 
 ### Safety Invariant
 No new task can be dispatched on a Pair until that Pair's in-flight task status has been reconciled against upstream reality.
@@ -767,24 +828,25 @@ The architecture formally establishes the execution identity model:
 Execution Identity = (session_id, terminal_generation)
 ```
 1. `session_id`: The upstream AO UUID identifying the ConPTY pane and workspace worktree.
-2. `terminal_generation`: The upstream monotonic execution generation fencing the session against terminal restarts or resets.
-3. Every `TaskAttempt` snapshot permanently binds this tuple. Any upstream observation bearing a mismatched session or generation is rejected as foreign, eliminating cross-turn attribution hazards.
+2. `terminal_generation`: The upstream opaque string (`SessionView.TerminalGeneration` / `Metadata.RuntimeLaunchID`) fencing the session against terminal restarts or resets.
+3. Every `TaskAttempt` snapshot permanently binds this tuple. Any upstream observation bearing a mismatched session or generation string is rejected as foreign, eliminating cross-turn attribution hazards.
 
 ---
 
 ## 21. Agy V1 Runtime Generation Fence
 
 1. For V1, the primary worker harness is `agy` running in interactive TUI mode inside an AO-managed ConPTY pane.
-2. The authoritative execution fence is upstream AO's `terminalGeneration` (exposed as `terminalGeneration` on `SessionView` and matching `RuntimeLaunchID`).
-3. **Scope Guard**: This fence applies specifically to V1 `agy` TUI mode. It is NOT generalized to non-TUI headless modes or arbitrary processes, which remain subject to future phase governance.
+2. The authoritative execution fence is upstream AO's `terminalGeneration` (exposed as an opaque `string` on `SessionView` matching `Metadata.RuntimeLaunchID`).
+3. Comparison semantics are strictly string equality (`MATCH` vs `MISMATCH`). There is NO numeric increment, integer arithmetic, or ordering comparison.
+4. **Scope Guard**: This fence applies specifically to V1 `agy` TUI mode. It is NOT generalized to non-TUI headless modes or arbitrary processes, which remain subject to future phase governance.
 
 ---
 
 ## 22. Lifecycle Observation Matrix
 
-The complete lifecycle evaluation matrix governing TASK-P03-003:
+The complete lifecycle evaluation matrix governing TASK-P03-003 under graph-compatible rules:
 
-| TaskState | Saga Stage | Observed Activity | Generation Match | Proven Facts | Unproven Facts | Transition | ended_at Action | Quarantine Action |
+| TaskState | Saga Stage | Observed Activity | Generation Match | Proven Facts | Unproven Facts | Transition | ended_at Action | Disposition / Quarantine Action |
 |---|---|---|---|---|---|---|---|---|
 | `DISPATCHED` | `DISPATCH_BOUND` | `idle` | Match | Pre-send ready | Execution occurred | None | Keep NULL | None |
 | `DISPATCHED` | `DISPATCH_BOUND` | `waiting_input` | Match | Waiting input | Execution occurred | None | Keep NULL | None |
@@ -793,20 +855,20 @@ The complete lifecycle evaluation matrix governing TASK-P03-003:
 | `DISPATCHED` | `DISPATCH_BOUND` | `exited` | Match | Process exit signal | Termination/crash | None | Keep NULL | `PRE_SEND_BLOCKED` |
 | `DISPATCHED` | `DISPATCH_BOUND` | `isTerminated: true` | Match | Session dead | Cause of death | `-> FAILED` | Set `now` | None |
 | `DISPATCHED` | `SEND_REQUESTED` | Any | Match/Mismatch | Delivery unknown | Delivery success | `-> FAILED` | Set `now` | **`UNCERTAIN_DELIVERY_QUARANTINE`** |
-| `DISPATCHED` | `SEND_CONFIRMED` | `active` | Match | Prompt accepted, running | Task completion | `-> RUNNING` | Keep NULL | None |
-| `DISPATCHED` | `SEND_CONFIRMED` | `idle` | Match | Turn completed quickly | Report validity | `-> RUNNING` (D8 flag) | Keep NULL | `MISSED_ACTIVE_WINDOW_AMBIGUITY` |
-| `DISPATCHED` | `SEND_CONFIRMED` | `waiting_input` | Match | Agent at prompt | Failure | None | Keep NULL | Diagnostic event |
-| `DISPATCHED` | `SEND_CONFIRMED` | `blocked` | Match | Blocked on dialog | Terminal failure | None (D10) | Keep NULL | Diagnostic event |
+| `DISPATCHED` | `SEND_CONFIRMED` | `active` | Match | Upstream write accepted, active | Task completion | `-> RUNNING` | Keep NULL | None |
+| `DISPATCHED` | `SEND_CONFIRMED` | `idle` | Match | Upstream write accepted, idle | Whether prompt ran or missed | `-> RUNNING` | Keep NULL | `MISSED_ACTIVE_WINDOW_AMBIGUITY` |
+| `DISPATCHED` | `SEND_CONFIRMED` | `waiting_input` | Match | Agent at prompt | Failure | `-> RUNNING` | Keep NULL | `AO_WAITING_INPUT_OBSERVED` |
+| `DISPATCHED` | `SEND_CONFIRMED` | `blocked` | Match | Blocked on dialog | Attempt failure | `-> RUNNING` | Keep NULL | `AO_BLOCKED_DECISION` |
 | `DISPATCHED` | `SEND_CONFIRMED` | `exited` | Match | Process exited | Session dead | None | Keep NULL | Process exit rule |
 | `DISPATCHED` | `SEND_CONFIRMED` | `isTerminated: true` | Match | Session terminated | Crash vs clean | `-> FAILED` | Set `now` | None |
 | `RUNNING` | `SEND_CONFIRMED` | `active` | Match | Active tool execution | Task completion | None | Keep NULL | None |
 | `RUNNING` | `SEND_CONFIRMED` | `idle` | Match | Turn complete | Report valid (`AO_IDLE != REPORT_READY`) | None (for P04) | Keep NULL | P04 handoff |
-| `RUNNING` | `SEND_CONFIRMED` | `waiting_input` | Match | Paused at prompt | Failure | None (D9) | Keep NULL | Diagnostic event |
-| `RUNNING` | `SEND_CONFIRMED` | `blocked` | Match | Blocked on tool permission | Attempt failure | `-> BLOCKED` (D10) | Keep NULL | Diagnostic event |
+| `RUNNING` | `SEND_CONFIRMED` | `waiting_input` | Match | Paused at prompt | Failure | None (D9) | Keep NULL | `AO_WAITING_INPUT_OBSERVED` |
+| `RUNNING` | `SEND_CONFIRMED` | `blocked` | Match | Blocked on tool permission | Attempt failure | None (D10) | Keep NULL | `AO_BLOCKED_DECISION` |
 | `RUNNING` | `SEND_CONFIRMED` | `exited` | Match | Process exited | Session dead | None | Keep NULL | Process exit rule |
 | `RUNNING` | `SEND_CONFIRMED` | `isTerminated: true` | Match | Session dead | Crash vs clean | `-> FAILED` | Set `now` | None |
 | `RUNNING` | `SEND_CONFIRMED` | 404 Not Found | N/A | Session purged | Purge reason | `-> FAILED` | Set `now` | None |
-| `RUNNING` | `SEND_CONFIRMED` | AO Unavailable | N/A | Daemon unreachable | Worker death | None | Keep NULL | Retry scheduled |
+| `RUNNING` | `SEND_CONFIRMED` | AO Unavailable | N/A | Daemon unreachable | Worker death | None | Keep NULL | `RECOVERY_PENDING` (poll cadence) |
 
 ---
 
@@ -815,19 +877,21 @@ The complete lifecycle evaluation matrix governing TASK-P03-003:
 | Crash Point | Host Failure Window | Persisted State on Disk | Detection on Startup | Reconciled Action |
 |---|---|---|---|---|
 | **T0** | Before session spawn | Pair idle, no session | Normal startup | None; Pair available for provisioning |
-| **T1** | During spawn wire call | Audit intent logged | Session uncommitted | Mark provisioning failed; orphan reaper cleans AO |
-| **T2** | AO spawned, before DB commit | AO session active | No DB record | Fail-closed; orphan reaper cleans unreferenced session |
+| **T1** | During spawn wire call | Audit intent logged | Session uncommitted | Mark provisioning failed; unowned AO session not auto-killed; operator-audited cleanup |
+| **T2** | AO spawned, before DB commit | AO session active | No DB record | Fail-closed; unowned session not auto-killed; operator-audited cleanup |
 | **T3** | Session committed, before dispatch | `worker_sessions` active | Valid idle session | Ready for dispatch |
 | **T4** | `DISPATCH_BOUND` committed | `tasks.state = DISPATCHED` | Saga = `DISPATCH_BOUND` | Check pre-send admissibility; execute `/send` |
 | **T5** | `SEND_REQUESTED` committed, crash during `/send` | Saga = `SEND_REQUESTED` | Delivery unknown | `-> FAILED`, `ended_at = now`, quarantine, `-> HUMAN_REQUIRED` |
-| **T6** | `SEND_CONFIRMED` committed | Saga = `SEND_CONFIRMED` | Prompt confirmed | Check AO activity; resume observation |
+| **T6** | `SEND_CONFIRMED` committed | Saga = `SEND_CONFIRMED` | Write accepted | Check AO activity; resume observation |
 | **T7** | `RUNNING` state, daemon power loss | `tasks.state = RUNNING` | In-flight attempt | Reconcile against AO public SessionView |
+| **T8** | `STOP_REQUESTED` committed, crash before `/kill` | Saga = `STOP_REQUESTED` | Stop intent logged | Probe AO; if alive reissue `/kill`; advance to confirmed upon `isTerminated` |
+| **T9** | `STOP_CALL_SUCCEEDED` committed, crash before confirm | Saga = `STOP_CALL_SUCCEEDED` | Kill accepted | Observe until `isTerminated == true` or 404; advance to `STOP_TERMINATION_CONFIRMED` |
 
 ---
 
 ## 24. StateStore Transaction Boundaries
 
-All operations adhere to ADR-015:
+All operations adhere strictly to ADR-015:
 1. `PrepareDispatch`: Single SQLite transaction committing `tasks.state = DISPATCHED`, allocating `task_attempts`, binding `session_id`, and creating `dispatch_operations` in `DISPATCH_BOUND`.
 2. `RecordSendRequested`: Single SQLite transaction updating `dispatch_operations.stage = SEND_REQUESTED` immediately before network call.
 3. `RecordSendConfirmed`: Single SQLite transaction updating `dispatch_operations.stage = SEND_CONFIRMED` immediately after HTTP 200.
@@ -842,12 +906,13 @@ The following structured audit event types are established:
 - `PAIR_SESSION_PROVISIONED`: Infrastructure worktree and session bound.
 - `TASK_DISPATCH_BOUND`: Task contract allocated and attempt bound.
 - `DISPATCH_SEND_REQUESTED`: Pre-effect dispatch intent recorded.
-- `DISPATCH_SEND_CONFIRMED`: Upstream write success recorded.
+- `DISPATCH_SEND_CONFIRMED`: Upstream write acceptance recorded.
 - `UNCERTAIN_DELIVERY_QUARANTINE_IMPOSED`: Delivery unknown; quarantine active.
 - `QUARANTINE_RESOLVED_PHYSICAL`: Verified termination via `/kill` confirmed.
 - `QUARANTINE_RESOLVED_ADMINISTRATIVE`: Explicit operator risk acceptance logged.
 - `WORKER_BLOCKED_ON_DECISION`: Tool permission dialog observed.
 - `STOP_OPERATION_REQUESTED`: Kill signal intent recorded.
+- `STOP_OPERATION_CALL_SUCCEEDED`: Kill signal acceptance recorded.
 - `STOP_OPERATION_CONFIRMED`: Authoritative termination confirmed.
 - `MISSED_ACTIVE_WINDOW_HANDOFF_DOWNSTREAM`: Ambiguity handoff to P04 logged.
 
@@ -870,10 +935,56 @@ The following structured audit event types are established:
 ## 27. Persistence Impact
 
 1. Schema Updates:
-   - `worker_sessions`: Table created with unique `pair_id`, `session_id`, `worktree_path`, `terminal_generation`, `quarantine_state`.
-   - `task_attempts`: Columns added: `session_id TEXT`, `terminal_generation TEXT`, `recovery_disposition TEXT`.
-   - `dispatch_operations`: Table created with `operation_id`, `attempt_id`, `pair_id`, `task_id`, `session_id`, `terminal_generation`, `stage`, `resolution_state`.
-   - `stop_operations`: Table created with `operation_id`, `session_id`, `terminal_generation`, `stage`.
+   - `worker_sessions`:
+     ```sql
+     CREATE TABLE worker_sessions (
+         pair_id TEXT PRIMARY KEY REFERENCES pairs(pair_id) ON DELETE RESTRICT,
+         session_id TEXT NOT NULL,
+         runtime_type TEXT NOT NULL,
+         worktree_path TEXT NOT NULL,
+         worker_agent_id TEXT NOT NULL,
+         status TEXT NOT NULL,
+         terminal_generation TEXT NOT NULL,
+         quarantine_state TEXT NOT NULL DEFAULT 'CLEARED',
+         created_at TIMESTAMP NOT NULL,
+         updated_at TIMESTAMP NOT NULL
+     );
+     ```
+   - `task_attempts`: Columns added:
+     `session_id TEXT`, `terminal_generation TEXT`, `recovery_disposition TEXT`.
+   - `dispatch_operations`:
+     ```sql
+     CREATE TABLE dispatch_operations (
+         operation_id TEXT PRIMARY KEY,
+         attempt_id TEXT NOT NULL REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+         pair_id TEXT NOT NULL REFERENCES pairs(pair_id) ON DELETE RESTRICT,
+         task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
+         session_id TEXT NOT NULL,
+         terminal_generation TEXT NOT NULL,
+         stage TEXT NOT NULL CHECK (stage IN ('DISPATCH_BOUND', 'SEND_REQUESTED', 'SEND_CONFIRMED')),
+         requested_at TIMESTAMP NOT NULL,
+         confirmed_at TIMESTAMP,
+         resolution_state TEXT
+     );
+     ```
+   - `stop_operations`:
+     ```sql
+     CREATE TABLE stop_operations (
+         operation_id TEXT PRIMARY KEY,
+         pair_id TEXT NOT NULL REFERENCES pairs(pair_id) ON DELETE RESTRICT,
+         task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT,
+         contract_id TEXT REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
+         attempt_id TEXT REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+         session_id TEXT NOT NULL,
+         terminal_generation TEXT NOT NULL,
+         stage TEXT NOT NULL CHECK (stage IN ('STOP_REQUESTED', 'STOP_CALL_SUCCEEDED', 'STOP_CALL_FAILED', 'STOP_TERMINATION_CONFIRMED')),
+         actor TEXT NOT NULL,
+         requested_at TIMESTAMP NOT NULL,
+         call_completed_at TIMESTAMP,
+         termination_confirmed_at TIMESTAMP,
+         resolution_state TEXT
+     );
+     ```
 2. Migrations: Implementation requires a schema migration executed under future authorized task contract. Zero migrations executed in this draft.
 
 ---
@@ -882,11 +993,11 @@ The following structured audit event types are established:
 
 Upon formal External Supervisor acceptance of ADR-016, the following canonical documents will be reconciled:
 1. `docs/04_ARCHITECTURE.md`: Update sequence diagrams to reflect decoupled pair session provisioning and durable 3-stage dispatch saga.
-2. `docs/05_DOMAIN_MODEL.md`: Formalize Model A persistence relationship and snapshot columns.
-3. `docs/06_WORKFLOW_STATE_MACHINE.md`: Cross-reference `RUNNING -> BLOCKED` attempt open semantics.
+2. `docs/05_DOMAIN_MODEL.md`: Formalize Model A persistence relationship and snapshot columns, mapping canonical fields `runtime_type`, `worker_agent_id`, and `status`.
+3. `docs/06_WORKFLOW_STATE_MACHINE.md`: Cross-reference observation-level blocked handling and one-way formal escalation.
 4. `docs/08_TASK_CONTRACT.md`: Document attempt execution identity snapshot binding.
-5. `docs/12_UPSTREAM_INTEGRATION.md`: Document wire route `/kill`, generation fence, and strict pre-send admissibility whitelist.
-6. `docs/14_FAILURE_RECOVERY.md`: Document quarantine guard, Class A/C clearance rules, and restart recovery scanner.
+5. `docs/12_UPSTREAM_INTEGRATION.md`: Document wire route `/kill`, opaque string generation fence, and strict pre-send admissibility whitelist.
+6. `docs/14_FAILURE_RECOVERY.md`: Document quarantine guard, Class A/C clearance rules, non-terminal stop recovery, and restart recovery scanner.
 7. `docs/22_MODULE_PROVENANCE.md`: Register new store entities.
 
 ---
@@ -894,7 +1005,7 @@ Upon formal External Supervisor acceptance of ADR-016, the following canonical d
 ## 29. TASK-P03-003 Implementation Boundary
 
 `TASK-P03-003` owns exclusively:
-- Domain persistence of `worker_sessions`, `dispatch_operations`, and `task_attempts` snapshot fields.
+- Domain persistence of `worker_sessions`, `dispatch_operations`, `stop_operations`, and `task_attempts` snapshot fields.
 - 3-stage dispatch saga coordination.
 - Pre-send admissibility evaluation.
 - Observation poller activity mapping (`active`, `idle`, `waiting_input`, `blocked`, `exited`).
@@ -918,6 +1029,7 @@ Upon formal External Supervisor acceptance of ADR-016, the following canonical d
 - NO release of `TASK-P03-003`.
 - NO invented numeric timeouts, intervals, or poll rates.
 - NO automated nudges into agent dialogs.
+- NO automatic killing of unowned AO sessions.
 - NO blind retries or synthetic heartbeats.
 - NO SSE `/api/v1/events` integration in this task.
 
@@ -929,6 +1041,7 @@ Upon formal External Supervisor acceptance of ADR-016, the following canonical d
 - Completely eliminates duplicate code execution risks caused by unknown delivery.
 - Resolves relational domain contradictions without introducing cyclic foreign keys.
 - Decouples sandbox provisioning from task dispatch, enabling warm session reuse.
+- Strictly conforms to the canonical workflow state graph without inventing edges.
 - Enforces strict component boundaries and clean testability.
 
 ### Negative / Trade-offs
@@ -941,8 +1054,13 @@ Upon formal External Supervisor acceptance of ADR-016, the following canonical d
 
 - **Model B (Historical Table + Pointer)**: Rejected due to cyclic FKs in SQLite.
 - **Model C (Join Table)**: Rejected due to unnecessary schema complexity.
+- **Automatic Orphan Reaper Deletions**: Rejected under Finding `ADR16R1-001` as unowned sessions cannot be proven owned by Supervisor.
+- **Foreign Key to `task_attempts(id)`**: Rejected under Finding `ADR16R1-002` as non-existent column.
+- **`BLOCKED -> RUNNING` State Graph Resumption**: Rejected under Finding `ADR16R1-003` as non-existent edge.
+- **Numeric / Monotonic TerminalGeneration**: Rejected under Finding `ADR16R1-004` as contrary to upstream DTO contract.
+- **Predefining "no modified files = FAILED"**: Rejected under Finding `ADR16R1-008` as contrary to task boundaries and legitimate no-op contracts.
+- **Inventing Recovery Retry Policies**: Rejected under Finding `ADR16R1-009` as contrary to policy inventory rules.
 - **Blind Resend on Crash**: Rejected as critical safety violation.
-- **Automatic Heuristic Session Adoption**: Rejected as cross-session security risk.
 - **Direct `DISPATCHED -> HUMAN_REQUIRED`**: Rejected as invalid state machine transition.
 - **`ActivityExited` Automatic Failure**: Rejected because managed session remains open.
 - **Report Probing in TASK-P03-003**: Rejected as strict component boundary violation.
@@ -952,11 +1070,11 @@ Upon formal External Supervisor acceptance of ADR-016, the following canonical d
 ## 33. External Approval Gate
 
 ```text
-ADR_016 = DRAFT_READY_FOR_EXTERNAL_AUDIT
-ADR_016_ACCEPTANCE = NOT_YET_GRANTED
+ADR_016 = REVISION_1_READY_FOR_EXTERNAL_REAUDIT
+ADR_016_ACCEPTANCE = NOT_GRANTED
 TASK_P03_003 = NOT_RELEASED
 P03_CODE = HELD_PENDING_ADR_016_APPROVAL
-ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_ADR_016_AUDIT
+ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_ADR_016_REAUDIT_001
 ```
 
-Execution is halted awaiting independent External Supervisor audit of this proposed ADR.
+Execution is halted awaiting independent External Supervisor re-audit of ADR-016 Revision 1.
