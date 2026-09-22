@@ -52,39 +52,34 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P02 SUPERVISOR DOMAIN CORE
+# SECTION 2: CURRENT PHASE RULES — P03 PRE-CODE UPSTREAM CONTRACT AUDIT
 
 > [!CRITICAL]
-> Phase P01 runtime proof activity is **COMPLETE**. The architecture baseline is frozen at **`phase1-architecture-v2.1`** (commit `62d3fe0df4a3a05697da77349ff085430ea452f7`) together with accepted amendments **ADR-012**, **ADR-013**, **ADR-014**, and **ADR-015**.
-> The following rules govern **Phase P02 (Supervisor Domain Core)**.
+> Phase P01 runtime proof activity is **COMPLETE**.
+> Phase P02 domain and state storage core implementation is **COMPLETE** and approved by External Supervisor final audit (`P02_FINAL_AUDIT = EXTERNAL_AUDIT_APPROVED`, baseline commit `b073a1969d0b64d151e96f0d9b59b005d4cf518a`, evidence commit `7375bbe0c0f17ac6cc50f87a319cb936caf64905`).
+> The active phase gate is **`P03_PRECODE_UPSTREAM_CONTRACT_AUDIT`**.
+> This gate is **STRICTLY ANALYSIS AND DOCUMENTATION ONLY**. Production coding for Phase P03 remains strictly **HELD**.
 
-1. **PHASE P02 STRICT DOMAIN BOUNDARY**:
-   - Implementation in Phase P02 is strictly confined to the self-contained headless core:
-     * `Project`, `Pair`, `Task` domain entities and relational invariants;
-     * `TaskContract` (immutable revision model, baseline `base_sha` immutability, `verification_requests`);
-     * `TaskAttempt` (attempt lineage, allocation);
-     * `WorkerClaim` and core evidence value types required by the domain model;
-     * `ReviewDecision` and associated state transition value types;
-     * 13-state `StateMachine` engine with 25 canonical transitions;
-     * `TaskContractValidator` enforcing schema, revision progression, and pre-dispatch path containment (SEC-002);
-     * Pure validation policy interfaces required by P02 (`VerificationPolicyCatalog` / `VerificationProfilePolicy`);
-     * Local SQLite `StateStore` (schema DDL, migrations, relational foreign keys, WAL mode, `synchronous = FULL`);
-     * Atomic pre-dispatch intent persistence (allocating `TaskAttempt` and committing `READY → DISPATCHED` in StateStore before external calls);
-     * Restart recovery classification (detecting dangling `DISPATCHED` attempts and recording `EXTERNAL_RECONCILIATION_REQUIRED` without querying AO);
-     * `AuditEvent` model, append-only persistence, and automated token/credential secret scrubbing (SEC-004);
-     * Deterministic StateStore component close and transaction cleanup API (OPS-002).
+1. **PHASE P03 PRE-CODE AUDIT BOUNDARY**:
+   - Work during this gate is strictly confined to architectural analysis, upstream contract audit against pinned Agent Orchestrator v0.13.0 (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`), observability event reconciliation, and documentation.
+   - Zero production Go code may be created, edited, or deleted.
 
-2. **EXPLICITLY FORBIDDEN DURING PHASE P02**:
-   - Absolutely NO `AOAdapter` implementation or external AO REST client code (owned by Phase P03);
-   - Absolutely NO direct Antigravity CLI (`agy`) harness integration code (owned by Phase P03);
-   - Absolutely NO concrete `VerificationRunner` execution or Windows verification sandbox / Job Object runner implementation (owned by Phase P04);
-   - Absolutely NO `ReviewBundleBuilder` assembly or review policy engine implementation (owned by Phase P04);
-   - Absolutely NO Model Context Protocol (MCP) server, Go MCP server, or loopback transport code (owned by Phase P05);
-   - Absolutely NO `ContextEngine` workspace AST / tree-sitter indexing code (owned by Phase P05);
-   - Absolutely NO human-facing operator UI, CLI distribution packaging, or telemetry dashboards (owned by Phase P06).
+2. **EXPLICITLY FORBIDDEN DURING THIS GATE**:
+   - Absolutely NO `AOAdapter` production implementation;
+   - Absolutely NO `net/http` production client creation;
+   - Absolutely NO new P03 Go packages (`internal/ao`, `internal/adapter`, `internal/integration`, etc.);
+   - Absolutely NO modification of `internal/**`;
+   - Absolutely NO dependency additions (`go.mod`, `go.sum`);
+   - Absolutely NO direct Antigravity CLI (`agy`) invocation code;
+   - Absolutely NO ConPTY process management code;
+   - Absolutely NO custom Git worktree management code;
+   - Absolutely NO AO internal SQLite database access;
+   - Absolutely NO `/mux` terminal stream scraping or parsing;
+   - Absolutely NO lifecycle-event synthesis without approved canonical semantics.
 
-3. **P02 CODE AUTHORIZATION GUARD**:
-   - Production P02 coding in this repository is authorized **ONLY** when:
-     1. `docs/18_CURRENT_STATE.md` explicitly declares: `P02_CODE = AUTHORIZED`, **AND**
-     2. The active implementation task is accompanied by an explicit Task Contract / External Supervisor execution authorization.
-   - Until both conditions are met, `P02_CODE` remains strictly **HELD**, and no application source files (`.go`, `go.mod`, `go.sum`) may be created.
+3. **P03 PRODUCTION CODE AUTHORIZATION GUARD**:
+   - Production P03 coding in this repository becomes authorized **ONLY** when:
+     1. P03 upstream/public contract mapping is reconciled;
+     2. Any architecture contradiction is resolved under change governance;
+     3. External Supervisor releases a concrete P03 Task Contract.
+   - Until all conditions are met, `P03_CODE` remains strictly **HELD**, and no application source files (`.go`) may be created or modified.
