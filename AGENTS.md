@@ -52,36 +52,36 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P03 CANONICAL RECONCILIATION REVISION 3 / FINAL EXTERNAL REAUDIT
+# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-001 IMPLEMENTATION
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
 > Phase P02 domain and state storage core implementation is **COMPLETE** and approved by External Supervisor final audit (`P02_FINAL_AUDIT = EXTERNAL_AUDIT_APPROVED`, baseline commit `b073a1969d0b64d151e96f0d9b59b005d4cf518a`, evidence commit `7375bbe0c0f17ac6cc50f87a319cb936caf64905`).
 > Core directions of `PROPOSAL-P03-001` are **EXTERNAL_APPROVED** by External Supervisor decision.
-> Canonical specifications (`docs/02`, `docs/12`, `docs/14`, `docs/17`, `docs/21`, `docs/22`, `docs/phases/P03_AO_INTEGRATION.md`) have been reconciled under Revision 3.
-> The active phase gate is **`EXTERNAL_SUPERVISOR_P03_CANONICAL_REAUDIT`**.
-> Production coding for Phase P03 remains strictly **HELD** pending release of the immutable `TASK-P03-001` Task Contract.
+> Canonical specifications (`docs/02`, `docs/12`, `docs/14`, `docs/17`, `docs/21`, `docs/22`, `docs/phases/P03_AO_INTEGRATION.md`) have been reconciled under Revision 3 and approved by External Supervisor (`P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED`).
+> The active phase gate is **`P03_TASK_001_IMPLEMENTATION`**.
+> Production coding is **`AUTHORIZED_FOR_TASK_P03_001_ONLY`** per External Supervisor release (`TASK_P03_001 = RELEASED`, `TASK_P03_002 = NOT_RELEASED`).
 
-1. **PHASE P03 CANONICAL RECONCILIATION GATE BOUNDARY**:
-   - Work during this gate is strictly confined to governance, architectural documentation, upstream contract alignment, and pre-code audit reconciliation.
-   - Zero production Go code may be created, edited, or deleted.
+1. **TASK-P03-001 SCOPE & BOUNDARY**:
+   - Scope is strictly confined to implementing the AO Transport Foundation & Compatibility Read Model in `internal/adapter/ao`.
+   - Allowed operations: Loopback HTTP client (`http://127.0.0.1:{port}` or `http://localhost:{port}`), base URL loopback validation, preflight health/readiness checks (`/healthz`, `/readyz`), agent harness inventory & readiness (`/api/v1/agents`, `/api/v1/agents/readiness`), OpenAPI schema signal (`/api/v1/openapi.yaml`), project registration & retrieval (`POST /api/v1/projects`, `GET /api/v1/projects/{id}`), read-only session inspection (`GET /api/v1/sessions/{id}`), and error envelope decoding (`envelope.APIError` mapping to normalized domain errors).
 
-2. **EXPLICITLY FORBIDDEN DURING THIS GATE**:
-   - Absolutely NO `AOAdapter` production implementation;
-   - Absolutely NO `net/http` production client creation;
-   - Absolutely NO new P03 Go packages (`internal/ao`, `internal/adapter`, `internal/integration`, etc.);
-   - Absolutely NO modification of `internal/**`;
+2. **EXPLICITLY FORBIDDEN IN TASK-P03-001**:
+   - Absolutely NO session spawn/mutation (`POST /api/v1/sessions` belongs to `TASK-P03-002`);
+   - Absolutely NO session prompt dispatch (`POST /api/v1/sessions/{id}/send` belongs to `TASK-P03-002`);
+   - Absolutely NO session termination or restore (`POST /api/v1/sessions/{id}/kill`, `POST /api/v1/sessions/{id}/restore` belong to `TASK-P03-002`);
+   - Absolutely NO session activity polling loop (`TASK-P03-003`);
+   - Absolutely NO raw session workspace file fetch (`TASK-P03-004`);
+   - Absolutely NO `StateStore` dependency or direct SQLite access inside `internal/adapter/ao` (`AOADAPTER_STATESTORE_DEPENDENCY = FORBIDDEN`);
+   - Absolutely NO modification of `internal/domain`, `internal/workflow`, `internal/store`, `internal/contract`, `internal/audit`;
    - Absolutely NO dependency additions (`go.mod`, `go.sum`);
    - Absolutely NO direct Antigravity CLI (`agy`) invocation code;
    - Absolutely NO ConPTY process management code;
    - Absolutely NO custom Git worktree management code;
    - Absolutely NO AO internal SQLite database access;
    - Absolutely NO `/mux` terminal stream scraping or parsing;
-   - Absolutely NO lifecycle-event synthesis without approved canonical semantics.
+   - Absolutely NO synthetic worker heartbeat generation.
 
-3. **P03 PRODUCTION CODE AUTHORIZATION GUARD**:
-   - Production P03 coding in this repository becomes authorized **ONLY** when:
-     1. External Supervisor audits canonical P03 reconciliation and approves exit from gate `EXTERNAL_SUPERVISOR_P03_CANONICAL_REAUDIT`;
-     2. External Supervisor releases an immutable Task Contract for `TASK-P03-001`;
-     3. `P03_CODE` is transitioned from `HELD` to `AUTHORIZED`.
-   - Until all conditions are met, `P03_CODE` remains strictly **HELD**, and no application source files (`.go`) may be created or modified.
+3. **TASK-P03-002 CODE GUARD**:
+   - Session mutation and lifecycle command implementation remains strictly **HELD** (`TASK_P03_002 = NOT_RELEASED`).
+   - Implementation of `TASK-P03-002` becomes authorized only upon formal audit approval and task contract release by External Supervisor.
