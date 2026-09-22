@@ -820,6 +820,7 @@ Resolves Findings `ADR16R1-003` and `ADR16R5-003`. Strictly conforms to `interna
 - **Omitting `BLOCKED` Startup Recovery**: Rejected under Finding `ADR16R6-001`; leaves orphaned open attempts across host crashes.
 - **Inventing `BLOCKED -> RUNNING` on Restart**: Rejected as an illegal transition absent from `internal/workflow/state_machine.go`.
 - **Recording `WORKER_STOPPED` without Confirmed Kill Acceptance**: Rejected under Finding `ADR16R6-003` as unproven termination.
+- **Claiming Absolute Exit Causality from Pinned AO**: Rejected because pinned wire contract exposes no process exit codes, signals, or causal receipt tokens; the system honestly bounds evidence to verified lineage-bounded correlation.
 - **Reversed Provisioning Guard Predicate (`stage NOT IN`)**: Rejected under Finding `ADR16R6-004`; must check for zero unresolved operations (`stage IN`).
 
 ### Safety Invariant
@@ -960,7 +961,7 @@ CREATE TABLE stop_operations (
 | `STOP_REQUESTED` | Positive HTTP 4xx/5xx Failure | Upstream rejected call | Termination | **NO** (fail closed) | `STOP_CALL_FAILED` | `STOP_CALL_FAILED` | Purpose-dependent (`RUNNING -> FAILED` for live stop) | **NO** |
 | `STOP_CALL_SUCCEEDED` | Same Generation, Alive | Kill accepted upstream; process not yet exited | Termination | **NO** (kill accepted; observe bounded by deadline) | `STOP_CALL_SUCCEEDED` | `IN_FLIGHT` (or `STOP_CONFIRMATION_TIMEOUT` on expiry) | Purpose-dependent (remains `RUNNING` until deadline) | **NO** (Finding `ADR16R4-007`) |
 | `STOP_CALL_SUCCEEDED` | Generation Mismatch | Kill accepted, but newer generation launched | Old termination timing | **NO** (prohibited) | `STOP_CALL_SUCCEEDED` | `STOP_GENERATION_MISMATCH` | Purpose-dependent (`RUNNING -> FAILED` for live stop) | **NO** |
-| `STOP_CALL_SUCCEEDED` | Same Generation, `isTerminated == true` | Kill accepted AND process termination confirmed | None | **NO** (already dead) | `STOP_TERMINATION_CONFIRMED` | `TERMINATION_CONFIRMED` | Purpose-dependent (`RUNNING -> FAILED` for live stop) | **YES** (Live stop only) |
+| `STOP_CALL_SUCCEEDED` | Same Generation, `isTerminated == true` | Kill accepted upstream (HTTP 200) AND same-generation `isTerminated == true` observed within confirmation deadline | Absolute exit causality (whether process exit was caused strictly by `/kill` vs concurrent autonomous exit or crash; pinned AO exposes no exit reason, signal, or reaper token) | **NO** (already dead) | `STOP_TERMINATION_CONFIRMED` | `TERMINATION_CONFIRMED` | Purpose-dependent (`RUNNING -> FAILED` for live stop) | **YES** (Live stop only, under verified operational correlation) |
 | `STOP_CALL_SUCCEEDED` | HTTP 404 (Not Found) | Kill accepted, session now absent | Exit code / graceful vs crash | **NO** (absent) | `STOP_TARGET_ABSENT` | `STOP_TARGET_ABSENT` | Purpose-dependent (`RUNNING -> FAILED` for live stop) | **NO** (Finding `ADR16R3-006`) |
 
 ### Rationale
@@ -973,21 +974,43 @@ Resolves Findings `ADR16R1-006`, `ADR16R4-001`, `ADR16R4-003`, `ADR16R4-004`, `A
 - **Zero-Race Stop Claim**: Rejected under Finding `ADR16R5-005`; pinned `/kill` lacks atomic generation fence; objective truthfully framed as honest provenance and fail-closed handling under unavoidable session-scoped TOCTOU.
 
 ### Safety Invariant
-`WORKER_STOPPED_ALLOWED_IFF` (Finding `ADR16R6-003`):
-`task_attempts.recovery_disposition = 'WORKER_STOPPED'` is permitted IF AND ONLY IF ALL of the following conditions are simultaneously met:
-1. `stop_operations.purpose == 'RUNNING_ATTEMPT_STOP'`; AND
-2. Positive prior kill call acceptance is durably proven (the stop operation stage reached `STOP_CALL_SUCCEEDED` prior to termination observation); AND
+`WORKER_STOPPED_ALLOWED_IFF` (Finding `ADR16R6-003` Reconciled):
+`task_attempts.recovery_disposition = 'WORKER_STOPPED'` is permitted IF AND ONLY IF ALL of the following verifiable conditions are simultaneously met:
+1. `stop_operations.purpose == 'RUNNING_ATTEMPT_STOP'` (the stop was initiated specifically to abort the active task execution attempt); AND
+2. Positive prior kill call acceptance is durably proven: `stop_operations.stage == 'STOP_CALL_SUCCEEDED'` was committed prior to termination observation (HTTP 200 received from `POST /api/v1/sessions/{sessionId}/kill`); AND
 3. Observed `session_id` matches `stop_operations.session_id`; AND
-4. Observed `terminal_generation` matches `stop_operations.terminal_generation`; AND
-5. Authoritative upstream termination is verified (`isTerminated == true`); AND
-6. The termination observation is demonstrably attributable to that stop lineage.
+4. Observed `terminal_generation` matches `stop_operations.terminal_generation` (string equality); AND
+5. Authoritative upstream termination is verified: `GetWorkerStatus` / public `SessionView` returns `isTerminated == true`; AND
+6. Lineage-bounded temporal window: termination observation occurs within the restart-stable deadline `now < confirmation_deadline_at`.
 
-Under ALL other circumstances, recording `WORKER_STOPPED` is strictly PROHIBITED:
-- `STOP_REQUESTED` + `isTerminated == true` without prior confirmed kill acceptance: record `resolution_state = 'STOP_EFFECT_UNPROVEN_TARGET_ALREADY_TERMINATED'`, `recovery_disposition = 'WORKER_TERMINATION_UNKNOWN'`.
-- Transport drop / socket error during kill call: record `resolution_state = 'STOP_CALL_OUTCOME_UNKNOWN'`, `recovery_disposition = 'STOP_CALL_OUTCOME_UNKNOWN'`.
-- Upstream HTTP 404 (Not Found): record `resolution_state = 'STOP_TARGET_ABSENT'`, `recovery_disposition = 'SESSION_ABSENT'`.
-- Generation mismatch: record `resolution_state = 'STOP_GENERATION_MISMATCH'`, `recovery_disposition = 'STOP_GENERATION_MISMATCH'`.
-- Confirmation deadline expired without exit: record `resolution_state = 'STOP_CONFIRMATION_TIMEOUT'`, `recovery_disposition = 'STOP_CONFIRMATION_TIMEOUT'`.
+**Causality Boundary & Wire Contract Facts (Pinned AO Baseline)**:
+- Pinned AO v0.13.0 wire contract (`POST /api/v1/sessions/{sessionId}/kill` returning `KillSessionResponse{OK: true, SessionID: "...", Freed: true}` and `GET /api/v1/sessions/{sessionId}` returning `SessionView`) exposes NO process exit code, OS signal name, or kill causality correlation token (`PUBLIC_CRASH_EVIDENCE_AVAILABLE_IN_PINNED_BASELINE = NONE`, `WORKER_CRASHED_PUBLIC_BASELINE = NOT_CURRENTLY_PROVABLE`).
+- Absolute causality—proving that the process terminated strictly as a physical consequence of the `/kill` call rather than a concurrent autonomous exit or unobservable crash in that interval—is technically impossible over the pinned public wire API.
+- Therefore, the Supervisor does NOT claim that pinned AO provides causal proof.
+- `WORKER_STOPPED` represents an **operational disposition based on verified lineage-bounded temporal correlation** (confirmed termination following accepted kill call for the matching session and generation within the bounded deadline), strictly conforming to Proposal-P03-002 Revision 6 Section 14.
+
+**Strict Fail-Closed Dispositions for All Other Circumstances**:
+Under ALL other circumstances, recording `WORKER_STOPPED` is strictly PROHIBITED, and the system fails closed with exact respective dispositions:
+- `STOP_REQUESTED` + `isTerminated == true` without prior confirmed kill acceptance (kill call was never confirmed transmitted/accepted before termination was observed):
+  record `resolution_state = 'STOP_EFFECT_UNPROVEN_TARGET_ALREADY_TERMINATED'`, `recovery_disposition = 'WORKER_TERMINATION_UNKNOWN'`.
+  TaskState transition: `RUNNING -> FAILED` (reason: `WORKER_TERMINATION_UNKNOWN`).
+  Quarantine remains ACTIVE on attempt & Pair.
+- Transport drop / socket error during kill call (`STOP_REQUESTED` + transport drop):
+  record `resolution_state = 'STOP_CALL_OUTCOME_UNKNOWN'` (stage remains `STOP_REQUESTED`, automatic retry prohibited), `recovery_disposition = 'STOP_CALL_OUTCOME_UNKNOWN'`.
+  TaskState transition: `RUNNING -> FAILED` (disposition: `STOP_CALL_OUTCOME_UNKNOWN`).
+  Quarantine remains ACTIVE on attempt & Pair.
+- Upstream HTTP 404 (Not Found during status check):
+  record `stage = 'STOP_TARGET_ABSENT'`, `resolution_state = 'STOP_TARGET_ABSENT'`, `recovery_disposition = 'SESSION_ABSENT'`.
+  TaskState transition: `RUNNING -> FAILED` (reason: `SESSION_ABSENT`).
+  Quarantine remains ACTIVE on attempt & Pair until Class B/C administrative resolution.
+- Generation mismatch (observed `terminal_generation != stop_operations.terminal_generation`):
+  record `resolution_state = 'STOP_GENERATION_MISMATCH'`, `recovery_disposition = 'STOP_GENERATION_MISMATCH'`.
+  TaskState transition: `RUNNING -> FAILED` (disposition: `STOP_GENERATION_MISMATCH`).
+  Quarantine remains ACTIVE on attempt & Pair.
+- Confirmation deadline expired without exit (`now >= confirmation_deadline_at`):
+  record `resolution_state = 'STOP_CONFIRMATION_TIMEOUT'`, `recovery_disposition = 'STOP_CONFIRMATION_TIMEOUT'`.
+  TaskState transition: `RUNNING -> FAILED` (disposition: `STOP_CONFIRMATION_TIMEOUT`).
+  Quarantine remains ACTIVE on attempt & Pair.
 
 ### Persistence Impact
 Creates table `stop_operations` with full relational provenance.
@@ -1447,7 +1470,7 @@ Upon formal External Supervisor acceptance of ADR-016, the following canonical d
 - Resolves execution attempt lifecycle across `BLOCKED -> HUMAN_REQUIRED` by atomically closing prior attempts under the invariant `HUMAN_REQUIRED_WITH_PRIOR_EXECUTION MUST_NOT_RETAIN_RESUMABLE_OPEN_ATTEMPT`.
 - Resolves the blocked escalation crash window (`ADR16R6-001`) via mandatory startup escalation recovery (`# BLOCKED_WITH_OPEN_CURRENT_ATTEMPT MANDATORY_ESCALATION_RECOVERY`).
 - Unifies atomic StateStore transitions in D12 across both terminal failures (`AtomicTerminalTransition`) and nonterminal attempt-closing escalations (`AtomicAttemptClosureTransition`, `ADR16R6-002`).
-- Enforces strict positive intentional-stop provenance under `WORKER_STOPPED_ALLOWED_IFF` (`ADR16R6-003`).
+- Enforces strict positive intentional-stop provenance under `WORKER_STOPPED_ALLOWED_IFF` (`ADR16R6-003`), defining the exact lineage-bounded correlation evidence verifiable under pinned AO while honestly acknowledging that absolute process exit causality is unavailable over public wire APIs.
 - Reconciles provisioning guard predicate to zero unresolved operations (`ADR16R6-004`).
 - Eliminates undeclared tokens (`PRE_SEND_BLOCKED`) from Lifecycle Observation Matrix (`ADR16R4-008`).
 - Resolves relational domain contradictions without introducing cyclic foreign keys.
@@ -1501,6 +1524,7 @@ Upon formal External Supervisor acceptance of ADR-016, the following canonical d
 - **Omitting `BLOCKED` Startup Recovery**: Rejected under Finding `ADR16R6-001`; leaves orphaned open attempts across host crashes.
 - **Inventing `BLOCKED -> RUNNING` on Restart**: Rejected as an illegal transition absent from `internal/workflow/state_machine.go`.
 - **Recording `WORKER_STOPPED` without Confirmed Kill Acceptance**: Rejected under Finding `ADR16R6-003` as unproven termination.
+- **Claiming Absolute Exit Causality from Pinned AO**: Rejected because pinned wire contract exposes no process exit codes, signals, or causal receipt tokens; the system honestly bounds evidence to verified lineage-bounded correlation.
 - **Reversed Provisioning Guard Predicate (`stage NOT IN`)**: Rejected under Finding `ADR16R6-004`; must check for zero unresolved operations (`stage IN`).
 - **Classifying Ambiguous Transport as Definite Call Failure**: Rejected under Finding `ADR16R5-004`; transport errors after bytes transmitted leave delivery outcome unknown and must not be classified as `STOP_CALL_FAILED`.
 - **Zero-Race Stop Claim**: Rejected under Finding `ADR16R5-005`; pinned `/kill` lacks atomic generation fence; objective truthfully framed as honest provenance and fail-closed handling under unavoidable session-scoped TOCTOU.
