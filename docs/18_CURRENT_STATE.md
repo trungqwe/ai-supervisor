@@ -4,7 +4,7 @@
 > **Phase 0 Baseline**: Frozen at tag `phase0-architecture-v1` (commit `6f72eaca30be3fc3ac00f25829dd4283ed98c3f5`)
 > **Phase 1 Historical Freeze**: Tag `phase1-architecture-v2` (commit `883b083023398d95d50e3bb88e90dcfca0171745`; `HISTORICAL_FREEZE_SNAPSHOT_SUPERSEDED_BY_REAUDIT`)
 > **Phase 1 Current Baseline**: Frozen at tag `phase1-architecture-v2.1` (commit `62d3fe0df4a3a05697da77349ff085430ea452f7`)
-> **Updated**: 2026-09-22 (P02 = COMPLETE; P02_FINAL_AUDIT = EXTERNAL_AUDIT_APPROVED; P03 = PRECODE_AUDIT; P03_CODE = HELD; Active Gate: P03_PRECODE_UPSTREAM_CONTRACT_AUDIT)
+> **Updated**: 2026-09-22 (P02 = COMPLETE; P02_FINAL_AUDIT = EXTERNAL_AUDIT_APPROVED; P03 = PRECODE_AUDIT_READY_FOR_EXTERNAL_AUDIT; P03_CODE = HELD; Active Gate: EXTERNAL_SUPERVISOR_P03_PRECODE_AUDIT)
 
 ## 1. High-Level Summary
 
@@ -14,13 +14,13 @@
 | **Phase 1 (Upstream Proof)** | **COMPLETE** (Track P01-A: `EXTERNAL_AUDIT_APPROVED`; Track P01-B: `EXTERNAL_AUDIT_APPROVED`; Track P01-C: `EXTERNAL_AUDIT_APPROVED_WITH_ADR_011`; Track P01-D: `TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). All proofs verified. |
 | **Architecture V2 (Historical Freeze)** | **FROZEN** at tag `phase1-architecture-v2` (`HISTORICAL_FREEZE_SNAPSHOT_SUPERSEDED_BY_REAUDIT`). Immutable historical snapshot. |
 | **Architecture V2.1 (Current Baseline)** | **FROZEN** at tag `phase1-architecture-v2.1`. Zero modifications permitted without architecture governance amendment. |
-| **Project Stage** | **P02 COMPLETE / P03 PRECODE AUDIT** (`P02 = COMPLETE`). `P02_FINAL_AUDIT = EXTERNAL_AUDIT_APPROVED`. `TASK_P02_001 = EXTERNAL_AUDIT_APPROVED`. `TASK_P02_002 = EXTERNAL_AUDIT_APPROVED`. `TASK_P02_003 = EXTERNAL_AUDIT_APPROVED`. `TASK_P02_004 = EXTERNAL_AUDIT_APPROVED`. `P03 = PRECODE_AUDIT`. `P03_CODE = HELD`. `ACTIVE_GATE = P03_PRECODE_UPSTREAM_CONTRACT_AUDIT`. |
+| **Project Stage** | **P02 COMPLETE / P03 PRECODE AUDIT READY** (P02 = COMPLETE). P02_FINAL_AUDIT = EXTERNAL_AUDIT_APPROVED. TASK_P02_001 = EXTERNAL_AUDIT_APPROVED. TASK_P02_002 = EXTERNAL_AUDIT_APPROVED. TASK_P02_003 = EXTERNAL_AUDIT_APPROVED. TASK_P02_004 = EXTERNAL_AUDIT_APPROVED. P03 = PRECODE_AUDIT_READY_FOR_EXTERNAL_AUDIT. P03_CODE = HELD. ACTIVE_GATE = EXTERNAL_SUPERVISOR_P03_PRECODE_AUDIT. |
 | **Blocked Issues** | V1 ChatGPT transport blocker: **NONE**. P01 upstream-proof blocker: **NONE**. Pre-code verification command gap: **RESOLVED** via ADR-013 accepted and schema migrated to `verification_requests`. |
 | **Known Process Deviations** | P00-DEV-001 (`ACCEPTED_AT_PHASE0_FREEZE`); Process Hygiene Deviation recorded; **P01B-DEV-001**; **P01C-DEV-001**; **P01C-DEV-002**; **P01C-DEV-003**; **P01C-DEV-004**. |
 | **Open Implementation Decisions** | **NONE** (All pre-code architecture decisions accepted: ADR-013 Accepted, ADR-014 Accepted with Go 1.27.x baseline / 1.26.x min, ADR-015 Accepted with SQLite WAL + synchronous=FULL). |
 | **Documentation Baseline Versions** | AO `v0.13.0` (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`), Agy `1.2.7` (`7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`), `tunnel-client` `v0.0.14`. |
 | **Upstream Runtime Proofs (P01)** | Track P01-A (`EXTERNAL_AUDIT_APPROVED`), Track P01-B (`EXTERNAL_AUDIT_APPROVED`), Track P01-C (`EXTERNAL_AUDIT_APPROVED_WITH_ADR_011`), Track P01-D (`TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). Phase P01 proof activity is **COMPLETE**. |
-| **Next Approved Action** | Perform P03 pre-code upstream contract reconciliation. No AOAdapter production implementation until External Supervisor reviews that audit. |
+| **Next Approved Action** | External Supervisor reviews P03 pre-code upstream contract audit. No AOAdapter production implementation until External Supervisor releases a concrete P03 Task Contract. |
 | **Active Gate** | `P03_PRECODE_UPSTREAM_CONTRACT_AUDIT` |
 | **P01 Execution Status** | `COMPLETE` |
 
@@ -73,3 +73,4 @@
 | [`P02_TASK_004_EXTERNAL_REAUDIT.md`](audits/P02_TASK_004_EXTERNAL_REAUDIT.md) | `EXTERNAL_AUDIT_APPROVED` (Commit b073a19 verified: Verify snapshot consistency & map key sanitization closed; all 4 P02 implementation tasks closed; P02 final audit opened) | 2026-09-22 |
 | [`P02_FINAL_AUDIT_EVIDENCE.md`](audits/P02_FINAL_AUDIT_EVIDENCE.md) | `READY_FOR_EXTERNAL_AUDIT` (Phase P02 implementation complete; all 22 domain transitions, contract validation, SQLite engine, and audit core verified; Exit Gate PASS) | 2026-09-22 |
 | [`P02_FINAL_EXTERNAL_AUDIT.md`](audits/P02_FINAL_EXTERNAL_AUDIT.md) | `EXTERNAL_AUDIT_APPROVED` (P02 implementation and final audit approved by External Supervisor; P02 complete; P03 pre-code contract audit opened) | 2026-09-22 |
+| [P03_PRECODE_UPSTREAM_CONTRACT_AUDIT.md](audits/P03_PRECODE_UPSTREAM_CONTRACT_AUDIT.md) | READY_FOR_EXTERNAL_AUDIT (P03 pre-code upstream contract audit complete; lifecycle event transport = SUPERVISOR_NORMALIZATION_POSSIBLE; 5-task decomposition proposed; P03_CODE = HELD) | 2026-09-22 |
