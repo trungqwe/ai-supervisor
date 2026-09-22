@@ -35,17 +35,39 @@ type AgentInventory struct {
 	Authorized []AgentInfo `json:"authorized"`
 }
 
-// AgentReadinessSnapshot describes the detailed readiness observation of an agent harness.
-type AgentReadinessSnapshot struct {
-	ID                 string     `json:"id"`
-	Label              string     `json:"label"`
-	EffectiveReadiness string     `json:"effectiveReadiness"`
-	UsageCount         int        `json:"usageCount,omitempty"`
-	LastUsedAt         *time.Time `json:"lastUsedAt,omitempty"`
+// AgentInstallationObservation captures installation state and freshness for an agent harness.
+type AgentInstallationObservation struct {
+	State       string     `json:"state"`
+	Freshness   string     `json:"freshness"`
+	CheckedAt   *time.Time `json:"checkedAt,omitempty"`
+	AttemptedAt *time.Time `json:"attemptedAt,omitempty"`
+	ReasonCode  string     `json:"reasonCode,omitempty"`
+	Reason      string     `json:"reason,omitempty"`
 }
 
-// AgentReadinessResponse is the response returned by GET /api/v1/agents/readiness.
-type AgentReadinessResponse struct {
+// AgentAuthenticationObservation captures authentication state and freshness for an agent harness.
+type AgentAuthenticationObservation struct {
+	State       string     `json:"state"`
+	Freshness   string     `json:"freshness"`
+	CheckedAt   *time.Time `json:"checkedAt,omitempty"`
+	AttemptedAt *time.Time `json:"attemptedAt,omitempty"`
+	ReasonCode  string     `json:"reasonCode,omitempty"`
+	Reason      string     `json:"reason,omitempty"`
+}
+
+// AgentReadinessSnapshot describes the complete readiness observation of an agent harness.
+type AgentReadinessSnapshot struct {
+	ID                 string                         `json:"id"`
+	Label              string                         `json:"label"`
+	Installation       AgentInstallationObservation   `json:"installation"`
+	Authentication     AgentAuthenticationObservation `json:"authentication"`
+	EffectiveReadiness string                         `json:"effectiveReadiness"`
+	UsageCount         int                            `json:"usageCount"`
+	LastUsedAt         *time.Time                     `json:"lastUsedAt,omitempty"`
+}
+
+// rawAgentReadinessResponse describes the wire shape returned by GET /api/v1/agents/readiness.
+type rawAgentReadinessResponse struct {
 	Agents []AgentReadinessSnapshot `json:"agents"`
 }
 
@@ -59,30 +81,28 @@ type Project struct {
 	DefaultBranch string `json:"defaultBranch,omitempty"`
 	Agent         string `json:"agent,omitempty"`
 	FolderMissing bool   `json:"folderMissing,omitempty"`
+
+	// Status indicates if project configuration is healthy ("ok") or degraded ("degraded").
+	Status       string `json:"status"`
+	IsDegraded   bool   `json:"isDegraded"`
+	ResolveError string `json:"resolveError,omitempty"`
 }
 
-// RegisterProjectRequest is the payload sent to POST /api/v1/projects.
-type RegisterProjectRequest struct {
-	Path      string  `json:"path"`
-	ProjectID *string `json:"projectId,omitempty"`
-	Name      *string `json:"name,omitempty"`
-}
+// ActivityState defines canonical runtime activity states observed by AO.
+type ActivityState string
 
-// ProjectResponse is the response returned by POST /api/v1/projects.
-type ProjectResponse struct {
-	Project Project `json:"project"`
-}
-
-// GetProjectResponse is the response returned by GET /api/v1/projects/{id}.
-type GetProjectResponse struct {
-	Status  string  `json:"status"`
-	Project Project `json:"project"`
-}
+const (
+	ActivityStateActive       ActivityState = "active"
+	ActivityStateIdle         ActivityState = "idle"
+	ActivityStateWaitingInput ActivityState = "waiting_input"
+	ActivityStateBlocked      ActivityState = "blocked"
+	ActivityStateExited       ActivityState = "exited"
+)
 
 // ActivitySnapshot captures the low-level runtime activity state of an AO session.
 type ActivitySnapshot struct {
-	State          string    `json:"state"`
-	LastActivityAt time.Time `json:"lastActivityAt"`
+	State          ActivityState `json:"state"`
+	LastActivityAt time.Time     `json:"lastActivityAt"`
 }
 
 // WorkerStatus represents the normalized read model of an AO worker session returned by GET /api/v1/sessions/{id}.
@@ -98,9 +118,4 @@ type WorkerStatus struct {
 	Model              string           `json:"model,omitempty"`
 	TerminalGeneration string           `json:"terminalGeneration,omitempty"`
 	PreviewURL         string           `json:"previewUrl,omitempty"`
-}
-
-// SessionResponse is the response envelope returned by GET /api/v1/sessions/{id}.
-type SessionResponse struct {
-	Session WorkerStatus `json:"session"`
 }
