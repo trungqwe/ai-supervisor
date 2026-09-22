@@ -173,7 +173,11 @@ LIMIT 1`
 
 		switch expectedFrom {
 		case domain.StateDraft:
-			// DRAFT -> READY requires at least one persisted TaskContract revision (guaranteed by err == nil above)
+			// Finding R4-001: DRAFT -> READY requires latest contract revision to be mutable (is_immutable = false).
+			// Disallows reusing already-dispatched frozen contracts on human replanning flows (HUMAN_REQUIRED -> DRAFT -> READY).
+			if isImmutable {
+				return fmt.Errorf("%w: transition from DRAFT to READY requires mutable contract revision (latest rev %d is immutable)", ErrReadyContractRequired, revNum)
+			}
 		case domain.StateRevisionRequired:
 			// REVISION_REQUIRED -> READY requires a NEW latest contract revision that is still is_immutable = false
 			if isImmutable {

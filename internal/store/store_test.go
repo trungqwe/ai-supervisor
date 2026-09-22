@@ -689,6 +689,7 @@ func TestStore_ReadyEntryContractPreconditions(t *testing.T) {
 		t.Fatalf("TransitionTask DRAFT -> READY failed after contract inserted: %v", err)
 	}
 	t.Logf("DRAFT_READY_WITH_CONTRACT = PASS")
+	t.Logf("INITIAL_DRAFT_MUTABLE_REV1_READY = PASS")
 
 	// 5. Attempt to insert another new contract while READY must FAIL ErrContractInsertState
 	c2 := domain.TaskContract{
@@ -732,23 +733,40 @@ func TestStore_HumanReplanningFlow(t *testing.T) {
 	s.InsertTaskContract(ctx, c1)
 	s.TransitionTask(ctx, "task-replan-1", domain.StateDraft, domain.StateReady)
 
-	// Dispatch rev 1 (freezes c1)
+	// Dispatch rev 1 (freezes c1 to is_immutable = true)
 	p1, _ := CanonicalExpectedReportPath("task-replan-1", "att-replan-1")
 	_, err := s.PrepareDispatch(ctx, "task-replan-1", "c-replan-1", "att-replan-1", p1, time.Now())
 	if err != nil {
 		t.Fatalf("dispatch failed: %v", err)
 	}
 
-	// Canonical failure: DISPATCHED -> FAILED -> HUMAN_REQUIRED
+	// Canonical failure escalation: DISPATCHED -> FAILED -> HUMAN_REQUIRED
 	s.TransitionTask(ctx, "task-replan-1", domain.StateDispatched, domain.StateFailed)
 	s.TransitionTask(ctx, "task-replan-1", domain.StateFailed, domain.StateHumanRequired)
 
-	// HUMAN_REQUIRED -> DRAFT (Human replanning)
+	// HUMAN_REQUIRED -> DRAFT (Human replanning initiated)
 	if err := s.TransitionTask(ctx, "task-replan-1", domain.StateHumanRequired, domain.StateDraft); err != nil {
 		t.Fatalf("transition HUMAN_REQUIRED -> DRAFT failed: %v", err)
 	}
 
-	// Insert valid Rev 2 while in DRAFT
+	// Finding R4-001: Attempting DRAFT -> READY without creating a new revision MUST FAIL
+	// Reusing the old frozen contract is strictly rejected
+	err = s.TransitionTask(ctx, "task-replan-1", domain.StateDraft, domain.StateReady)
+	if err == nil || !errors.Is(err, ErrReadyContractRequired) {
+		t.Fatalf("expected ErrReadyContractRequired when attempting DRAFT -> READY with old immutable contract, got: %v", err)
+	}
+	t.Logf("HUMAN_REPLAN_WITH_OLD_IMMUTABLE_CONTRACT = REJECTED (%v)", err)
+
+	// Verify task remains in DRAFT
+	tsk, err := s.GetTask(ctx, "task-replan-1")
+	if err != nil {
+		t.Fatalf("GetTask failed: %v", err)
+	}
+	if tsk.State != domain.StateDraft {
+		t.Fatalf("task state corrupted: got %s, want DRAFT", tsk.State)
+	}
+
+	// Insert valid mutable Rev 2 while in DRAFT
 	c1ID := "c-replan-1"
 	c2 := domain.TaskContract{
 		ContractID:           "c-replan-2",
@@ -761,9 +779,103 @@ func TestStore_HumanReplanningFlow(t *testing.T) {
 		t.Fatalf("insert rev 2 in DRAFT replanning state failed: %v", err)
 	}
 
-	// DRAFT -> READY
+	// Now DRAFT -> READY succeeds because latest contract is mutable rev 2
 	if err := s.TransitionTask(ctx, "task-replan-1", domain.StateDraft, domain.StateReady); err != nil {
 		t.Fatalf("transition DRAFT -> READY failed after replanning: %v", err)
 	}
+	t.Logf("HUMAN_REPLAN_WITH_NEW_MUTABLE_REVISION = PASS")
 	t.Logf("HUMAN_REPLAN_DRAFT_READY = PASS")
+
+	// Dispatch rev 2 succeeds
+	p2, _ := CanonicalExpectedReportPath("task-replan-1", "att-replan-2")
+	att2, err := s.PrepareDispatch(ctx, "task-replan-1", "c-replan-2", "att-replan-2", p2, time.Now())
+	if err != nil {
+		t.Fatalf("dispatch rev 2 failed: %v", err)
+	}
+	if att2.ContractID != "c-replan-2" || att2.AttemptNumber != 2 {
+		t.Errorf("unexpected attempt 2: %+v", att2)
+	}
+}
+
+func TestStore_CanonicalExpectedReportPath_WindowsSafety(t *testing.T) {
+	// 1. Valid safe identifiers
+	validCases := []struct {
+		taskID    string
+		attemptID string
+		want      string
+	}{
+		{"TASK-P02-003", "attempt-1", ".supervisor/reports/TASK-P02-003/attempt-1.json"},
+		{"TASK-123", "ATT_123", ".supervisor/reports/TASK-123/ATT_123.json"},
+		{"TASK-UUID", "550e8400-e29b-41d4-a716-446655440000", ".supervisor/reports/TASK-UUID/550e8400-e29b-41d4-a716-446655440000.json"},
+	}
+	for _, tc := range validCases {
+		got, err := CanonicalExpectedReportPath(tc.taskID, tc.attemptID)
+		if err != nil {
+			t.Fatalf("unexpected error for valid (%s, %s): %v", tc.taskID, tc.attemptID, err)
+		}
+		if got != tc.want {
+			t.Errorf("got %s, want %s", got, tc.want)
+		}
+	}
+	t.Logf("CANONICAL_SAFE_ATTEMPT_ID = PASS")
+	t.Logf("CANONICAL_REPORT_PATH = PASS")
+
+	// 2. Windows reserved device base names (case-insensitive and with extensions)
+	reservedDevices := []string{
+		"CON", "con", "NUL", "nul", "PRN", "prn", "AUX", "aux",
+		"COM1", "com1", "COM9", "com9", "LPT1", "lpt1", "LPT9", "lpt9",
+		"CON.foo", "NUL.log", "aux.txt", "COM3.dat", "lpt4.out",
+	}
+	for _, dev := range reservedDevices {
+		_, err := CanonicalExpectedReportPath("TASK-1", dev)
+		if err == nil || !errors.Is(err, ErrReportPathMismatch) {
+			t.Fatalf("expected ErrReportPathMismatch for reserved device attemptID %q, got: %v", dev, err)
+		}
+		_, err = CanonicalExpectedReportPath(dev, "att-1")
+		if err == nil || !errors.Is(err, ErrReportPathMismatch) {
+			t.Fatalf("expected ErrReportPathMismatch for reserved device taskID %q, got: %v", dev, err)
+		}
+	}
+	t.Logf("WINDOWS_RESERVED_DEVICE_ATTEMPT_ID = REJECTED")
+	t.Logf("WINDOWS_REPORT_SEGMENT_RESERVED_DEVICE = REJECTED")
+
+	// 3. Windows forbidden characters: < > : " / \ | ? *
+	forbiddenChars := []string{
+		"bad*id", "bad?id", "bad|id", "bad\"id", "bad<id", "bad>id",
+		"bad/id", "bad\\id", "bad:id",
+	}
+	for _, bad := range forbiddenChars {
+		_, err := CanonicalExpectedReportPath("TASK-1", bad)
+		if err == nil || !errors.Is(err, ErrReportPathMismatch) {
+			t.Fatalf("expected ErrReportPathMismatch for forbidden char attemptID %q, got: %v", bad, err)
+		}
+	}
+	t.Logf("WINDOWS_FORBIDDEN_CHARACTER_ATTEMPT_ID = REJECTED")
+	t.Logf("WINDOWS_REPORT_SEGMENT_FORBIDDEN_CHARACTER = REJECTED")
+
+	// 4. Trailing period and space normalization hazards
+	trailingCases := []string{
+		"name.", "name.txt.", " name", "name ", "name. ", "name .",
+	}
+	for _, tc := range trailingCases {
+		_, err := CanonicalExpectedReportPath("TASK-1", tc)
+		if err == nil || !errors.Is(err, ErrReportPathMismatch) {
+			t.Fatalf("expected ErrReportPathMismatch for trailing dot/space attemptID %q, got: %v", tc, err)
+		}
+	}
+	t.Logf("WINDOWS_TRAILING_PERIOD_ATTEMPT_ID = REJECTED")
+	t.Logf("WINDOWS_REPORT_SEGMENT_TRAILING_PERIOD = REJECTED")
+
+	// 5. Control characters: 0x01 through 0x1F, 0x00, 0x7F
+	controlCases := []string{
+		"att\x01id", "att\x1Fid", "att\x00id", "att\x07id", "att\x7Fid",
+	}
+	for _, cc := range controlCases {
+		_, err := CanonicalExpectedReportPath("TASK-1", cc)
+		if err == nil || !errors.Is(err, ErrReportPathMismatch) {
+			t.Fatalf("expected ErrReportPathMismatch for control char attemptID %q, got: %v", cc, err)
+		}
+	}
+	t.Logf("WINDOWS_CONTROL_CHARACTER_ATTEMPT_ID = REJECTED")
+	t.Logf("WINDOWS_REPORT_SEGMENT_CONTROL_CHARACTER = REJECTED")
 }

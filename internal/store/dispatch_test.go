@@ -171,6 +171,35 @@ func TestStore_PrepareDispatch_CanonicalReportPathEnforcement(t *testing.T) {
 		t.Errorf("expected %s, got %s", canonicalPath, att.ExpectedReportPath)
 	}
 	t.Logf("CANONICAL_REPORT_PATH_ENFORCEMENT = PASS (%s)", canonicalPath)
+	t.Logf("CANONICAL_REPORT_PATH = PASS")
+
+	// 6. Section 21: Unsafe attemptID fails PrepareDispatch before transaction mutation
+	setupReadyTask(t, s, "task-unsafe", "contract-unsafe")
+	_, err = s.PrepareDispatch(ctx, "task-unsafe", "contract-unsafe", "CON", ".supervisor/reports/task-unsafe/CON.json", time.Now())
+	if err == nil || !errors.Is(err, ErrReportPathMismatch) {
+		t.Fatalf("expected ErrReportPathMismatch for unsafe CON attempt ID, got: %v", err)
+	}
+
+	// Verify task remains in READY, current_attempt unchanged (0), contract mutable, 0 attempts inserted
+	taskUnsafe, err := s.GetTask(ctx, "task-unsafe")
+	if err != nil {
+		t.Fatalf("GetTask failed: %v", err)
+	}
+	if taskUnsafe.State != domain.StateReady || taskUnsafe.CurrentAttempt != 0 {
+		t.Errorf("task state corrupted after rejected unsafe dispatch: %+v", taskUnsafe)
+	}
+	contractUnsafe, err := s.GetTaskContract(ctx, "contract-unsafe")
+	if err != nil {
+		t.Fatalf("GetTaskContract failed: %v", err)
+	}
+	if contractUnsafe.IsImmutable {
+		t.Errorf("contract was frozen after rejected unsafe dispatch")
+	}
+	var attemptCount int
+	_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM task_attempts WHERE task_id = 'task-unsafe'").Scan(&attemptCount)
+	if attemptCount != 0 {
+		t.Errorf("expected 0 attempt rows inserted, got %d", attemptCount)
+	}
 }
 
 func TestStore_PrepareDispatch_StaleContractRevisionRejected(t *testing.T) {
@@ -324,6 +353,7 @@ func TestStore_PrepareDispatch_RetryReusesLatestImmutableContract(t *testing.T) 
 		t.Errorf("expected attempt 2, got %d", att2.AttemptNumber)
 	}
 	t.Logf("FAILED_RETRY_REUSES_IMMUTABLE_CONTRACT = PASS (attempt 2 allocated)")
+	t.Logf("FAILED_DIRECT_RETRY_IMMUTABLE_CONTRACT = PASS")
 }
 
 func TestStore_PairActiveLaneInvariant(t *testing.T) {
