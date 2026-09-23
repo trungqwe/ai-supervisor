@@ -69,3 +69,10 @@ Authority: `docs/adr/ADR-016-CLARIFICATION-administrative-stop-risk-acceptance.m
 | Quyết định | Canonical section | Acceptance liên quan |
 |---|---|---|
 | 3C-R1-003: logical stop resolution audit `STOP_OPERATION_RESOLVED` cho mismatch/already terminated | docs/05 §3; docs/14 §1.2.3 Step 3; `docs/adr/ADR-016-CLARIFICATION-stop-operation-resolved-audit.md` | AC-3C-04/06/07: actual `event_type`, CAS/audit rollback cho live/cleanup/maintenance |
+
+## TASK-P03-003D audit clarification
+
+| Quyết định | Canonical | Acceptance evidence |
+| --- | --- | --- |
+| Post-send outage/recovery audit và exact CAS | docs/05 §3; docs/14 §1.2.3; `docs/adr/ADR-016-CLARIFICATION-3d-recovery-audit-events.md` §1 | AC-3D-08/09/11: DISPATCHED/RUNNING, replay, stale writer, audit rollback |
+| Restart stop alive dùng `STOP_OPERATION_RESOLVED` | docs/05 §3; docs/14 §1.2.3 Step 3; clarification §2 | AC-3D-04/05/11: no reissue, exact lineage/deadline/ownership, CAS/audit rollback |
