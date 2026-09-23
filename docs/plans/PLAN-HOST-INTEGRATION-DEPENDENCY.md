@@ -3,7 +3,7 @@
 > **Authority**: External Supervisor Governance Directive
 > **Active Gate**: `TASK_P03_003D_HANDOFF_VERIFICATION`
 > **Phạm vi tài liệu**: Kế hoạch kiến trúc và quản trị cho các dependency runtime còn thiếu sau khi merge TASK-P03-003D
-> **Status**: REVISED_FOR_SUPERVISOR_REVIEW (Revision 2)
+> **Status**: REVISED_FOR_SUPERVISOR_REAUDIT (Revision 3)
 
 ---
 
@@ -21,15 +21,18 @@ Tuy nhiên, đối chiếu với `docs/17_ROADMAP.md` và `docs/22_MODULE_PROVEN
 
 ---
 
-## 2. Căn chỉnh Kế hoạch theo API Code Thực tế Đã Tồn Tại
+## 2. Phân Tách Hai Cấp Độ Quiescence & Căn chỉnh API Code Thực tế
 
-Kế hoạch host integration tuân thủ nghiêm ngặt các interface và phương thức đã hiện thực trong codebase:
-
-### 2.1. `Runner.Run(ctx)` và Cơ chế Tự Acquire Quiescence
-- **Chữ ký hàm hiện có**: `func (r *Runner) Run(ctx context.Context) (report Report, err error)` (tại `internal/recovery/scanner.go`).
-- **Cơ chế hoạt động**: `Runner.Run` **tự động gọi** `r.Host.Acquire(ctx)` để nhận `ExclusiveScope`, và giải phóng qua `defer scope.Release()`.
-- **Nguyên tắc tích hợp**: Host entrypoint chỉ đóng vai trò inject provider struct vào `Runner.Host`. **Host entrypoint tuyệt đối không gọi `Host.Acquire()` lần hai** trước khi gọi `Run(ctx)`.
-- **Phạm vi Quiescence**: Interface `HostQuiescence.Acquire(context.Context) (ExclusiveScope, error)` có phạm vi là **toàn bộ database và shared effect admission chung**, không chỉ giới hạn ở một Pair cụ thể.
+### 2.1. Phân tách `ProcessOwnerLease` Dài hạn vs `ExclusiveScope` Ngắn hạn
+1. **`ProcessOwnerLease` (Dài hạn, cấp Host Process)**:
+   - Phạm vi: Cấp độ toàn bộ database (gắn với canonical DB path trên Windows).
+   - Vòng đời: Giữ độc quyền từ **TRƯỚC** khi gọi `Runner.Run(ctx)`, xuyên suốt quá trình daemon chạy và phục vụ, cho đến **SAU** khi shutdown drain hoàn tất và đóng Store / DB connection.
+   - Mục đích: Bảo đảm tại một thời điểm trên một máy Windows chỉ có DUY NHẤT một tiến trình daemon sở hữu database (Single Active Daemon).
+2. **`ExclusiveScope` (Ngắn hạn, cấp Recovery Scan)**:
+   - Phạm vi: `HostQuiescence.Acquire(ctx)` (tại `internal/recovery/scanner.go`).
+   - Vòng đời: `Runner.Run(ctx)` **tự động gọi** `r.Host.Acquire(ctx)` để lấy `ExclusiveScope` khi bắt đầu sweep và gọi `scope.Release()` ngay khi sweep hoàn tất.
+   - Tách biệt: Khi `ExclusiveScope.Release()` được gọi, `ProcessOwnerLease` **vẫn tiếp tục được giữ** bởi daemon cho đến khi daemon tắt hoàn toàn.
+   - **Nguyên tắc tích hợp**: Entrypoint chỉ inject provider struct vào `Runner.Host`. **Host entrypoint tuyệt đối không gọi `Host.Acquire()` lần hai** trước khi gọi `Run(ctx)`.
 
 ### 2.2. Nhất thể hóa Ba Interface vào Cùng Một Trusted Host Authority
 Cùng một trusted host boundary phải đồng thời hiện thực và đảm bảo tính nhất quán giữa 3 interface:
@@ -60,32 +63,24 @@ Cần phân biệt rõ ràng hai khái niệm trực giao:
    - **Việc terminate process hoặc đóng local socket hoàn toàn KHÔNG chứng minh AO chưa nhận effect**.
    - **Nguyên tắc Xử lý**: Mọi intent mơ hồ (`STOP_REQUESTED`, `SEND_REQUESTED`, `RESTORE_REQUESTED`) phải được duy trì **fail-closed**, không bao giờ được replay mù quáng. Scanner và poller phải đối soát (reconcile) qua fresh GET / observation, hoặc nếu target đã terminated / generation mismatch thì ghi nhận governed logical resolution audit (`STOP_OPERATION_RESOLVED`), hoặc giữ nguyên quarantine và escalate cho human reconciliation.
 
-### 3.2. Thiết kế Exclusivity Phù hợp Nền tảng Windows
+### 3.2. Thiết kế Exclusivity Phù hợp Nền tảng Windows (Single Windows Host)
 1. **Không dùng POSIX Primitives & Khóa Trực tiếp SQLite**:
    - Trên Windows, không có POSIX `flock` hay `SIGKILL`.
    - Không đặt khóa file trực tiếp trên database file của SQLite (`.db`), vì tính chất mandatory locking của Windows sẽ gây xung đột trực tiếp với internal pager locking của SQLite (`SQLITE_BUSY` hoặc access denied).
-2. **Cơ chế Khóa Sidecar & Windows Named Mutex**:
-   - Exclusivity trên mỗi database được định danh bằng canonical path của file database.
-   - Sử dụng sidecar lock file (ví dụ `<db_path>.supervisor.lock`) mở với quyền truy cập độc quyền không chia sẻ (`syscall.FILE_SHARE_READ = 0` hoặc `LockFileEx`), kết hợp với Windows Named Mutex theo định dạng `Global\AISupervisor_<SHA256(canonical_db_path)>`.
-3. **Vòng đời Owner & Cạnh tranh Hai Process**:
-   - Khi Process B khởi động: Mở mutex/sidecar lock. Nếu Process A đang nắm giữ, Process B gửi yêu cầu bàn giao qua local IPC (Named Pipe hoặc tín hiệu sidecar).
-   - Process A nhận yêu cầu: Đóng admission, drain/join toàn bộ in-flight effect callers, giải phóng lock và thoát.
-   - Xử lý tiến trình cũ không hợp tác: Nếu quá thời hạn chờ an toàn, Process B mở handle Process A qua `OpenProcess(PROCESS_TERMINATE, ...)` và gọi `TerminateProcess`.
-   - **Bằng chứng đã thoát**: Process B dùng `WaitForSingleObject` trên process handle để xác nhận kernel Windows đã hoàn tất việc giải phóng Process A và đóng toàn bộ network socket descriptors.
-   - **Ràng buộc Fail-Closed**: Nếu chưa chứng minh được Process A đã thoát hoàn toàn và lock chưa được acquire độc quyền -> **TUYỆT ĐỐI KHÔNG CẤP `ExclusiveScope`**. `Runner.Run(ctx)` phải dừng ngay và không mở cổng phục vụ.
-
-### 3.3. Phép thử Bác bỏ Giả định (Falsification Test)
-- *Giả định cần kiểm chứng*: "Khi tiến trình mới nhận `ExclusiveScope` từ `Host.Acquire(ctx)`, tuyệt đối không còn bất kỳ caller cũ nào có thể phát effect mới tới AO".
-- *Thiết kế phép thử*:
-  1. Chạy Tiến trình 1, cố gắng thực hiện một thao tác gửi `/kill` nhưng bị hoãn (pause/stall) trước khi dispatch.
-  2. Khởi động Tiến trình 2 trỏ vào cùng DB và yêu cầu acquire quiescence.
-  3. *Điều kiện Bác bỏ*: Nếu Tiến trình 2 hoàn tất `Acquire` và phân loại intent trong khi Tiến trình 1 vẫn có thể tiếp tục và emit thành công effect mới tới Mock AO -> **GIẢ ĐỊNH BỊ BÁC BỎ (TEST FAILED)**.
-  4. *Tiêu chí Chấp thuận*: Tiến trình 2 bắt buộc phải block chờ Tiến trình 1 drain xong, hoặc Tiến trình 1 bị terminate và kernel đóng toàn bộ handles trước khi `Acquire` trả về thành công.
-
-### 3.4. Xử lý Failure, Cancellation, Restart và Giới hạn Rollback
-1. **Failure / Cancellation trong lúc Acquire**: Nếu việc acquire quiescence bị lỗi hoặc context bị hủy, trả lỗi ngay lập tức, `Runner.Run` hủy bỏ, admission tiếp tục đóng fail-closed.
-2. **Crash trong lúc `Run()`**: Bất kỳ crash nào trong `Run()` sẽ khiến transaction Store chưa commit tự động rollback; `STARTUP_RECOVERY_SWEEP_STARTED` đã ghi sẽ đánh dấu sweep chưa hoàn thành; lần restart tiếp theo sẽ quét lại snapshot.
-3. **Giới hạn Rollback**: Rollback của database không thể thu hồi wire call đã phát ra ngoài AO (vì AO không hỗ trợ 2-Phase Commit). Vì vậy, sự phân định `STOP_CALL_SUCCEEDED` (đã proven wire call) vs `STOP_REQUESTED` (chưa proven effect) phải được bảo vệ nghiêm ngặt.
+2. **Khóa Chính: Windows Named Mutex**:
+   - Định danh: `Local\AISupervisor_<SHA256(canonical_db_path)>`.
+   - Kernel Windows tự giải phóng khi tiến trình chết; báo hiệu `WAIT_ABANDONED` cho tiến trình kế tiếp nhận diện để chạy recovery sweep.
+   - Explicit DACL chỉ cho current user SID; `bInheritHandle = FALSE` chống handle leak sang process con.
+3. **Khóa Phụ: Sidecar Lock File**:
+   - File: `<db_path>.supervisor.owner`, chứa metadata (`pid`, `owner_instance_id`, `pipe_name`, `started_at`).
+   - Mở với `FILE_SHARE_READ` để process khác có thể đọc metadata liên lạc.
+4. **Thứ tự Acquire & Rollback**:
+   - Bước 1: Acquire Named Mutex. Nếu thất bại -> fail-closed.
+   - Bước 2: Ghi metadata vào Sidecar Lock File. Nếu ghi lỗi -> xóa sidecar, release Mutex, fail-closed.
+5. **V1 Chỉ Áp dụng Cooperative Takeover (Bỏ Auto-kill)**:
+   - Khi Process B thấy Process A đang nắm mutex: Process B kết nối qua Named Pipe yêu cầu Process A bàn giao (cooperative shutdown).
+   - Process A nhận yêu cầu: đóng admission, drain/join toàn bộ in-flight effect callers, release `ProcessOwnerLease`, và tự thoát.
+   - **Fail-Closed**: Nếu Process A không hợp tác, không phản hồi hoặc không thoát trong thời hạn chờ an toàn, Process B **FAIL-CLOSED NGAY LẬP TỨC**. Tuyệt đối không tự động gọi `TerminateProcess` trong V1.
 
 ---
 
@@ -102,7 +97,8 @@ sequenceDiagram
     participant Listener as External API Listener
 
     rect rgb(255, 240, 240)
-    Note over Host,Listener: BƯỚC 1: Khởi động ở trạng thái Fail-Closed
+    Note over Host,Listener: BƯỚC 1: Acquire ProcessOwnerLease & Đóng Listener Admission
+    Host->>Host: Acquire ProcessOwnerLease (Named Mutex + Sidecar)
     Host->>Host: Đóng toàn bộ Listener Admission tiếp nhận request
     end
 
@@ -112,7 +108,7 @@ sequenceDiagram
     Runner->>HQ: Acquire(ctx) (Đóng shared admission toàn DB, drain callers)
     HQ-->>Runner: Trả về ExclusiveScope
     Runner->>Runner: Phân loại intents trong DB Snapshot
-    Runner->>HQ: scope.Release()
+    Runner->>HQ: scope.Release() (ProcessOwnerLease VẪN ĐƯỢC GIỮ)
     Runner-->>Host: Trả về (Report, err)
     end
 
@@ -137,21 +133,37 @@ sequenceDiagram
     Host->>TM: Dừng Ticker, đợi các caller giữ TimeoutPermit kết thúc
     Host->>HQ: DrainAndJoin() (Đảm bảo mọi effect caller đã kết thúc)
     Host->>Host: Đóng Store và kết nối Database an toàn
+    Host->>Host: Giải phóng ProcessOwnerLease (Xóa sidecar file & Release Mutex)
     end
 ```
 
 ---
 
-## 5. Định nghĩa Bằng chứng Runtime & Tiêu chuẩn Phê duyệt
+## 5. Ma trận Kiểm chứng Runtime trên Binary Thật & Ranh giới Tooling
 
-### 5.1. Định nghĩa Bằng chứng Runtime Thực tế
-Bằng chứng runtime phải được thu thập từ binary daemon thực thi (`cmd/supervisor`), không chấp nhận fake integration harness:
-1. **Startup-before-serve Proof**: Log thực tế chứng minh `Runner.Run(ctx)` được gọi trước lệnh bind socket của API listener, và socket chỉ mở khi `report.Complete == true`. Nếu scan lỗi, tiến trình thoát non-zero và socket không bao giờ được mở.
-2. **Shutdown Drain Proof**: Log thực tế chứng minh khi nhận signal, listener đóng trước, poller drain xong, timeout permit được release đầy đủ trước khi kết nối DB đóng.
-3. **Verified Operator Principal Proof**: Bằng chứng danh tính operator được xác thực từ trusted boundary thật (OS user identity, mTLS client cert, hoặc secure auth token). Chuỗi tĩnh `"test-operator"` trong harness không được chấp nhận.
-4. **P03 Exit Gate Proof**: Vòng đời session dispatch -> observation reconciliation -> teardown chạy thành công tự động trên binary daemon mà không cần P04.
+### 5.1. Ma trận Kiểm chứng trên Binary Thật (`cmd/supervisor`)
 
-### 5.2. Invariants Bất biến
+| Kịch bản Kiểm chứng | Hành vi & Trạng thái Mong đợi | Phương pháp Kiểm tra Thực tế |
+|---|---|---|
+| **1. Trước Run** | `ProcessOwnerLease` được acquire. Listener chưa bind socket. | Network probe: Socket connect bị từ chối (Connection Refused). |
+| **2. Đang Run** | `Runner.Run(ctx)` nắm `ExclusiveScope`. Listener tiếp tục đóng. | Network probe: Socket connect bị từ chối; log chỉ bổ trợ. |
+| **3. Sau Run (Complete)** | `r.ready = true`. Pair guards sạch. Listener bind port thành công. | HTTP probe tới listener port trả về `200 OK` (Admission OPEN). |
+| **4. Sau Run (PendingAO)** | `r.ready = true`. Listener mở; Pair có hold trả về 409/503. | HTTP probe verify Pair sạch = 200, Pair hold = 409/503; Poller chạy nền. |
+| **5. Run Lỗi / Incomplete** | `r.ready = false`. Admission đóng fail-closed; daemon exit non-zero. | Socket không bao giờ mở; process exit code != 0. |
+| **6. Cạnh tranh 2 Process** | Process B phát hiện Process A đang giữ lock; cooperative takeover an toàn. | Process A drain và exit; Process B tiếp quản; nếu A không thoát thì B fail-closed. |
+| **7. Shutdown Drain** | Nhận SIGINT: listener đóng -> poller drain -> timeout permit release -> đóng Store. | Probe socket đóng ngay; verify mọi in-flight connection hoàn tất trước khi DB đóng. |
+| **8. P03 Exit Gate** | 5 bước: session create, dispatch, observation reconciliation, raw file read, teardown. | Chạy trọn vẹn kịch bản tự động mà không import/gọi bất kỳ code P04 nào. |
+
+### 5.2. Ranh giới Tooling P03/P05 & An ninh SEC-003
+1. **Giới hạn Scope P03 Host**:
+   - P03 host chỉ giới hạn ở daemon bootstrap (`cmd/supervisor`), host quiescence provider và verification runner tối thiểu phục vụ kiểm chứng exit gate P03.
+   - Tuyệt đối **KHÔNG triển khai trước bộ 12 domain tools của P05**.
+2. **Ghi nhận Yêu cầu Người dùng & An ninh**:
+   - ChatGPT Web đóng vai trò là **agent suy luận** (reasoning agent). Supervisor Control Plane cung cấp local tool surface (bridge-not-brain).
+   - Ở các phase P04/P05, các công cụ đọc log và chạy verification profile phải được đối soát nghiêm ngặt với `docs/02_REQUIREMENTS.md`, `docs/11_TOOL_DEFINITIONS.md`, và `docs/07_SECURITY_MODEL.md` (SEC-003).
+   - **Tuyệt đối KHÔNG mở arbitrary shell execution**; mọi lệnh kiểm thử phải qua runner độc lập có whitelist và timeout cứng.
+
+### 5.3. Invariants Bất biến
 - `AUTOMATIC_RESTORE = DISABLED`: Giữ nguyên disable fail-closed.
-- 8 Operational policies tiếp tục giữ nguyên ở trạng thái **`UNSET`**, không tự ý đặt giá trị mặc định.
-- Tuyệt đối không gọi AO thật trong test tự động.
+- 8 Operational policies tiếp tục giữ nguyên ở trạng thái **`UNSET`** trong tài liệu; runtime bắt buộc phải được inject giá trị cấu hình hợp lệ khi khởi động, thiếu thì fail-closed ngay lập tức.
+- Tách biệt hoàn toàn test Mock AO tự động trong CI khỏi bài kiểm chứng Live AO có kiểm soát.
