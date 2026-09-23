@@ -27,8 +27,8 @@
 | **Open Implementation Decisions** | **8 UNRESOLVED OPERATIONAL POLICIES (VALUE = UNSET)**: (1) `SUPERVISOR_HTTP_TIMEOUT`, (2) `SUPERVISOR_HEALTH_PROBE_TIMEOUT`, (3) `SUPERVISOR_SPAWN_TIMEOUT`, (4) `SUPERVISOR_SEND_TIMEOUT`, (5) `SUPERVISOR_ACTIVITY_POLL_INTERVAL`, (6) `SUPERVISOR_EXECUTION_DEADLINE`, (7) `SUPERVISOR_KILL_STOP_TIMEOUT`, (8) `SUPERVISOR_WORKSPACE_READ_TIMEOUT`. (Core directions of PROPOSAL-P03-001 are EXTERNAL_APPROVED; `UPSTREAM_AO_REQUEST_TIMEOUT = 60s` is an upstream server fact). |
 | **Documentation Baseline Versions** | AO `v0.13.0` (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`), Agy `1.2.7` (`7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`), `tunnel-client` `v0.0.14`. |
 | **Upstream Runtime Proofs (P01)** | Track P01-A (`EXTERNAL_AUDIT_APPROVED`), Track P01-B (`EXTERNAL_AUDIT_APPROVED`), Track P01-C (`EXTERNAL_AUDIT_APPROVED_WITH_ADR_011`), Track P01-D (`TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). Phase P01 proof activity is **COMPLETE**. |
-| **Next Approved Action** | Merge audited TASK-P03-003D implementation `7513f1b` into main via clean governance checkout; verify post-merge tree and test integration; document merge evidence and handoff dependencies. |
-| **Active Gate** | `TASK_P03_003D_MERGE_INTEGRATION` |
+| **Next Approved Action** | Supervisor handoff inspection: verify merge commit `35909d7` and handoff dependencies (`HOST_QUIESCENCE_INTEGRATION=OPEN`, `DESIGN_BLOCKER_3D_STARTUP_WIRING=PRESERVED`, `AUTOMATIC_RESTORE=DISABLED`, verified host principal unproven). Stop pending Supervisor review. |
+| **Active Gate** | `TASK_P03_003D_HANDOFF_VERIFICATION` |
 | **P01 Execution Status** | `COMPLETE` |
 
 ---
@@ -135,3 +135,4 @@
 | [`P03_TASK_003D_EXTERNAL_AUDIT_001.md`](audits/P03_TASK_003D_EXTERNAL_AUDIT_001.md) | Implementation SHA `710b27f2d41dcbadd385c6ac07e30bb1765d1cbe`: suite gốc PASS, ba Supervisor probe FAIL; R1-004/005 là code review; `3D-R1-001..005=OPEN`, `REVISION_REQUIRED` | 2026-09-24 |
 | [`P03_TASK_003D_EXTERNAL_AUDIT_002.md`](audits/P03_TASK_003D_EXTERNAL_AUDIT_002.md) | Implementation SHA `d9d2fcc57ac95b098ac02f81686a891afa1aab19`: suite gốc race PASS, hai Supervisor probe FAIL (`3D-R2-001`, `3D-R2-002`); `3D-R1-005=OPEN`; `REVISION_REQUIRED`; chưa merge | 2026-09-24 |
 | [`P03_TASK_003D_EXTERNAL_REAUDIT_001.md`](audits/P03_TASK_003D_EXTERNAL_REAUDIT_001.md) | Implementation SHA `7513f1b9f39fa459be15e0abc836c6258a610d8b`: suite gốc race PASS, whitelist 23/32, diff hygiene sạch; `3D-R1-001..005` và `3D-R2-001..002` CLOSED tại library scope; `EXTERNAL_AUDIT_APPROVED` | 2026-09-24 |
+| [`P03_TASK_003D_MERGE_INTEGRATION_AUDIT.md`](audits/P03_TASK_003D_MERGE_INTEGRATION_AUDIT.md) | Merge commit `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea`: tree `internal/` khớp implementation `7513f1b` (`a91fcdc`), post-merge race suite exit 0, diff hygiene sạch; handoff dependencies ghi nhận độc lập | 2026-09-24 |

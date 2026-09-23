@@ -91,6 +91,7 @@ This document establishes immutable operational directives for all AI coding age
 > External Supervisor approved canonical reconciliation at `68194f739fc5a514cd1f7850027771a77a866d47` and released `CONTRACT-TASK-P03-003D-03` from candidate blob `0c15ca55403681f8647e5b2dc242fcf91ec5a521`. **Current:** `TASK_P03_003D_REVISION_3=RELEASED`; `TASK_P03_003D_IMPLEMENTATION=REVISION_REQUIRED`; `P03_CODE=AUTHORIZED_3D_ONLY`; `ACTIVE_GATE=TASK_P03_003D_REMEDIATION`. Findings `3D-R1-001..005` remain open pending implementation re-audit. The previous NOT_RELEASED line is historical. `AUTOMATIC_RESTORE=DISABLED`; verified host principal, `HOST_QUIESCENCE_INTEGRATION=OPEN` and startup wiring dependency persist.
 > External audit 002 of 3D remediation commit `d9d2fcc57ac95b098ac02f81686a891afa1aab19` recorded findings `3D-R2-001` (waiting_input timeout) and `3D-R2-002` (pre-send policy validation) with verdict `REVISION_REQUIRED`; suite gốc race PASS, hai probes FAIL; `3D-R1-005` chưa đóng (`docs/audits/P03_TASK_003D_EXTERNAL_AUDIT_002.md`). Chưa merge. `TASK_P03_003D_IMPLEMENTATION=REVISION_REQUIRED`; `P03_CODE=AUTHORIZED_3D_ONLY`; `ACTIVE_GATE=TASK_P03_003D_REMEDIATION`; `AUTOMATIC_RESTORE=DISABLED`; `HOST_QUIESCENCE_INTEGRATION=OPEN`; `DESIGN_BLOCKER_3D_STARTUP_WIRING=PRESERVED`.
 > External re-audit 001 of 3D remediation commit `7513f1b9f39fa459be15e0abc836c6258a610d8b` (code base `583e700eb125a08cc6bd7d63b6b27a6f3d4cc527`, governance baseline `422ca9e5fa41b263b02d888c81850f8ebc9c0e31`) closed findings `3D-R1-001..005` and `3D-R2-001..002` at library implementation scope with verdict `TASK_P03_003D_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED` (`docs/audits/P03_TASK_003D_EXTERNAL_REAUDIT_001.md`). External Supervisor verified `go test -race -count=1 ./...` exit 0, whitelist diff 23/32, outside scope 0, `diff --check` exit 0. Chưa suy ra host integration hoặc runtime deployment đã đạt; `AUTOMATIC_RESTORE = DISABLED`; `HOST_QUIESCENCE_INTEGRATION = OPEN`; `DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED`; verified host principal chưa có bằng chứng runtime.
+> Audited implementation `7513f1b9f39fa459be15e0abc836c6258a610d8b` was merged into main at `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea` (tree `internal/` khớp `a91fcdc207116bff3a40a58beea5021de98392eb`); post-merge integration `go test -race -count=1 ./...` exit 0, `diff --check` exit 0 (`docs/audits/P03_TASK_003D_MERGE_INTEGRATION_AUDIT.md`). Handoff dependencies: `HOST_QUIESCENCE_INTEGRATION = OPEN`, verified host principal chưa có bằng chứng runtime, `DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED`, `AUTOMATIC_RESTORE = DISABLED`. Chưa cấp quyền P04 hoặc daemon/bootstrap.
 
 > External Supervisor approved ADR-016 addendum design at audited SHA 3807343f06f99c0e11460c74522a2efb3be19491; ADD-R1-001..003 CLOSED. DESIGN_BLOCKER_3B_RESTORE_PROTOCOL=CLOSED_BY_APPROVED_ADDENDUM. Canonical reconciliation per addendum is EXTERNAL_AUDIT_APPROVED.
 > Host/bootstrap integration owns verified operator principal evidence at the trusted boundary. Library fake-principal tests do not enable runtime restore or linked stop. AUTOMATIC_RESTORE=DISABLED. 3D is RELEASED for implementation; DESIGN_BLOCKER_3D_STARTUP_WIRING preserved.
@@ -135,9 +136,11 @@ This document establishes immutable operational directives for all AI coding age
    - `TASK_P03_003C = RELEASED`
    - `TASK_P03_003C_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED`
    - `TASK_P03_003D = RELEASED`
-   - `TASK_P03_003D_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED` (re-audit 001 of `7513f1b9f39fa459be15e0abc836c6258a610d8b`: suite gốc race PASS, whitelist 23/32, diff --check clean; findings `3D-R1-001..005` và `3D-R2-001..002` CLOSED tại library scope; `docs/audits/P03_TASK_003D_EXTERNAL_REAUDIT_001.md`). `HOST_QUIESCENCE_INTEGRATION = OPEN`.
-   - `P03_CODE = AUTHORIZED_3D_ONLY`
-   - `ACTIVE_GATE = TASK_P03_003D_MERGE_INTEGRATION`
+   - `TASK_P03_003D_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED`
+   - `TASK_P03_003D_MERGE = MERGED` (merge commit `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea`; `internal/` tree `a91fcdc207116bff3a40a58beea5021de98392eb`; `docs/audits/P03_TASK_003D_MERGE_INTEGRATION_AUDIT.md`).
+   - `P03_CODE = COMPLETED_PENDING_SUPERVISOR_HANDOFF`
+   - `ACTIVE_GATE = TASK_P03_003D_HANDOFF_VERIFICATION`
+   - `HOST_QUIESCENCE_INTEGRATION = OPEN`
    - `DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED`
    - `ADR_016_ADDENDUM_DESIGN = EXTERNAL_APPROVED` (audited `3807343f06f99c0e11460c74522a2efb3be19491`)
    - `DESIGN_BLOCKER_3B_RESTORE_PROTOCOL = CLOSED_BY_APPROVED_ADDENDUM`
