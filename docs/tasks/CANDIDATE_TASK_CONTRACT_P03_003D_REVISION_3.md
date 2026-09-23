@@ -1,6 +1,6 @@
-# TASK-P03-003D — Draft Task Contract revision 3: execution deadline
+# TASK-P03-003D — Candidate Task Contract revision 3: execution deadline
 
-> **Trạng thái:** `DRAFT_NOT_RELEASED`; thiết kế đã được Supervisor chấp thuận tại `3babaa2`, candidate riêng đang chờ release audit. Revision này dự kiến supersede `CONTRACT-TASK-P03-003D-02`; artifact revision 1/2 vẫn bất biến. Không cấp quyền migration hoặc Go code cho deadline.
+> **Trạng thái:** `CANDIDATE_NOT_RELEASED`, chờ External Supervisor release audit. Thiết kế đã được chấp thuận tại `3babaa2`; candidate dự kiến supersede `CONTRACT-TASK-P03-003D-02`, artifact revision 1/2 vẫn bất biến. Không cấp quyền migration hoặc Go code cho deadline.
 > **Code base_sha:** `583e700eb125a08cc6bd7d63b6b27a6f3d4cc527`. Khi được duyệt, tiếp tục branch `codex/p03-003d` từ implementation chưa merge `00f64d0b26db2749eadd21b7307c98faa6b6280d`; không reset hoặc chép governance vào diff. Specification/release artifact sẽ được giao riêng.
 > **Design dependency:** ADR addendum send-confirmation execution budget đã được Supervisor chấp thuận tại `3babaa2`; contract revision 3 vẫn `NOT_RELEASED`, `3D-R1-005=OPEN`. `HOST_QUIESCENCE_INTEGRATION=OPEN`, host principal dependency và `DESIGN_BLOCKER_3D_STARTUP_WIRING=PRESERVED`; `AUTOMATIC_RESTORE=DISABLED`.
 

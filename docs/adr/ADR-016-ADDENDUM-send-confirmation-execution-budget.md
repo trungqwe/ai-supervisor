@@ -1,14 +1,14 @@
-# DRAFT ADR-016 Addendum — Send-confirmation-based execution budget
+# ADR-016 Addendum — Send-confirmation-based execution budget
 
-> **Status:** `DESIGN_APPROVED_AT_3babaa2`; bản chính thức là [ADR-016 addendum execution budget](ADR-016-ADDENDUM-send-confirmation-execution-budget.md). Contract revision 3 vẫn chưa release, implementation chưa được phê duyệt; `3D-R1-005=OPEN`.
+> **Status:** `EXTERNAL_APPROVED_DESIGN` theo quyết định External Supervisor tại governance SHA `3babaa2ba573fcdd7d6b34cfb5ea2fd44f1fffe4` và các ràng buộc EXEC-R1-001..003. Đây là phê duyệt **thiết kế**, không release contract revision 3, không phê duyệt implementation. `3D-R1-005=OPEN` đến implementation audit.
 >
-> **Liên quan:** ADR-016 D8/D9/D11/D12/D13, FR-006, REC-004, ADR-016 addendum exclusive host quiescence, [PROPOSAL-P03-004](../proposals/PROPOSAL-P03-004-send-confirmation-execution-budget.md). Không sửa accepted ADR-016 hay các clarification lịch sử.
+> **Authority/quan hệ:** bổ sung ADR-016 D8/D9/D11/D12/D13, FR-006, REC-004 và addendum exclusive host quiescence; [PROPOSAL-P03-004](../proposals/PROPOSAL-P03-004-send-confirmation-execution-budget.md) là hồ sơ so sánh. Chỉ supersede cách xác định origin/binding execution budget, admission timeout stop và xử lý legacy nêu rõ tại §§1–6; không supersede D11 physical proof, D12 closure, D13 no-effect-replay, stop confirmation deadline, TaskState graph, AO wire, restore/clearance hoặc các clarification lịch sử. `RelinquishTimeoutEffect` bị loại khỏi revision này.
 
-## 1. Quyết định đề xuất và phạm vi supersede
+## 1. Quyết định và phạm vi supersede
 
 Ngân sách execution bắt đầu tại **send confirmation** HTTP 200 (`dispatch_operations.confirmed_at`), không phải actual execution start. Có thể tính cả độ trễ trước execution thực tế. D9 vẫn giữ `waiting_input` là `RUNNING` cho đến khi ngân sách hết; addendum này chỉ bổ sung persistence, deadline monitor, cause và thứ tự phục hồi. D11/D12 physical proof, TaskState graph, AO `/kill` wire chỉ có `sessionId`, hold/quarantine và D13 startup effect-replay prohibition không thay đổi. Execution deadline và `confirmation_deadline_at` của stop là hai mốc độc lập.
 
-## 2. Registry bổ sung được đề xuất
+## 2. Registry bổ sung đã duyệt
 
 | Loại | Literal | Ý nghĩa, giới hạn |
 | --- | --- | --- |
@@ -19,7 +19,7 @@ Ngân sách execution bắt đầu tại **send confirmation** HTTP 200 (`dispat
 
 Các event đã duyệt được dùng đúng vai trò: `DISPATCH_SEND_CONFIRMED` ghi budget atomic; `STOP_OPERATION_REQUESTED` ghi cause TIMEOUT khi reserve; `TASK_STATE_TRANSITION` ghi `failure_reason=TIMEOUT` khi D11 đóng live attempt; `STOP_OPERATION_CONFIRMED`, `STOP_CONFIRMATION_TIMEOUT`, `STOP_OPERATION_TARGET_ABSENT`, `STOP_OPERATION_RESOLVED` ghi outcome tương ứng. `QUARANTINE_RESOLVED_PHYSICAL` chỉ xuất hiện khi D11/D6 thật sự clear. Không phát event physical/clearance chỉ vì execution budget hết. `recovery_disposition` tiếp tục theo D11 outcome, không gán `TIMEOUT` vào enum disposition.
 
-## 3. DDL v5 đề xuất
+## 3. DDL v5 đã duyệt ở cấp thiết kế
 
 ```sql
 CREATE TABLE attempt_execution_budgets (

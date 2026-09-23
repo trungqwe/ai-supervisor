@@ -56,3 +56,7 @@
 | **DOC-11** | **OpenAI Transport**| `https://developers.openai.com/api/docs/guides/tools-connectors-mcp`| Canonical Tool Protocol (Responses) | 2026-09-21 | Medium (Responses MCP API) | RUNTIME_PROOF_IN_PROGRESS (P01-D3A)| [11_OPENAI_API_MCP_RUNTIME.md](11_OPENAI_API_MCP_RUNTIME.md) |
 | **DOC-12** | **OpenAI Deployment**| `https://developers.openai.com/plugins/deploy/submission` | Canonical Deployment Specification | 2026-09-21 | Medium (Platform Portal) | GATED_PENDING_IDENTITY_VERIF | [10_OPENAI_PLUGIN_PLATFORM.md](10_OPENAI_PLUGIN_PLATFORM.md) |
 | **DOC-13** | **OpenAI Deployment**| `https://developers.openai.com/plugins/deploy/app-review` | Canonical Security / Review Rules | 2026-09-21 | Medium (Review Guidelines) | GATED_PENDING_IDENTITY_VERIF | [10_OPENAI_PLUGIN_PLATFORM.md](10_OPENAI_PLUGIN_PLATFORM.md) |
+
+## 4. Execution budget source boundary (ADR-016 addendum)
+
+Không thêm upstream hoặc thay pinned AO trong quyết định execution budget. Nguồn AO đã đăng ký chỉ cung cấp status theo session và `/kill` theo `sessionId`; không cung cấp actual execution-start timestamp, policy/deadline bền vững hay one-use kill permit. `dispatch_operations.confirmed_at` là provenance HTTP 200 do Supervisor Store ghi, không phải thuộc tính AO về lúc bắt đầu execution. Xem ADR-016 addendum execution budget §§1, 4–5; host admission/quiescence và historical policy evidence là dependency do host/operator cung cấp, không suy từ upstream.
