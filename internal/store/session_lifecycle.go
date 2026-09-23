@@ -39,11 +39,12 @@ type DispatchStageUpdate struct {
 
 // StopStageUpdate carries wire-effect and resolution facts for a stage CAS.
 type StopStageUpdate struct {
-	CallCompletedAt        *time.Time
-	ConfirmationDeadlineAt *time.Time
-	TerminationConfirmedAt *time.Time
-	ResolvedAt             *time.Time
-	ResolutionState        *domain.StopResolutionState
+	ExpectedResolutionState domain.StopResolutionState
+	CallCompletedAt         *time.Time
+	ConfirmationDeadlineAt  *time.Time
+	TerminationConfirmedAt  *time.Time
+	ResolvedAt              *time.Time
+	ResolutionState         *domain.StopResolutionState
 }
 
 func nullableString(value *string) any {
@@ -371,20 +372,31 @@ func (s *Store) CreateStopOperation(ctx context.Context, operation domain.StopOp
 		return fmt.Errorf("store: begin stop operation transaction: %w", err)
 	}
 	defer tx.Rollback()
+	if operation.Purpose == domain.RunningAttemptStop || operation.Purpose == domain.QuarantineCleanup {
+		if operation.AttemptID == nil {
+			return fmt.Errorf("%w: %s requires attempt lineage", ErrAttemptLineageMismatch, operation.Purpose)
+		}
+	}
+	if operation.Purpose == domain.PairMaintenance && operation.AttemptID != nil {
+		return fmt.Errorf("%w: pair maintenance cannot bind an attempt", ErrAttemptLineageMismatch)
+	}
 	if operation.AttemptID != nil {
 		if operation.TaskID == nil || operation.ContractID == nil {
 			return fmt.Errorf("%w: attempt_id requires task_id and contract_id", ErrAttemptLineageMismatch)
 		}
-		var exists int
+		var snapshotSessionID, snapshotGeneration sql.NullString
 		err = tx.QueryRowContext(ctx, `
-SELECT 1 FROM task_attempts a JOIN tasks t ON t.task_id = a.task_id
+SELECT a.session_id, a.terminal_generation FROM task_attempts a JOIN tasks t ON t.task_id = a.task_id
 WHERE a.attempt_id = ? AND a.task_id = ? AND a.contract_id = ? AND t.pair_id = ?
-`, *operation.AttemptID, *operation.TaskID, *operation.ContractID, operation.PairID).Scan(&exists)
+`, *operation.AttemptID, *operation.TaskID, *operation.ContractID, operation.PairID).Scan(&snapshotSessionID, &snapshotGeneration)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrAttemptLineageMismatch
 		}
 		if err != nil {
 			return fmt.Errorf("store: stop operation lineage query: %w", err)
+		}
+		if !snapshotSessionID.Valid || !snapshotGeneration.Valid || snapshotSessionID.String != operation.SessionID || snapshotGeneration.String != operation.TerminalGeneration {
+			return fmt.Errorf("%w: stop session/generation differs from attempt snapshot", ErrAttemptLineageMismatch)
 		}
 	} else if operation.ContractID != nil {
 		if operation.TaskID == nil {
@@ -400,6 +412,15 @@ WHERE c.contract_id = ? AND c.task_id = ? AND t.pair_id = ?
 		}
 		if err != nil {
 			return fmt.Errorf("store: stop operation contract lineage query: %w", err)
+		}
+	} else if operation.TaskID != nil {
+		var exists int
+		err = tx.QueryRowContext(ctx, `SELECT 1 FROM tasks WHERE task_id = ? AND pair_id = ?`, *operation.TaskID, operation.PairID).Scan(&exists)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrAttemptLineageMismatch
+		}
+		if err != nil {
+			return fmt.Errorf("store: stop operation task lineage query: %w", err)
 		}
 	}
 	_, err = tx.ExecContext(ctx, `
@@ -481,6 +502,17 @@ func (s *Store) UpdateStopOperationStage(ctx context.Context, operationID string
 	if !validStopTransition(expected, next) {
 		return fmt.Errorf("%w: stop %q -> %q", ErrInvalidOperationTransition, expected, next)
 	}
+	if update.ExpectedResolutionState == "" {
+		update.ExpectedResolutionState = domain.StopResolutionInFlight
+	}
+	if update.ExpectedResolutionState != domain.StopResolutionInFlight ||
+		(update.ResolutionState != nil && *update.ResolutionState == domain.StopResolutionAdministrativeRiskAccepted) {
+		return fmt.Errorf("%w: administrative or resolved stop requires separate audited reconciliation", ErrInvalidOperationTransition)
+	}
+	if next == domain.StopTerminationConfirmed &&
+		(update.ResolutionState == nil || *update.ResolutionState != domain.StopResolutionTerminationConfirmed) {
+		return fmt.Errorf("%w: stop termination confirmation requires matching resolution", ErrInvalidOperationTransition)
+	}
 	var resolution any
 	if update.ResolutionState != nil {
 		resolution = string(*update.ResolutionState)
@@ -491,10 +523,14 @@ SET stage = ?, call_completed_at = COALESCE(?, call_completed_at),
     confirmation_deadline_at = COALESCE(?, confirmation_deadline_at),
     termination_confirmed_at = COALESCE(?, termination_confirmed_at),
     resolved_at = COALESCE(?, resolved_at), resolution_state = COALESCE(?, resolution_state)
-WHERE operation_id = ? AND stage = ?
+WHERE operation_id = ? AND stage = ? AND resolution_state = ?
+  AND (? IS NULL OR call_completed_at IS NULL OR call_completed_at = ?)
+  AND (? IS NULL OR confirmation_deadline_at IS NULL OR confirmation_deadline_at = ?)
 `, string(next), nullableTime(update.CallCompletedAt), nullableTime(update.ConfirmationDeadlineAt),
 		nullableTime(update.TerminationConfirmedAt), nullableTime(update.ResolvedAt), resolution,
-		operationID, string(expected))
+		operationID, string(expected), string(update.ExpectedResolutionState),
+		nullableTime(update.CallCompletedAt), nullableTime(update.CallCompletedAt),
+		nullableTime(update.ConfirmationDeadlineAt), nullableTime(update.ConfirmationDeadlineAt))
 	return operationCASResult(result, err, operationID, "stop")
 }
 

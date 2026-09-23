@@ -258,16 +258,44 @@ INSERT INTO task_attempts (
 `
 	insertArgs := []any{attemptID, allocatedAttemptNumber, taskID, contractID, expectedReportPath, formatTime(now)}
 	if binding != nil {
-		var exists int
+		var sessionID, terminalGeneration, quarantineState string
 		err = tx.QueryRowContext(ctx, `
-SELECT 1 FROM worker_sessions
-WHERE pair_id = ? AND session_id = ? AND terminal_generation = ? AND quarantine_state = 'CLEAN'
-`, pairID, binding.SessionID, binding.TerminalGeneration).Scan(&exists)
+SELECT session_id, terminal_generation, quarantine_state FROM worker_sessions
+WHERE pair_id = ?
+`, pairID).Scan(&sessionID, &terminalGeneration, &quarantineState)
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.TaskAttempt{}, fmt.Errorf("%w: dispatch binding does not match current pair session", ErrWorkerSessionNotFound)
+			return domain.TaskAttempt{}, ErrWorkerSessionNotFound
 		}
 		if err != nil {
 			return domain.TaskAttempt{}, fmt.Errorf("store: verify dispatch worker session: %w", err)
+		}
+		if sessionID != binding.SessionID || terminalGeneration != binding.TerminalGeneration {
+			return domain.TaskAttempt{}, fmt.Errorf("%w: dispatch binding does not match current pair session", ErrWorkerSessionNotFound)
+		}
+		if quarantineState != string(domain.QuarantineClean) {
+			return domain.TaskAttempt{}, fmt.Errorf("%w: pair %q session is %s", ErrQuarantinedExecution, pairID, quarantineState)
+		}
+		var blockedAttempts int
+		err = tx.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM task_attempts
+WHERE task_id = ? AND quarantine_state <> 'CLEAN'
+`, taskID).Scan(&blockedAttempts)
+		if err != nil {
+			return domain.TaskAttempt{}, fmt.Errorf("store: verify prior attempt quarantine: %w", err)
+		}
+		if blockedAttempts != 0 {
+			return domain.TaskAttempt{}, fmt.Errorf("%w: task %q has %d quarantined prior attempt(s)", ErrQuarantinedExecution, taskID, blockedAttempts)
+		}
+		var unresolvedProvisioning int
+		err = tx.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM pair_provisioning_operations
+WHERE pair_id = ? AND stage IN ('PROVISION_REQUESTED', 'PROVISION_FAILED')
+`, pairID).Scan(&unresolvedProvisioning)
+		if err != nil {
+			return domain.TaskAttempt{}, fmt.Errorf("store: verify unresolved pair provisioning: %w", err)
+		}
+		if unresolvedProvisioning != 0 {
+			return domain.TaskAttempt{}, fmt.Errorf("%w: pair %q has unresolved provisioning", ErrQuarantinedExecution, pairID)
 		}
 		insertAttemptQuery = `
 INSERT INTO task_attempts (

@@ -22,6 +22,7 @@ var (
 	ErrOperationNotFound          = errors.New("store: lifecycle operation not found")
 	ErrInvalidOperationTransition = errors.New("store: invalid lifecycle operation transition")
 	ErrAttemptLineageMismatch     = errors.New("store: task attempt lineage mismatch")
+	ErrQuarantinedExecution       = errors.New("store: dispatch blocked by quarantine or unresolved provisioning")
 
 	// Revision 2 additions
 	ErrAtomicDispatchRequired  = errors.New("store: READY -> DISPATCHED transition requires PrepareDispatch atomic allocation")
