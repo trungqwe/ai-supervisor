@@ -71,14 +71,18 @@ type TaskContract struct {
 
 // TaskAttempt represents a single execution, retry, or revision iteration bound to a contract.
 type TaskAttempt struct {
-	AttemptID          string     `json:"attempt_id"`
-	AttemptNumber      int        `json:"attempt_number"`
-	TaskID             string     `json:"task_id"`
-	ContractID         string     `json:"contract_id"`
-	ExpectedReportPath string     `json:"expected_report_path"`
-	StartedAt          time.Time  `json:"started_at"`
-	EndedAt            *time.Time `json:"ended_at,omitempty"`
-	WorkerReportRaw    string     `json:"worker_report_raw,omitempty"`
+	AttemptID           string          `json:"attempt_id"`
+	AttemptNumber       int             `json:"attempt_number"`
+	TaskID              string          `json:"task_id"`
+	ContractID          string          `json:"contract_id"`
+	ExpectedReportPath  string          `json:"expected_report_path"`
+	StartedAt           time.Time       `json:"started_at"`
+	EndedAt             *time.Time      `json:"ended_at,omitempty"`
+	WorkerReportRaw     string          `json:"worker_report_raw,omitempty"`
+	SessionID           *string         `json:"session_id,omitempty"`
+	TerminalGeneration  *string         `json:"terminal_generation,omitempty"`
+	RecoveryDisposition *string         `json:"recovery_disposition,omitempty"`
+	QuarantineState     QuarantineState `json:"quarantine_state"`
 }
 
 // ClaimedTestResult captures a single test result claimed by a worker.
