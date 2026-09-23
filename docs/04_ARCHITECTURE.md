@@ -79,19 +79,19 @@ sequenceDiagram
     SCP->>DB: Store immutable TaskContract revision (State: READY)
 
     rect rgb(245, 245, 255)
-        Note over SCP,AO: Pre-Send Admissibility Check (ADR-016 D7)
-        SCP->>AO: AOAdapter.getWorkerStatus(sessionId)
-        AO-->>SCP: Return AOWorkerStatus (status in 'idle', 'waiting_input')
-    end
-
-    rect rgb(245, 245, 255)
-        Note over SCP,DB: Saga Stage 1: Atomic Pre-Dispatch Persistence (P02 Core & ADR-016 D4)
+        Note over SCP,DB: Saga Stage 1: Atomic Pre-Dispatch Persistence (P02 Core & ADR-016 D1/D4)
         SCP->>DB: Allocate TaskAttempt (session_id, terminal_generation, quarantine_state='CLEAN')
         SCP->>DB: Atomically persist READY -> DISPATCHED and dispatch_operations (DISPATCH_BOUND)
     end
 
+    rect rgb(245, 245, 255)
+        Note over SCP,AO: Pre-Send Admissibility Check (ADR-016 D7: between DISPATCH_BOUND & SEND_REQUESTED)
+        SCP->>AO: AOAdapter.getWorkerStatus(sessionId)
+        AO-->>SCP: Return AOWorkerStatus (status in 'idle', 'waiting_input' & matching terminal_generation)
+    end
+
     rect rgb(255, 250, 240)
-        Note over SCP,DB: Saga Stage 2: Send Requested Persistence
+        Note over SCP,DB: Saga Stage 2: Send Requested Persistence (ADR-016 D4)
         SCP->>DB: Update dispatch_operations (SEND_REQUESTED)
     end
 

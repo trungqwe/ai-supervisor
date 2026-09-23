@@ -58,7 +58,8 @@ interface AOWorkerStatus {
 ### Pre-Send Admissibility & Process Control Policies
 
 1. **Strict Pre-Send Admissibility Whitelist (ADR-016 D7)**:
-   - Before executing `dispatchTaskContract` (which calls loopback `POST /api/v1/sessions/{id}/send`), the Supervisor MUST invoke `getWorkerStatus(sessionId)`.
+   - Positioned in the dispatch saga strictly after committing the atomic `DISPATCH_BOUND` transaction and immediately before recording `SEND_REQUESTED` (`DISPATCH_BOUND -> pre-send check -> SEND_REQUESTED -> HTTP 200 -> SEND_CONFIRMED`).
+   - The Supervisor invokes `getWorkerStatus(sessionId)` and verifies string equality against the bound `session_id` and `terminal_generation`.
    - Dispatch is permitted **ONLY** when `AOWorkerStatus.status IN ('idle', 'waiting_input')`.
    - Dispatch is **STRICTLY PROHIBITED** and must fail closed if status is `active` (indicating an unexpected foreign or lingering turn in flight) or terminal (`blocked`, `exited`, `isTerminated == true`).
 
