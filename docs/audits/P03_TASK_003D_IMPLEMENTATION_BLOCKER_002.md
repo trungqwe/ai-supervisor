@@ -1,0 +1,11 @@
+# TASK-P03-003D — blocker ownership của stop intent khi restart
+
+**Quyết định đã ghi:** Clarification tại governance commit `592829eecdd6b29f63d99c4c325999a130045c42` đóng `BLOCKER-3D-001/002` ở cấp thiết kế. Implementation `codex/p03-003d` vẫn ở partial SHA `908bf36bb57f343f86e900c9225d3f8372693ddf`; chưa có implementation approval.
+
+**BLOCKER-3D-003 — effect ownership cạnh tranh:** `internal/stop/coordinator.go` `Coordinator.Start` nhận quyền gọi `/kill` một lần ngay sau khi `ReserveStopOperation` hoặc `ClaimRestoreCleanupWithStop` commit. Quyền này chỉ nằm trong stack frame; `STOP_REQUESTED/IN_FLIGHT` không biểu thị caller đã chết hoặc effect permit đã hết. Sau commit, caller A có thể tạm dừng trước `GetWorkerStatus`. Runner 3D B đọc intent, fresh GET báo target còn sống, CAS sang `STOP_REISSUE_REQUIRES_HUMAN`. A tiếp tục, GET thấy còn sống và gọi `/kill` mà không kiểm tra lại resolution. Vì vậy B không thể chứng minh đây là startup recovery của intent đã mất owner. CAS trong Store cho B không thu hồi quyền của A. Với linked stop, `guardStopRestoreOwner` không giải quyết interleaving này.
+
+**Ranh giới scope:** Contract 3D cấm `internal/stop/**`, AOAdapter/schema và token mới. Thêm riêng Store method hoặc kiểm tra `requested_at` không chứng minh quyền effect đã hết; một timeout mới cũng trái policy không có default. Thực hiện AC-3D-04/05/10/11 với scanner/poller cạnh tranh sẽ vi phạm điều kiện “không tự thu hồi quyền rồi tiếp tục effect” trong quyết định Supervisor. Không gọi AO thật và không thử migration dữ liệu người dùng.
+
+**Quyết định cần có:** Supervisor chốt cơ chế ownership/handshake với caller giữ effect permit và revision scope tương ứng (nếu cần `internal/stop/**`), hoặc ràng buộc host quiescence được chứng minh bằng integration contract trước khi classify `STOP_REQUESTED`. Không coi harness 3D là chứng minh daemon ordering. Giữ approved clarification và released contract bất biến; chỉ mở phần phụ thuộc sau quyết định.
+
+**Gate:** `TASK_P03_003D_IMPLEMENTATION=BLOCKED`; `P03_CODE=AUTHORIZED_3D_ONLY` theo scope đã release nhưng phần phụ thuộc dừng; `ACTIVE_GATE=TASK_P03_003D_IMPLEMENTATION`. `AUTOMATIC_RESTORE=DISABLED`, host principal dependency và `DESIGN_BLOCKER_3D_STARTUP_WIRING=PRESERVED`.
