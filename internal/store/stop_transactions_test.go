@@ -147,8 +147,8 @@ func TestLiveStopNonPhysicalPurposeMatrix(t *testing.T) {
 		disposition, audit string
 	}{
 		{"404", false, domain.StopTargetAbsent, domain.StopResolutionTargetAbsent, "SESSION_ABSENT", domain.AuditStopOperationTargetAbsent},
-		{"generation mismatch", false, domain.StopRequested, domain.StopResolutionGenerationMismatch, "STOP_GENERATION_MISMATCH", ""},
-		{"already terminated", false, domain.StopRequested, domain.StopResolutionEffectUnprovenAlreadyTerminated, "WORKER_TERMINATION_UNKNOWN", ""},
+		{"generation mismatch", false, domain.StopRequested, domain.StopResolutionGenerationMismatch, "STOP_GENERATION_MISMATCH", domain.AuditStopOperationResolved},
+		{"already terminated", false, domain.StopRequested, domain.StopResolutionEffectUnprovenAlreadyTerminated, "WORKER_TERMINATION_UNKNOWN", domain.AuditStopOperationResolved},
 		{"timeout", true, domain.StopCallSucceeded, domain.StopResolutionConfirmationTimeout, "STOP_CONFIRMATION_TIMEOUT", domain.AuditStopConfirmationTimeout},
 		{"definite failure", false, domain.StopCallFailed, domain.StopResolutionCallFailed, "WORKER_TERMINATION_UNKNOWN", domain.AuditStopOperationCallFailed},
 		{"ambiguous call", false, domain.StopRequested, domain.StopResolutionCallOutcomeUnknown, "STOP_CALL_OUTCOME_UNKNOWN", domain.AuditStopOperationCallOutcomeUnknown},
@@ -166,6 +166,15 @@ func TestLiveStopNonPhysicalPurposeMatrix(t *testing.T) {
 				expected = domain.StopCallSucceeded
 			}
 			outcome := StopTerminalOutcome{ExpectedStage: expected, Stage: tc.stage, Resolution: tc.resolution, At: time.Now().UTC()}
+			if tc.resolution == domain.StopResolutionGenerationMismatch {
+				outcome.ObservedSessionID = stop.SessionID
+				outcome.ObservedGeneration = stop.TerminalGeneration + "-different"
+			}
+			if tc.resolution == domain.StopResolutionEffectUnprovenAlreadyTerminated {
+				outcome.ObservedSessionID = stop.SessionID
+				outcome.ObservedGeneration = stop.TerminalGeneration
+				outcome.ObservedIsTerminated = true
+			}
 			if err := s.CommitStopOutcome(ctx, stop.OperationID, outcome); err != nil {
 				t.Fatal(err)
 			}
@@ -408,5 +417,121 @@ func TestGenericStopAPICannotPersistUnboundCallMetadata(t *testing.T) {
 	got, err := s.GetStopOperation(ctx, stop.OperationID)
 	if err != nil || got.CallCompletedAt != nil || got.ConfirmationDeadlineAt != nil || got.ResolutionState != domain.StopResolutionCallFailed {
 		t.Fatalf("metadata bypass: %+v %v", got, err)
+	}
+}
+
+func logicalStopFixture(t *testing.T, purpose domain.StopPurpose) (*Store, domain.StopOperation, string) {
+	t.Helper()
+	ctx := context.Background()
+	if purpose == domain.RunningAttemptStop {
+		s, stop := runningStopFixture(t)
+		return s, stop, *stop.TaskID
+	}
+	s, _ := createTestStore(t)
+	if purpose == domain.QuarantineCleanup {
+		pair, attempt := setupBoundAttempt(t, s, "task-logical-clean", "contract-logical-clean", "attempt-logical-clean")
+		if err := s.AtomicTerminalTransition(ctx, attempt.TaskID, domain.StateDispatched, domain.StateFailed, "unsafe execution", attempt.AttemptID, "STALE_EXECUTION_GENERATION"); err != nil {
+			t.Fatal(err)
+		}
+		stop := domain.StopOperation{OperationID: "stop-logical-clean", Purpose: purpose, PairID: pair, TaskID: &attempt.TaskID, ContractID: &attempt.ContractID, AttemptID: &attempt.AttemptID, SessionID: *attempt.SessionID, TerminalGeneration: *attempt.TerminalGeneration, Actor: "supervisor"}
+		if err := s.ReserveStopOperation(ctx, stop); err != nil {
+			t.Fatal(err)
+		}
+		return s, stop, attempt.TaskID
+	}
+	taskID := "task-logical-maint"
+	setupReadyTask(t, s, taskID, "contract-logical-maint")
+	pair := "pair-d-" + taskID
+	session, generation := "session-logical-maint", "generation-logical-maint"
+	seedWorkerSessionForTest(t, s, domain.WorkerSession{PairID: pair, SessionID: session, RuntimeType: "agy_tui", WorkerAgentID: "agy", Status: domain.WorkerSessionTerminated, TerminalGeneration: generation, QuarantineState: domain.QuarantineQuarantined})
+	stop := domain.StopOperation{OperationID: "stop-logical-maint", Purpose: purpose, PairID: pair, SessionID: session, TerminalGeneration: generation, Actor: "supervisor"}
+	if err := s.ReserveStopOperation(ctx, stop); err != nil {
+		t.Fatal(err)
+	}
+	return s, stop, taskID
+}
+
+func TestLogicalStopResolutionAuditAtomicForEveryPurpose(t *testing.T) {
+	for _, purpose := range []domain.StopPurpose{domain.RunningAttemptStop, domain.QuarantineCleanup, domain.PairMaintenance} {
+		for _, resolution := range []domain.StopResolutionState{domain.StopResolutionGenerationMismatch, domain.StopResolutionEffectUnprovenAlreadyTerminated} {
+			t.Run(string(purpose)+"/"+string(resolution), func(t *testing.T) {
+				ctx := context.Background()
+				s, stop, taskID := logicalStopFixture(t, purpose)
+				defer s.Close()
+				beforeTask, err := s.GetTask(ctx, taskID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				outcome := StopTerminalOutcome{ExpectedStage: domain.StopRequested, Stage: domain.StopRequested, Resolution: resolution, At: time.Now().UTC(), ObservedSessionID: stop.SessionID, ObservedGeneration: stop.TerminalGeneration}
+				if resolution == domain.StopResolutionGenerationMismatch {
+					outcome.ObservedGeneration += "-different"
+				} else {
+					outcome.ObservedIsTerminated = true
+				}
+				missing := outcome
+				missing.ObservedSessionID = ""
+				if err := s.CommitStopOutcome(ctx, stop.OperationID, missing); err == nil {
+					t.Fatal("logical resolution without observation committed")
+				}
+				if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER fail_logical_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='STOP_OPERATION_RESOLVED' BEGIN SELECT RAISE(ABORT,'injected logical stop audit failure'); END`); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.CommitStopOutcome(ctx, stop.OperationID, outcome); err == nil || !strings.Contains(err.Error(), "injected logical stop audit failure") {
+					t.Fatalf("audit failure cause=%v", err)
+				}
+				op, err := s.GetStopOperation(ctx, stop.OperationID)
+				if err != nil || op.Stage != domain.StopRequested || op.ResolutionState != domain.StopResolutionInFlight {
+					t.Fatalf("stop rollback: %+v %v", op, err)
+				}
+				unchanged, err := s.GetTask(ctx, taskID)
+				if err != nil || unchanged.State != beforeTask.State {
+					t.Fatalf("task rollback: %+v %v", unchanged, err)
+				}
+				worker, err := s.GetWorkerSessionByPair(ctx, stop.PairID)
+				if err != nil || worker.QuarantineState != domain.QuarantineQuarantined {
+					t.Fatalf("session rollback: %+v %v", worker, err)
+				}
+				if _, err := s.db.ExecContext(ctx, `DROP TRIGGER fail_logical_audit`); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.CommitStopOutcome(ctx, stop.OperationID, outcome); err != nil {
+					t.Fatal(err)
+				}
+				events, err := s.ListAuditEvents(ctx, 0, MaxAuditLimit)
+				if err != nil {
+					t.Fatal(err)
+				}
+				count := 0
+				for _, record := range events {
+					e := record.Event
+					if e.EventType != domain.AuditStopOperationResolved {
+						continue
+					}
+					count++
+					d := e.Details
+					if e.PairID != stop.PairID || e.Actor != stop.Actor || d["stop_operation_id"] != stop.OperationID || d["purpose"] != string(purpose) || d["pair_id"] != stop.PairID || d["session_id"] != stop.SessionID || d["target_generation"] != stop.TerminalGeneration || d["old_stage"] != string(domain.StopRequested) || d["new_stage"] != string(domain.StopRequested) || d["old_resolution"] != string(domain.StopResolutionInFlight) || d["new_resolution"] != string(resolution) || d["observed_session_id"] != stop.SessionID || d["observed_generation"] != outcome.ObservedGeneration || d["is_terminated"] != outcome.ObservedIsTerminated || d["actor"] != stop.Actor {
+						t.Fatalf("logical audit details=%v", d)
+					}
+				}
+				if count != 1 {
+					t.Fatalf("STOP_OPERATION_RESOLVED events=%d", count)
+				}
+				afterTask, err := s.GetTask(ctx, taskID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if purpose == domain.RunningAttemptStop {
+					if afterTask.State != domain.StateFailed {
+						t.Fatalf("live closure missing: %s", afterTask.State)
+					}
+				} else if afterTask.State != beforeTask.State {
+					t.Fatalf("nonlive TaskState changed: %s", afterTask.State)
+				}
+				worker, err = s.GetWorkerSessionByPair(ctx, stop.PairID)
+				if err != nil || worker.QuarantineState != domain.QuarantineQuarantined {
+					t.Fatalf("logical resolution cleared quarantine: %+v %v", worker, err)
+				}
+			})
+		}
 	}
 }

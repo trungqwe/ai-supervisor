@@ -36,6 +36,8 @@ type QuarantineClearance struct {
 	Attempts           []LineageClearance
 }
 
+type clearanceLineage struct{ session, generation string }
+
 // ClearQuarantineWithEvidence is D6. It never resolves a restore operation;
 // linked restore Tx D must already be committed before this transaction.
 func (s *Store) ClearQuarantineWithEvidence(ctx context.Context, request QuarantineClearance) error {
@@ -50,6 +52,11 @@ func (s *Store) ClearQuarantineWithEvidence(ctx context.Context, request Quarant
 		return err
 	}
 	defer tx.Rollback()
+	// A historical resolved restore ID is not an admission token. Every current
+	// unresolved restore on the Pair must be absent in this same D6 transaction.
+	if err = rejectUnresolvedRestore(ctx, tx, request.PairID); err != nil {
+		return err
+	}
 	if request.RestoreOperationID != "" {
 		var state string
 		if err = tx.QueryRowContext(ctx, `SELECT resolution_state FROM pair_restore_operations WHERE operation_id=? AND pair_id=?`, request.RestoreOperationID, request.PairID).Scan(&state); err != nil {
@@ -58,8 +65,6 @@ func (s *Store) ClearQuarantineWithEvidence(ctx context.Context, request Quarant
 		if state != string(domain.RestoreResolved) {
 			return fmt.Errorf("%w: linked Tx D must precede D6", ErrStateConflict)
 		}
-	} else if err = rejectUnresolvedRestore(ctx, tx, request.PairID); err != nil {
-		return err
 	}
 	var session, generation, quarantine string
 	if err = tx.QueryRowContext(ctx, `SELECT session_id,terminal_generation,quarantine_state FROM worker_sessions WHERE pair_id=?`, request.PairID).Scan(&session, &generation, &quarantine); err != nil {
@@ -72,8 +77,7 @@ func (s *Store) ClearQuarantineWithEvidence(ctx context.Context, request Quarant
 	if err != nil {
 		return err
 	}
-	type lineage struct{ session, generation string }
-	expected := map[string]lineage{}
+	expected := map[string]clearanceLineage{}
 	for rows.Next() {
 		var id string
 		var s, g sql.NullString
@@ -85,7 +89,7 @@ func (s *Store) ClearQuarantineWithEvidence(ctx context.Context, request Quarant
 			rows.Close()
 			return ErrAttemptLineageMismatch
 		}
-		expected[id] = lineage{s.String, g.String}
+		expected[id] = clearanceLineage{s.String, g.String}
 	}
 	if err = rows.Err(); err != nil {
 		rows.Close()
@@ -94,6 +98,9 @@ func (s *Store) ClearQuarantineWithEvidence(ctx context.Context, request Quarant
 	rows.Close()
 	if len(expected) != len(request.Attempts) {
 		return fmt.Errorf("%w: D6 requires every quarantined attempt lineage", ErrAttemptLineageMismatch)
+	}
+	if err = guardPairStopsForClearance(ctx, tx, request, session, generation, expected); err != nil {
+		return err
 	}
 	seen := map[string]bool{}
 	for _, item := range request.Attempts {
@@ -129,6 +136,106 @@ func (s *Store) ClearQuarantineWithEvidence(ctx context.Context, request Quarant
 		return err
 	}
 	return tx.Commit()
+}
+
+// guardPairStopsForClearance inspects every durable stop on the Pair, not only
+// the evidence selected by the caller. An unresolved newer stop keeps D6
+// locked even if an older operation has an accepted audit or physical proof.
+func guardPairStopsForClearance(ctx context.Context, tx *sql.Tx, request QuarantineClearance, currentSession, currentGeneration string, attempts map[string]clearanceLineage) error {
+	rows, err := tx.QueryContext(ctx, `SELECT operation_id,session_id,terminal_generation,attempt_id,resolution_state,restore_operation_id FROM stop_operations WHERE pair_id=? ORDER BY rowid`, request.PairID)
+	if err != nil {
+		return err
+	}
+	type stopRisk struct {
+		id, session, generation, resolution string
+		attempt, restore                    sql.NullString
+	}
+	var risks []stopRisk
+	for rows.Next() {
+		var r stopRisk
+		if err = rows.Scan(&r.id, &r.session, &r.generation, &r.attempt, &r.resolution, &r.restore); err != nil {
+			rows.Close()
+			return err
+		}
+		risks = append(risks, r)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	var latestSession string
+	latestAttempt := map[string]string{}
+	for _, r := range risks {
+		if r.session == currentSession && r.generation == currentGeneration {
+			latestSession = r.id
+		}
+		if r.attempt.Valid {
+			if a, exists := attempts[r.attempt.String]; exists && a.session == r.session && a.generation == r.generation {
+				latestAttempt[r.attempt.String] = r.id
+			}
+		}
+		if r.resolution == string(domain.StopResolutionTerminationConfirmed) {
+			continue
+		}
+		class := ""
+		switch r.resolution {
+		case string(domain.StopResolutionTargetAbsent):
+			class = "CLASS_B"
+		case string(domain.StopResolutionAdministrativeRiskAccepted):
+			class = "CLASS_C"
+		default:
+			return fmt.Errorf("%w: Pair stop %s remains unresolved", ErrQuarantinedExecution, r.id)
+		}
+		if r.session == currentSession && r.generation == currentGeneration {
+			cleared, e := priorLineageClearanceTx(ctx, tx, r.id, request.PairID, currentSession, currentGeneration, "")
+			if e != nil {
+				return e
+			}
+			if !cleared {
+				ok, e := acceptedLineageTx(ctx, tx, r.id, request.PairID, request.Principal, currentSession, currentGeneration, "", class, r.restore.String)
+				if e != nil {
+					return e
+				}
+				if !ok {
+					return fmt.Errorf("%w: WorkerSession risk from stop %s is not reconciled", ErrQuarantinedExecution, r.id)
+				}
+			}
+		}
+		if r.attempt.Valid {
+			if a, exists := attempts[r.attempt.String]; exists && a.session == r.session && a.generation == r.generation {
+				cleared, e := priorLineageClearanceTx(ctx, tx, r.id, request.PairID, r.session, r.generation, r.attempt.String)
+				if e != nil {
+					return e
+				}
+				if cleared {
+					continue
+				}
+				ok, e := acceptedLineageTx(ctx, tx, r.id, request.PairID, request.Principal, r.session, r.generation, r.attempt.String, class, r.restore.String)
+				if e != nil {
+					return e
+				}
+				if !ok {
+					return fmt.Errorf("%w: attempt risk from stop %s is not reconciled", ErrQuarantinedExecution, r.id)
+				}
+			}
+		}
+	}
+	if latestSession != "" && request.Session.StopOperationID != latestSession {
+		return fmt.Errorf("%w: D6 session evidence predates current stop", ErrStateConflict)
+	}
+	for _, item := range request.Attempts {
+		if latest := latestAttempt[item.AttemptID]; latest != "" && item.StopOperationID != latest {
+			return fmt.Errorf("%w: D6 attempt evidence predates current stop", ErrAttemptLineageMismatch)
+		}
+	}
+	return nil
+}
+
+func priorLineageClearanceTx(ctx context.Context, tx *sql.Tx, stopID, pairID, session, generation, attemptID string) (bool, error) {
+	var count int
+	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM audit_events WHERE event_type IN ('QUARANTINE_RESOLVED_PHYSICAL','QUARANTINE_RESOLVED_ADMINISTRATIVE') AND pair_id=? AND COALESCE(attempt_id,'')=? AND json_extract(details_json,'$.stop_operation_id')=? AND json_extract(details_json,'$.session_id')=? AND json_extract(details_json,'$.terminal_generation')=?`, pairID, attemptID, stopID, session, generation).Scan(&count)
+	return count > 0, err
 }
 
 func verifyClearanceBasis(ctx context.Context, tx *sql.Tx, request QuarantineClearance, item LineageClearance) error {
@@ -170,7 +277,11 @@ func verifyClearanceBasis(ctx context.Context, tx *sql.Tx, request QuarantineCle
 		if count != 1 {
 			return fmt.Errorf("%w: Class B lacks exact 404 evidence", ErrStateConflict)
 		}
-		accepted, err := acceptedLineageTx(ctx, tx, item.StopOperationID, request.PairID, request.Principal, item.SessionID, item.TerminalGeneration, item.AttemptID, "CLASS_B", request.RestoreOperationID)
+		restoreLink, err := clearanceStopRestoreLink(ctx, tx, item.StopOperationID, request.PairID)
+		if err != nil {
+			return err
+		}
+		accepted, err := acceptedLineageTx(ctx, tx, item.StopOperationID, request.PairID, request.Principal, item.SessionID, item.TerminalGeneration, item.AttemptID, "CLASS_B", restoreLink)
 		if err != nil {
 			return err
 		}
@@ -188,7 +299,11 @@ func verifyClearanceBasis(ctx context.Context, tx *sql.Tx, request QuarantineCle
 		if resolution != string(domain.StopResolutionAdministrativeRiskAccepted) {
 			return ErrStateConflict
 		}
-		accepted, err := acceptedLineageTx(ctx, tx, item.StopOperationID, request.PairID, request.Principal, item.SessionID, item.TerminalGeneration, item.AttemptID, "CLASS_C", request.RestoreOperationID)
+		restoreLink, err := clearanceStopRestoreLink(ctx, tx, item.StopOperationID, request.PairID)
+		if err != nil {
+			return err
+		}
+		accepted, err := acceptedLineageTx(ctx, tx, item.StopOperationID, request.PairID, request.Principal, item.SessionID, item.TerminalGeneration, item.AttemptID, "CLASS_C", restoreLink)
 		if err != nil {
 			return err
 		}
@@ -199,6 +314,14 @@ func verifyClearanceBasis(ctx context.Context, tx *sql.Tx, request QuarantineCle
 		return fmt.Errorf("%w: unsupported D6 basis", ErrInvalidOperationTransition)
 	}
 	return nil
+}
+
+func clearanceStopRestoreLink(ctx context.Context, tx *sql.Tx, stopID, pairID string) (string, error) {
+	var link sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT restore_operation_id FROM stop_operations WHERE operation_id=? AND pair_id=?`, stopID, pairID).Scan(&link); err != nil {
+		return "", err
+	}
+	return link.String, nil
 }
 
 func appendClearanceAudit(ctx context.Context, tx *sql.Tx, request QuarantineClearance, item LineageClearance) error {

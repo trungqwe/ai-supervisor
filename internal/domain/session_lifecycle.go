@@ -104,6 +104,7 @@ const (
 	AuditStopOperationConfirmed           = "STOP_OPERATION_CONFIRMED"
 	AuditStopOperationTargetAbsent        = "STOP_OPERATION_TARGET_ABSENT"
 	AuditStopConfirmationTimeout          = "STOP_CONFIRMATION_TIMEOUT"
+	AuditStopOperationResolved            = "STOP_OPERATION_RESOLVED"
 	AuditAdministrativeRiskAccepted       = "ADMINISTRATIVE_RISK_ACCEPTED"
 	AuditQuarantineResolvedPhysical       = "QUARANTINE_RESOLVED_PHYSICAL"
 	AuditQuarantineResolvedAdministrative = "QUARANTINE_RESOLVED_ADMINISTRATIVE"

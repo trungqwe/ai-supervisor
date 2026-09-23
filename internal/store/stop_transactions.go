@@ -187,6 +187,14 @@ func (s *Store) CommitStopOutcome(ctx context.Context, operationID string, outco
 	} else if outcome.Stage == domain.StopTerminationConfirmed || outcome.Resolution == domain.StopResolutionTerminationConfirmed {
 		return ErrStateConflict
 	}
+	logicalResolution := outcome.Resolution == domain.StopResolutionGenerationMismatch || outcome.Resolution == domain.StopResolutionEffectUnprovenAlreadyTerminated
+	if logicalResolution {
+		if outcome.ObservedSessionID != stop.SessionID || outcome.ObservedGeneration == "" ||
+			(outcome.Resolution == domain.StopResolutionGenerationMismatch && outcome.ObservedGeneration == stop.TerminalGeneration) ||
+			(outcome.Resolution == domain.StopResolutionEffectUnprovenAlreadyTerminated && (!outcome.ObservedIsTerminated || outcome.ObservedGeneration != stop.TerminalGeneration)) {
+			return fmt.Errorf("%w: logical stop resolution requires exact observation", ErrStateConflict)
+		}
+	}
 	if !validStopOutcome(outcome) {
 		return fmt.Errorf("%w: invalid D11 stage/resolution", ErrInvalidOperationTransition)
 	}
@@ -202,6 +210,20 @@ func (s *Store) CommitStopOutcome(ctx context.Context, operationID string, outco
 	event := stopOutcomeAuditType(outcome)
 	if event != "" {
 		extra := map[string]any{"resolution_state": string(outcome.Resolution)}
+		if logicalResolution {
+			extra["pair_id"] = stop.PairID
+			extra["task_id"] = valueOrEmpty(stop.TaskID)
+			extra["contract_id"] = valueOrEmpty(stop.ContractID)
+			extra["attempt_id"] = valueOrEmpty(stop.AttemptID)
+			extra["old_stage"] = string(stop.Stage)
+			extra["new_stage"] = string(outcome.Stage)
+			extra["old_resolution"] = string(stop.ResolutionState)
+			extra["new_resolution"] = string(outcome.Resolution)
+			extra["observed_session_id"] = outcome.ObservedSessionID
+			extra["observed_generation"] = outcome.ObservedGeneration
+			extra["is_terminated"] = outcome.ObservedIsTerminated
+			extra["actor"] = stop.Actor
+		}
 		if physical {
 			extra["confirmation_deadline_at"] = formatTime(*stop.ConfirmationDeadlineAt)
 			extra["termination_confirmed_at"] = formatTime(outcome.At)
@@ -267,6 +289,8 @@ func stopOutcomeAuditType(o StopTerminalOutcome) string {
 		return domain.AuditStopOperationCallOutcomeUnknown
 	case domain.StopResolutionConfirmationTimeout:
 		return domain.AuditStopConfirmationTimeout
+	case domain.StopResolutionGenerationMismatch, domain.StopResolutionEffectUnprovenAlreadyTerminated:
+		return domain.AuditStopOperationResolved
 	default:
 		return ""
 	}
@@ -506,7 +530,9 @@ func (s *Store) AcceptStopAdministrativeRisk(ctx context.Context, d Administrati
 			return ErrAttemptLineageMismatch
 		}
 		seen[key] = true
-		if class == "CLASS_B" && (l.SessionID != stop.SessionID || l.TerminalGeneration != stop.TerminalGeneration || l.AttemptID != valueOrEmpty(stop.AttemptID)) {
+		// HTTP 404 is session absence evidence. A linked attempt additionally
+		// needs its own acceptance; neither acceptance implies the other.
+		if class == "CLASS_B" && (l.SessionID != stop.SessionID || l.TerminalGeneration != stop.TerminalGeneration || l.AttemptID != "" && l.AttemptID != valueOrEmpty(stop.AttemptID)) {
 			return ErrAttemptLineageMismatch
 		}
 		if l.AttemptID == "" {
