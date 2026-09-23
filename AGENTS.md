@@ -52,7 +52,7 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003A IMPLEMENTATION
+# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003A REMEDIATION
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
@@ -79,15 +79,16 @@ This document establishes immutable operational directives for all AI coding age
 > Single-pass canonical documentation reconciliation (Items S1–S9) pursuant to accepted ADR-016 is **EXTERNAL_AUDIT_APPROVED** at audited commit `41cf769b4cf8a980c95de3aa4be63140b04922c3` (`docs/audits/P03_ADR_016_CANONICAL_RECONCILIATION_EXTERNAL_AUDIT.md`).
 > Task Contract for documentation reconciliation `CONTRACT-TASK-P03-DOC-RECONCILIATION-01` completed (`docs/tasks/TASK_CONTRACT_P03_CANONICAL_RECONCILIATION_ADR_016.md`).
 > Contract `CONTRACT-TASK-P03-003A-01` was approved by External Supervisor from candidate commit `56b5ef38ba5a45d56d58dd368a0c47cf45e0886f`, blob `5364edf076b31b8a42a37fee29193fc36ccdf413`, and is formally released as `docs/tasks/TASK_CONTRACT_P03_003A.md`.
+> External Supervisor audited implementation commit `c793fb66069e780f2fcc97129456fb5068b44f3d` and required revision for findings `3A-R1-001` through `3A-R1-004` (`docs/audits/P03_TASK_003A_EXTERNAL_AUDIT_001.md`). `TASK_P03_003A_IMPLEMENTATION = REVISION_REQUIRED`.
 > Architecture classification established: `P03_ARCHITECTURE_CHANGE = YES`, `P03_ADR_REQUIRED = YES`.
 > Parent `TASK-P03-003` is released only for subtask 3A. Subtasks 3B, 3C, and 3D remain **NOT_RELEASED**.
 > Production coding is **`AUTHORIZED_3A_ONLY`** under the immutable scope of `CONTRACT-TASK-P03-003A-01`.
-> The active phase gate is **`TASK_P03_003A_IMPLEMENTATION`**.
+> The active phase gate is **`TASK_P03_003A_REMEDIATION`**.
 
-1. **TASK-P03-003A IMPLEMENTATION GATE**:
+1. **TASK-P03-003A REMEDIATION GATE**:
    - Implementation must start from `base_sha = 1daf0b91efc7f065eb07146d642c0b6f6c259212`.
    - Allowed scope is strictly `internal/domain/**` and `internal/store/**`.
-   - Implement migration v3, domain models, StateStore operations, `AtomicTerminalTransition`, and `AtomicAttemptClosureTransition` according to accepted ADR-016 and the released contract.
+   - Remediate only External Supervisor findings `3A-R1-001` through `3A-R1-004` within the released contract and accepted ADR-016.
    - After commit and push, stop for independent audit; do not merge to `main`.
 
 2. **TASK-P03-003 PARTIAL RELEASE GUARD**:
@@ -116,9 +117,10 @@ This document establishes immutable operational directives for all AI coding age
    - `ADR_016 = EXTERNAL_APPROVED`
    - `ADR_016_ACCEPTANCE = GRANTED`
    - `TASK_P03_003A = RELEASED`
+   - `TASK_P03_003A_IMPLEMENTATION = REVISION_REQUIRED`
    - `TASK_P03_003B = NOT_RELEASED`
    - `TASK_P03_003C = NOT_RELEASED`
    - `TASK_P03_003D = NOT_RELEASED`
    - `P03_CODE = AUTHORIZED_3A_ONLY`
-   - `ACTIVE_GATE = TASK_P03_003A_IMPLEMENTATION`
+   - `ACTIVE_GATE = TASK_P03_003A_REMEDIATION`
    - `DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED`
