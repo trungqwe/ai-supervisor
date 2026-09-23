@@ -201,6 +201,9 @@ func TestStore_LifecycleOperationCRUDAndConstraints(t *testing.T) {
 		Stage:              domain.StopRequested,
 		Actor:              "supervisor",
 	}
+	if err := s.TransitionTask(ctx, taskID, domain.StateDispatched, domain.StateRunning); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.CreateStopOperation(ctx, stop); err != nil {
 		t.Fatalf("CreateStopOperation: %v", err)
 	}

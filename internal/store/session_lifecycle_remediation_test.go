@@ -156,13 +156,13 @@ func TestStore_StopLineageAndPurpose(t *testing.T) {
 		})
 	}
 	base.OperationID = "stop-live-valid"
+	if err := s.TransitionTask(ctx, taskID, domain.StateDispatched, domain.StateRunning); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.CreateStopOperation(ctx, base); err != nil {
 		t.Fatalf("live stop: %v", err)
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE task_attempts SET ended_at = ? WHERE attempt_id = ?`, formatTime(time.Now().UTC()), attemptID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE tasks SET state = 'FAILED' WHERE task_id = ?`, taskID); err != nil {
+	if err := s.CommitStopOutcome(ctx, base.OperationID, StopTerminalOutcome{ExpectedStage: domain.StopRequested, Stage: domain.StopCallFailed, Resolution: domain.StopResolutionCallFailed, At: time.Now().UTC()}); err != nil {
 		t.Fatal(err)
 	}
 	cleanup := base
@@ -170,6 +170,9 @@ func TestStore_StopLineageAndPurpose(t *testing.T) {
 	cleanup.Purpose = domain.QuarantineCleanup
 	if err := s.CreateStopOperation(ctx, cleanup); err != nil {
 		t.Fatalf("cleanup of closed attempt: %v", err)
+	}
+	if err := s.CommitStopOutcome(ctx, cleanup.OperationID, StopTerminalOutcome{ExpectedStage: domain.StopRequested, Stage: domain.StopCallFailed, Resolution: domain.StopResolutionCallFailed, At: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
 	}
 	maintenance := base
 	maintenance.OperationID = "stop-maintenance-no-attempt"
@@ -185,9 +188,8 @@ func TestStore_StopDeadlineImmutableAndResolutionCAS(t *testing.T) {
 	s, _ := createTestStore(t)
 	defer s.Close()
 	pairID, attempt := setupBoundAttempt(t, s, "task-stop-cas", "contract-stop-cas", "attempt-stop-cas")
-	taskID, contractID, attemptID := attempt.TaskID, attempt.ContractID, attempt.AttemptID
-	stop := domain.StopOperation{OperationID: "stop-cas", Purpose: domain.RunningAttemptStop,
-		PairID: pairID, TaskID: &taskID, ContractID: &contractID, AttemptID: &attemptID,
+	stop := domain.StopOperation{OperationID: "stop-cas", Purpose: domain.PairMaintenance,
+		PairID:    pairID,
 		SessionID: *attempt.SessionID, TerminalGeneration: *attempt.TerminalGeneration,
 		Stage: domain.StopRequested, Actor: "supervisor"}
 	if err := s.CreateStopOperation(ctx, stop); err != nil {
@@ -242,14 +244,15 @@ func TestStore_StopResolutionCompetingWriters(t *testing.T) {
 	s, _ := createTestStore(t)
 	defer s.Close()
 	pairID, attempt := setupBoundAttempt(t, s, "task-stop-race", "contract-stop-race", "attempt-stop-race")
-	taskID, contractID, attemptID := attempt.TaskID, attempt.ContractID, attempt.AttemptID
-	if err := s.CreateStopOperation(ctx, domain.StopOperation{OperationID: "stop-race", Purpose: domain.RunningAttemptStop,
-		PairID: pairID, TaskID: &taskID, ContractID: &contractID, AttemptID: &attemptID,
+	if err := s.CreateStopOperation(ctx, domain.StopOperation{OperationID: "stop-race", Purpose: domain.PairMaintenance,
+		PairID:    pairID,
 		SessionID: *attempt.SessionID, TerminalGeneration: *attempt.TerminalGeneration,
 		Stage: domain.StopRequested, Actor: "supervisor"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UpdateStopOperationStage(ctx, "stop-race", domain.StopRequested, domain.StopCallSucceeded, StopStageUpdate{}); err != nil {
+	callAt := time.Now().UTC()
+	deadline := callAt.Add(time.Minute)
+	if err := s.UpdateStopOperationStage(ctx, "stop-race", domain.StopRequested, domain.StopCallSucceeded, StopStageUpdate{CallCompletedAt: &callAt, ConfirmationDeadlineAt: &deadline}); err != nil {
 		t.Fatal(err)
 	}
 	start := make(chan struct{})
@@ -290,8 +293,7 @@ func TestStopTerminationConfirmationAndAuditRollbackAtomically(t *testing.T) {
 	s, _ := createTestStore(t)
 	defer s.Close()
 	pairID, attempt := setupBoundAttempt(t, s, "task-stop-confirm-audit", "contract-stop-confirm-audit", "attempt-stop-confirm-audit")
-	taskID, contractID, attemptID := attempt.TaskID, attempt.ContractID, attempt.AttemptID
-	stop := domain.StopOperation{OperationID: "stop-confirm-audit", Purpose: domain.RunningAttemptStop, PairID: pairID, TaskID: &taskID, ContractID: &contractID, AttemptID: &attemptID, SessionID: *attempt.SessionID, TerminalGeneration: *attempt.TerminalGeneration, Stage: domain.StopRequested, Actor: "supervisor"}
+	stop := domain.StopOperation{OperationID: "stop-confirm-audit", Purpose: domain.PairMaintenance, PairID: pairID, SessionID: *attempt.SessionID, TerminalGeneration: *attempt.TerminalGeneration, Stage: domain.StopRequested, Actor: "supervisor"}
 	if err := s.CreateStopOperation(ctx, stop); err != nil {
 		t.Fatal(err)
 	}
@@ -336,8 +338,7 @@ func TestStopConfirmationStrictDeadlineAndAudit(t *testing.T) {
 			s, _ := createTestStore(t)
 			defer s.Close()
 			pairID, attempt := setupBoundAttempt(t, s, "task-deadline", "contract-deadline", "attempt-deadline")
-			taskID, contractID, attemptID := attempt.TaskID, attempt.ContractID, attempt.AttemptID
-			stop := domain.StopOperation{OperationID: "stop-deadline", Purpose: domain.RunningAttemptStop, PairID: pairID, TaskID: &taskID, ContractID: &contractID, AttemptID: &attemptID, SessionID: *attempt.SessionID, TerminalGeneration: *attempt.TerminalGeneration, Actor: "supervisor"}
+			stop := domain.StopOperation{OperationID: "stop-deadline", Purpose: domain.PairMaintenance, PairID: pairID, SessionID: *attempt.SessionID, TerminalGeneration: *attempt.TerminalGeneration, Actor: "supervisor"}
 			if err := s.CreateStopOperation(ctx, stop); err != nil {
 				t.Fatal(err)
 			}
