@@ -317,3 +317,54 @@ func TestStopTerminationConfirmationAndAuditRollbackAtomically(t *testing.T) {
 
 func ptrTime(value time.Time) *time.Time                                             { return &value }
 func ptrStopResolution(value domain.StopResolutionState) *domain.StopResolutionState { return &value }
+
+func TestStopConfirmationStrictDeadlineAndAudit(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		offset   time.Duration
+		accepted bool
+	}{
+		{"before", -time.Nanosecond, true}, {"equal", 0, false}, {"after", time.Nanosecond, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			s, _ := createTestStore(t)
+			defer s.Close()
+			pairID, attempt := setupBoundAttempt(t, s, "task-deadline", "contract-deadline", "attempt-deadline")
+			taskID, contractID, attemptID := attempt.TaskID, attempt.ContractID, attempt.AttemptID
+			stop := domain.StopOperation{OperationID: "stop-deadline", Purpose: domain.RunningAttemptStop, PairID: pairID, TaskID: &taskID, ContractID: &contractID, AttemptID: &attemptID, SessionID: *attempt.SessionID, TerminalGeneration: *attempt.TerminalGeneration, Actor: "supervisor"}
+			if err := s.CreateStopOperation(ctx, stop); err != nil {
+				t.Fatal(err)
+			}
+			callAt := time.Now().UTC().Truncate(time.Microsecond)
+			deadline := callAt.Add(time.Minute)
+			if err := s.UpdateStopOperationStage(ctx, stop.OperationID, domain.StopRequested, domain.StopCallSucceeded, StopStageUpdate{CallCompletedAt: &callAt, ConfirmationDeadlineAt: &deadline}); err != nil {
+				t.Fatal(err)
+			}
+			confirmedAt := deadline.Add(tc.offset)
+			resolved := domain.StopResolutionTerminationConfirmed
+			err := s.UpdateStopOperationStage(ctx, stop.OperationID, domain.StopCallSucceeded, domain.StopTerminationConfirmed, StopStageUpdate{TerminationConfirmedAt: &confirmedAt, ResolvedAt: &confirmedAt, ResolutionState: &resolved, ObservedSessionID: stop.SessionID, ObservedGeneration: stop.TerminalGeneration, ObservedIsTerminated: true})
+			if (err == nil) != tc.accepted {
+				t.Fatalf("confirmation accepted=%v want=%v err=%v", err == nil, tc.accepted, err)
+			}
+			got, err := s.GetStopOperation(ctx, stop.OperationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var audits int
+			if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE event_type='STOP_OPERATION_CONFIRMED' AND json_extract(details_json,'$.stop_operation_id')=?`, stop.OperationID).Scan(&audits); err != nil {
+				t.Fatal(err)
+			}
+			if !got.ConfirmationDeadlineAt.Equal(deadline) {
+				t.Fatal("immutable deadline changed")
+			}
+			if tc.accepted {
+				if got.Stage != domain.StopTerminationConfirmed || got.ResolutionState != resolved || audits != 1 {
+					t.Fatalf("missing physical confirmation: %+v audits=%d", got, audits)
+				}
+			} else if got.Stage != domain.StopCallSucceeded || got.ResolutionState != domain.StopResolutionInFlight || got.TerminationConfirmedAt != nil || audits != 0 {
+				t.Fatalf("late/equal confirmation partially committed: %+v audits=%d", got, audits)
+			}
+		})
+	}
+}

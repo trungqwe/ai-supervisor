@@ -189,6 +189,19 @@ func (c *Coordinator) ClaimRestoreCleanup(ctx context.Context, stop domain.StopO
 	}
 	stop.RestorePrincipal = &principal
 	stop.Actor = principal
+	if stop.Purpose == domain.PairMaintenance {
+		if c.AO == nil {
+			return errors.New("dispatch: cleanup runtime observation requires AO status reader")
+		}
+		status, err := c.AO.GetWorkerStatus(ctx, stop.SessionID)
+		if err != nil {
+			return fmt.Errorf("dispatch: cleanup runtime observation failed: %w", err)
+		}
+		if status == nil || status.ID != stop.SessionID || status.TerminalGeneration != stop.TerminalGeneration || status.IsTerminated {
+			return errors.New("dispatch: cleanup runtime observation differs from target")
+		}
+		return c.Store.ClaimRestoreCleanupWithStop(ctx, stop, principal, principal, time.Now().UTC(), store.RestoreCleanupObservation{SessionID: status.ID, TerminalGeneration: status.TerminalGeneration, IsTerminated: status.IsTerminated})
+	}
 	return c.Store.ClaimRestoreCleanupWithStop(ctx, stop, principal, principal, time.Now().UTC())
 }
 

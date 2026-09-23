@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -268,7 +269,8 @@ func TestLinkedPairMaintenancePersistsRestoreLinkWithoutAttempt(t *testing.T) {
 	}
 	principal := "verified-subject"
 	operation := domain.StopOperation{OperationID: "stop-linked-maint", Purpose: domain.PairMaintenance, PairID: req.PairID, SessionID: req.SessionID, TerminalGeneration: "new", Stage: domain.StopRequested, Actor: "supervisor", RestoreOperationID: &req.OperationID, RestorePrincipal: &principal}
-	if err := s.ClaimRestoreCleanupWithStop(ctx, operation, principal, "supervisor", time.Now().UTC()); err != nil {
+	observation := RestoreCleanupObservation{SessionID: req.SessionID, TerminalGeneration: "new"}
+	if err := s.ClaimRestoreCleanupWithStop(ctx, operation, principal, "supervisor", time.Now().UTC(), observation); err != nil {
 		t.Fatalf("atomic claim + linked PairMaintenance: %v", err)
 	}
 	got, err := s.GetStopOperation(ctx, operation.OperationID)
@@ -277,7 +279,7 @@ func TestLinkedPairMaintenancePersistsRestoreLinkWithoutAttempt(t *testing.T) {
 	}
 	stale := operation
 	stale.OperationID = "stop-linked-maint-stale"
-	if err := s.ClaimRestoreCleanupWithStop(ctx, stale, principal, "supervisor", time.Now().UTC()); !errors.Is(err, ErrStateConflict) {
+	if err := s.ClaimRestoreCleanupWithStop(ctx, stale, principal, "supervisor", time.Now().UTC(), observation); !errors.Is(err, ErrStateConflict) {
 		t.Fatalf("stale linked cleanup writer error=%v, want state conflict", err)
 	}
 	if _, err := s.GetStopOperation(ctx, stale.OperationID); !errors.Is(err, ErrOperationNotFound) {
@@ -374,35 +376,244 @@ func TestRestorePhysicalResolutionRequiresPositiveD11StopEvidence(t *testing.T) 
 }
 
 func TestRestoreCleanupClaimAndStopIntentRollbackTogether(t *testing.T) {
+	for _, inject := range []bool{false, true} {
+		t.Run(map[bool]string{false: "positive", true: "audit_failure"}[inject], func(t *testing.T) {
+			ctx := context.Background()
+			s, _ := createTestStore(t)
+			defer s.Close()
+			setupReadyTask(t, s, "task-cleanup-rollback", "contract-cleanup-rollback")
+			pairID := "pair-d-task-cleanup-rollback"
+			seedWorkerSessionForTest(t, s, domain.WorkerSession{PairID: pairID, SessionID: "session-cleanup-rollback", RuntimeType: "agy_tui", WorkerAgentID: "agy", Status: domain.WorkerSessionTerminated, TerminalGeneration: "g1", QuarantineState: domain.QuarantineClean})
+			req := domain.RestoreReservation{AuthorizationID: "auth-cleanup-rollback", OperationID: "restore-cleanup-rollback", PairID: pairID, SessionID: "session-cleanup-rollback", ExpectedGeneration: "g1", RiskScope: "POSSIBLE_PROMPT_REPLAY", AuthorizedPrincipal: "verified-subject", Actor: "supervisor"}
+			if err := s.ReservePairRestore(ctx, req); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.RecordPairRestoreUnknown(ctx, req.OperationID, "supervisor"); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.ClaimRestoreRecovery(ctx, req.OperationID, pairID, req.SessionID, "g1", "verified-subject", "supervisor", time.Now().UTC()); err != nil {
+				t.Fatal(err)
+			}
+			before, err := s.GetPairRestoreOperation(ctx, req.OperationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			principal := "verified-subject"
+			stop := domain.StopOperation{OperationID: "stop-cleanup-rollback", Purpose: domain.PairMaintenance, PairID: pairID, SessionID: req.SessionID, TerminalGeneration: "g2", Stage: domain.StopRequested, Actor: "supervisor", RestoreOperationID: &req.OperationID, RestorePrincipal: &principal}
+			observation := RestoreCleanupObservation{SessionID: req.SessionID, TerminalGeneration: "g2"}
+			if err := s.ClaimRestoreCleanupWithStop(ctx, stop, principal, "supervisor", time.Now().UTC()); !errors.Is(err, ErrStateConflict) {
+				t.Fatalf("missing runtime observation was accepted: %v", err)
+			}
+			if err := s.ClaimRestoreCleanupWithStop(ctx, stop, principal, "supervisor", time.Now().UTC(), RestoreCleanupObservation{SessionID: req.SessionID, TerminalGeneration: "g1"}); !errors.Is(err, ErrStateConflict) {
+				t.Fatalf("expected generation was treated as observed runtime: %v", err)
+			}
+			if inject {
+				if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_linked_stop_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='STOP_OPERATION_REQUESTED' BEGIN SELECT RAISE(ABORT,'injected stop audit failure'); END`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err = s.ClaimRestoreCleanupWithStop(ctx, stop, principal, "supervisor", time.Now().UTC(), observation)
+			if inject && (err == nil || !strings.Contains(err.Error(), "injected stop audit failure")) {
+				t.Fatalf("wrong failure: %v", err)
+			}
+			if !inject && err != nil {
+				t.Fatalf("positive control rejected: %v", err)
+			}
+			after, err := s.GetPairRestoreOperation(ctx, req.OperationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stopRows, claimAudits, stopAudits int
+			if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM stop_operations WHERE operation_id=?`, stop.OperationID).Scan(&stopRows); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE event_type='PAIR_RESTORE_CLEANUP_CLAIMED' AND json_extract(details_json,'$.operation_id')=?`, req.OperationID).Scan(&claimAudits); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE event_type='STOP_OPERATION_REQUESTED' AND json_extract(details_json,'$.stop_operation_id')=?`, stop.OperationID).Scan(&stopAudits); err != nil {
+				t.Fatal(err)
+			}
+			if inject {
+				if after.ResolutionState != before.ResolutionState || after.Version != before.Version || stopRows != 0 || claimAudits != 0 || stopAudits != 0 {
+					t.Fatalf("partial rollback: before=%+v after=%+v rows=%d audits=%d/%d", before, after, stopRows, claimAudits, stopAudits)
+				}
+			} else if after.ResolutionState != domain.RestoreCleanupClaimed || after.Version != before.Version+1 || stopRows != 1 || claimAudits != 1 || stopAudits != 1 {
+				t.Fatalf("positive atomic claim missing: before=%+v after=%+v rows=%d audits=%d/%d", before, after, stopRows, claimAudits, stopAudits)
+			}
+		})
+	}
+}
+
+func confirmD11StopForRestoreTest(t *testing.T, s *Store, stop domain.StopOperation) {
+	t.Helper()
+	ctx := context.Background()
+	callAt := time.Now().UTC().Truncate(time.Microsecond)
+	deadline := callAt.Add(time.Minute)
+	if err := s.UpdateStopOperationStage(ctx, stop.OperationID, domain.StopRequested, domain.StopCallSucceeded, StopStageUpdate{CallCompletedAt: &callAt, ConfirmationDeadlineAt: &deadline}); err != nil {
+		t.Fatal(err)
+	}
+	confirmedAt := callAt.Add(time.Second)
+	resolved := domain.StopResolutionTerminationConfirmed
+	if err := s.UpdateStopOperationStage(ctx, stop.OperationID, domain.StopCallSucceeded, domain.StopTerminationConfirmed, StopStageUpdate{TerminationConfirmedAt: &confirmedAt, ResolvedAt: &confirmedAt, ResolutionState: &resolved, ObservedSessionID: stop.SessionID, ObservedGeneration: stop.TerminalGeneration, ObservedIsTerminated: true}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRestorePhysicalResolutionCoversRuntimeAndEveryQuarantinedLineage(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		oldProof, newRuntime bool
+		wantPhysical         bool
+	}{
+		{"old_only_new_runtime_active", true, false, false},
+		{"new_only_old_attempt_unresolved", false, true, false},
+		{"complete_coverage", true, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			s, _ := createTestStore(t)
+			defer s.Close()
+			pairID, attempt := setupBoundAttempt(t, s, "task-coverage", "contract-coverage", "attempt-coverage")
+			taskID, contractID, attemptID := attempt.TaskID, attempt.ContractID, attempt.AttemptID
+			if tc.oldProof {
+				old := domain.StopOperation{OperationID: "stop-old", Purpose: domain.RunningAttemptStop, PairID: pairID, TaskID: &taskID, ContractID: &contractID, AttemptID: &attemptID, SessionID: *attempt.SessionID, TerminalGeneration: *attempt.TerminalGeneration, Actor: "supervisor"}
+				if err := s.CreateStopOperation(ctx, old); err != nil {
+					t.Fatal(err)
+				}
+				confirmD11StopForRestoreTest(t, s, old)
+			}
+			if err := s.AtomicTerminalTransition(ctx, attempt.TaskID, domain.StateDispatched, domain.StateFailed, "closed lineage", attempt.AttemptID, "ORDINARY_FAILURE"); err != nil {
+				t.Fatal(err)
+			}
+			setRestoreSessionTerminated(t, s, pairID)
+			req := domain.RestoreReservation{AuthorizationID: "auth-coverage", OperationID: "restore-coverage", PairID: pairID, SessionID: *attempt.SessionID, ExpectedGeneration: *attempt.TerminalGeneration, RiskScope: "POSSIBLE_PROMPT_REPLAY", AuthorizedPrincipal: "verified-subject", Actor: "supervisor"}
+			if err := s.ReservePairRestore(ctx, req); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.ConfirmPairRestore(ctx, req.OperationID, req.SessionID, req.ExpectedGeneration, "new-generation", "native", domain.WorkerSessionActive, "supervisor", time.Now().UTC()); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.ClaimRestoreRecovery(ctx, req.OperationID, pairID, req.SessionID, "new-generation", "verified-subject", "supervisor", time.Now().UTC()); err != nil {
+				t.Fatal(err)
+			}
+			if tc.newRuntime {
+				principal := "verified-subject"
+				stop := domain.StopOperation{OperationID: "stop-new", Purpose: domain.PairMaintenance, PairID: pairID, SessionID: req.SessionID, TerminalGeneration: "new-generation", RestoreOperationID: &req.OperationID, RestorePrincipal: &principal, Actor: "supervisor"}
+				if err := s.ClaimRestoreCleanupWithStop(ctx, stop, principal, "supervisor", time.Now().UTC(), RestoreCleanupObservation{SessionID: req.SessionID, TerminalGeneration: "new-generation"}); err != nil {
+					t.Fatal(err)
+				}
+				confirmD11StopForRestoreTest(t, s, stop)
+			}
+			resolve := func() error {
+				return s.ResolveAmbiguousRestore(ctx, req.OperationID, pairID, req.SessionID, req.ExpectedGeneration, domain.PhysicalExecutionResolution, "exact D11 runtime and lineage evidence", "verified-subject", "supervisor", time.Now().UTC())
+			}
+			if tc.wantPhysical {
+				if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_physical_resolution_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='PAIR_RESTORE_RESOLVED' BEGIN SELECT RAISE(ABORT,'injected resolution audit failure'); END`); err != nil {
+					t.Fatal(err)
+				}
+				if err := resolve(); err == nil || !strings.Contains(err.Error(), "injected resolution audit failure") {
+					t.Fatalf("audit rollback error=%v", err)
+				}
+				rolled, err := s.GetPairRestoreOperation(ctx, req.OperationID)
+				if err != nil || rolled.ResolutionState != domain.RestoreCleanupClaimed || rolled.ResolutionBasis != nil {
+					t.Fatalf("Tx D partial commit: %+v %v", rolled, err)
+				}
+				var resolvedAudits int
+				if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE event_type='PAIR_RESTORE_RESOLVED' AND json_extract(details_json,'$.operation_id')=?`, req.OperationID).Scan(&resolvedAudits); err != nil {
+					t.Fatal(err)
+				}
+				if resolvedAudits != 0 {
+					t.Fatalf("resolution audit survived rollback: %d", resolvedAudits)
+				}
+				if _, err := s.db.ExecContext(ctx, `DROP TRIGGER reject_physical_resolution_audit`); err != nil {
+					t.Fatal(err)
+				}
+				if err := resolve(); err != nil {
+					t.Fatalf("complete Class A rejected: %v", err)
+				}
+				if err := s.ResolveAmbiguousRestore(ctx, req.OperationID, pairID, req.SessionID, req.ExpectedGeneration, domain.AdministrativeRiskResolution, "stale writer", "verified-subject", "supervisor", time.Now().UTC()); !errors.Is(err, ErrStateConflict) {
+					t.Fatalf("stale basis writer accepted: %v", err)
+				}
+			} else if err := resolve(); !errors.Is(err, ErrStateConflict) {
+				t.Fatalf("incomplete Class A accepted: %v", err)
+			}
+			op, err := s.GetPairRestoreOperation(ctx, req.OperationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := domain.RestoreRecoveryClaimed
+			if tc.newRuntime {
+				want = domain.RestoreCleanupClaimed
+			}
+			if tc.wantPhysical {
+				want = domain.RestoreResolved
+			}
+			if op.ResolutionState != want {
+				t.Fatalf("wrong resolution after coverage check: %+v", op)
+			}
+			worker, err := s.GetWorkerSessionByPair(ctx, pairID)
+			if err != nil || worker.QuarantineState != domain.QuarantineQuarantined {
+				t.Fatalf("Tx D cleared quarantine: %+v %v", worker, err)
+			}
+			closed, err := s.GetTaskAttempt(ctx, attemptID)
+			if err != nil || closed.QuarantineState != domain.QuarantineQuarantined {
+				t.Fatalf("Tx D cleared attempt quarantine: %+v %v", closed, err)
+			}
+		})
+	}
+}
+
+func TestPhysicalEvidenceRejectsPersistedEqualDeadline(t *testing.T) {
 	ctx := context.Background()
 	s, _ := createTestStore(t)
 	defer s.Close()
-	setupReadyTask(t, s, "task-restore-cleanup-rollback", "contract-restore-cleanup-rollback")
-	pairID := "pair-d-task-restore-cleanup-rollback"
-	seedWorkerSessionForTest(t, s, domain.WorkerSession{PairID: pairID, SessionID: "session-restore-cleanup-rollback", RuntimeType: "agy_tui", WorkerAgentID: "agy", Status: domain.WorkerSessionTerminated, TerminalGeneration: "g1", QuarantineState: domain.QuarantineClean})
-	req := domain.RestoreReservation{AuthorizationID: "auth-cleanup-rollback", OperationID: "restore-cleanup-rollback", PairID: pairID, SessionID: "session-restore-cleanup-rollback", ExpectedGeneration: "g1", RiskScope: "POSSIBLE_PROMPT_REPLAY", AuthorizedPrincipal: "verified-subject", Actor: "supervisor"}
+	pairID, attempt := setupBoundAttempt(t, s, "task-equal-evidence", "contract-equal-evidence", "attempt-equal-evidence")
+	taskID, contractID, attemptID := attempt.TaskID, attempt.ContractID, attempt.AttemptID
+	stop := domain.StopOperation{OperationID: "stop-equal-evidence", Purpose: domain.RunningAttemptStop, PairID: pairID, TaskID: &taskID, ContractID: &contractID, AttemptID: &attemptID, SessionID: *attempt.SessionID, TerminalGeneration: *attempt.TerminalGeneration, Actor: "supervisor"}
+	if err := s.CreateStopOperation(ctx, stop); err != nil {
+		t.Fatal(err)
+	}
+	confirmD11StopForRestoreTest(t, s, stop)
+	if err := s.AtomicTerminalTransition(ctx, taskID, domain.StateDispatched, domain.StateFailed, "closed", attemptID, "ORDINARY_FAILURE"); err != nil {
+		t.Fatal(err)
+	}
+	setRestoreSessionTerminated(t, s, pairID)
+	req := domain.RestoreReservation{AuthorizationID: "auth-equal-evidence", OperationID: "restore-equal-evidence", PairID: pairID, SessionID: stop.SessionID, ExpectedGeneration: stop.TerminalGeneration, RiskScope: "POSSIBLE_PROMPT_REPLAY", AuthorizedPrincipal: "verified-subject", Actor: "supervisor"}
 	if err := s.ReservePairRestore(ctx, req); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordPairRestoreUnknown(ctx, req.OperationID, "supervisor"); err != nil {
+	// Simulate a legacy persisted equality row plus matching audit. The normal
+	// confirmation API rejects equality; Tx D must reject it independently.
+	confirmed, err := s.GetStopOperation(ctx, stop.OperationID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ClaimRestoreRecovery(ctx, req.OperationID, pairID, req.SessionID, "g1", "verified-subject", "supervisor", time.Now().UTC()); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE stop_operations SET confirmation_deadline_at=? WHERE operation_id=?`, formatTime(*confirmed.TerminationConfirmedAt), stop.OperationID); err != nil {
 		t.Fatal(err)
 	}
-	principal := "verified-subject"
-	stop := domain.StopOperation{OperationID: "stop-cleanup-rollback", Purpose: domain.PairMaintenance, PairID: pairID, SessionID: req.SessionID, TerminalGeneration: "g1", Stage: domain.StopRequested, Actor: "supervisor", RestoreOperationID: &req.OperationID, RestorePrincipal: &principal}
-	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_linked_stop_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='STOP_OPERATION_REQUESTED' BEGIN SELECT RAISE(ABORT,'injected stop audit failure'); END`); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ClaimRestoreCleanupWithStop(ctx, stop, principal, "supervisor", time.Now().UTC()); err == nil {
-		t.Fatal("cleanup claim survived stop audit failure")
+	eventID, err := newAuditEventID()
+	if err != nil {
+		t.Fatal(err)
 	}
-	op, err := s.GetPairRestoreOperation(ctx, req.OperationID)
-	if err != nil || op.ResolutionState != domain.RestoreRecoveryClaimed {
-		t.Fatalf("partial cleanup ownership: %+v %v", op, err)
+	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditStopOperationConfirmed, Timestamp: *confirmed.TerminationConfirmedAt, PairID: pairID, TaskID: taskID, ContractID: contractID, AttemptID: attemptID, Actor: "supervisor", Details: map[string]any{"stop_operation_id": stop.OperationID, "restore_operation_id": nil, "session_id": stop.SessionID, "target_generation": stop.TerminalGeneration, "confirmation_deadline_at": formatTime(*confirmed.TerminationConfirmedAt), "termination_confirmed_at": formatTime(*confirmed.TerminationConfirmedAt), "observed_session_id": stop.SessionID, "observed_generation": stop.TerminalGeneration, "is_terminated": true}})
+	if err != nil {
+		tx.Rollback()
+		t.Fatal(err)
 	}
-	if _, err := s.GetStopOperation(ctx, stop.OperationID); !errors.Is(err, ErrOperationNotFound) {
-		t.Fatalf("linked stop row survived rollback: %v", err)
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid, err := positiveD11StopEvidence(ctx, tx, pairID, stop.SessionID, stop.TerminalGeneration, "", attemptID)
+	tx.Rollback()
+	if err != nil || valid {
+		t.Fatalf("equality accepted as Class A physical proof: valid=%v err=%v", valid, err)
 	}
 }

@@ -359,7 +359,7 @@ func (s *Store) CreateStopOperation(ctx context.Context, operation domain.StopOp
 	return nil
 }
 
-func createStopOperationTx(ctx context.Context, tx *sql.Tx, operation domain.StopOperation) error {
+func createStopOperationTx(ctx context.Context, tx *sql.Tx, operation domain.StopOperation, cleanupObservation ...string) error {
 	var err error
 	if operation.Purpose == domain.RunningAttemptStop || operation.Purpose == domain.QuarantineCleanup {
 		if operation.AttemptID == nil {
@@ -426,7 +426,8 @@ WHERE c.contract_id = ? AND c.task_id = ? AND t.pair_id = ?
 			return err
 		}
 	} else {
-		validNewGenerationMaintenance := operation.Purpose == domain.PairMaintenance && operation.AttemptID == nil && operation.TaskID == nil && operation.ContractID == nil && restoreResolution == string(domain.RestoreCleanupClaimed) && restoreObserved.Valid && operation.SessionID == restoreSession && operation.TerminalGeneration == restoreObserved.String
+		observedRuntime := len(cleanupObservation) == 1 && cleanupObservation[0] != "" && operation.TerminalGeneration == cleanupObservation[0]
+		validNewGenerationMaintenance := operation.Purpose == domain.PairMaintenance && operation.AttemptID == nil && operation.TaskID == nil && operation.ContractID == nil && restoreResolution == string(domain.RestoreCleanupClaimed) && operation.SessionID == restoreSession && observedRuntime && (!restoreObserved.Valid || operation.TerminalGeneration == restoreObserved.String)
 		validOldGenerationCleanup := operation.Purpose == domain.QuarantineCleanup && operation.AttemptID != nil && restoreResolution == string(domain.RestoreCleanupClaimed) && operation.SessionID == restoreSession && operation.TerminalGeneration == restoreExpected
 		if operation.RestoreOperationID == nil || *operation.RestoreOperationID != restoreID || operation.RestorePrincipal == nil || *operation.RestorePrincipal != recoveryPrincipal || recoveryPrincipal == "" || (!validNewGenerationMaintenance && !validOldGenerationCleanup) {
 			return fmt.Errorf("%w: unresolved restore permits only linked exact-lineage cleanup or observed-generation PAIR_MAINTENANCE", ErrQuarantinedExecution)
@@ -601,7 +602,7 @@ WHERE operation_id = ? AND stage = ? AND resolution_state = ?
 			}
 			deadlineAt = &parsed
 		}
-		if update.TerminationConfirmedAt == nil || update.ResolvedAt == nil || deadlineAt == nil || update.TerminationConfirmedAt.After(*deadlineAt) || update.ObservedSessionID != sessionID || update.ObservedGeneration != generation || !update.ObservedIsTerminated {
+		if update.TerminationConfirmedAt == nil || update.ResolvedAt == nil || deadlineAt == nil || !update.TerminationConfirmedAt.Before(*deadlineAt) || update.ObservedSessionID != sessionID || update.ObservedGeneration != generation || !update.ObservedIsTerminated {
 			return fmt.Errorf("store: D11 termination confirmation requires positive in-deadline evidence")
 		}
 		eventID, err := newAuditEventID()

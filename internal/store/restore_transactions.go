@@ -408,36 +408,53 @@ func (s *Store) ResolveAmbiguousRestore(ctx context.Context, operationID, pairID
 		return fmt.Errorf("%w: restore is not awaiting risk resolution", ErrStateConflict)
 	}
 	if basis == domain.PhysicalExecutionResolution {
-		var positiveStop int
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM stop_operations o
-			JOIN audit_events e ON e.event_type='STOP_OPERATION_CONFIRMED'
-			 AND json_extract(e.details_json,'$.stop_operation_id')=o.operation_id
-			 AND json_extract(e.details_json,'$.restore_operation_id')=o.restore_operation_id
-			 AND e.pair_id=o.pair_id AND e.task_id IS o.task_id AND e.contract_id IS o.contract_id AND e.attempt_id IS o.attempt_id
-			 AND json_extract(e.details_json,'$.session_id')=o.session_id
-			 AND json_extract(e.details_json,'$.target_generation')=o.terminal_generation
-			 AND json_extract(e.details_json,'$.confirmation_deadline_at')=o.confirmation_deadline_at
-			 AND json_extract(e.details_json,'$.termination_confirmed_at')=o.termination_confirmed_at
-			 AND json_extract(e.details_json,'$.observed_session_id')=o.session_id
-			 AND json_extract(e.details_json,'$.observed_generation')=o.terminal_generation
-			 AND json_extract(e.details_json,'$.is_terminated')=1
-			WHERE o.restore_operation_id=? AND o.pair_id=? AND o.session_id=? AND o.terminal_generation=?
-			 AND o.stage='STOP_TERMINATION_CONFIRMED' AND o.resolution_state='TERMINATION_CONFIRMED'
-			 AND o.call_completed_at IS NOT NULL AND o.confirmation_deadline_at IS NOT NULL
-			 AND o.termination_confirmed_at IS NOT NULL AND o.resolved_at IS NOT NULL
-			 AND o.termination_confirmed_at<=o.confirmation_deadline_at
-			 AND ((o.purpose='PAIR_MAINTENANCE' AND o.task_id IS NULL AND o.contract_id IS NULL AND o.attempt_id IS NULL)
-			       OR (o.purpose='QUARANTINE_CLEANUP' AND o.attempt_id IS NOT NULL
-			       AND EXISTS(SELECT 1 FROM task_attempts a JOIN tasks t ON t.task_id=a.task_id
-			         WHERE a.attempt_id=o.attempt_id AND a.task_id=o.task_id AND a.contract_id=o.contract_id
-			           AND t.pair_id=o.pair_id AND a.session_id=o.session_id
-			           AND a.terminal_generation=o.terminal_generation AND a.ended_at IS NOT NULL
-			           AND a.quarantine_state='QUARANTINED'))))`, operationID, pairID, sessionID, generation).Scan(&positiveStop); err != nil {
-			return fmt.Errorf("store: verify positive D11 physical stop evidence: %w", err)
+		// The linked stop proves only the runtime it observed. A prior stop of
+		// an old attempt cannot prove a restored generation (or vice versa).
+		var runtimeGeneration string
+		if err := tx.QueryRowContext(ctx, `SELECT terminal_generation FROM stop_operations WHERE restore_operation_id=? AND pair_id=? AND session_id=?`, operationID, pairID, sessionID).Scan(&runtimeGeneration); err != nil {
+			return fmt.Errorf("%w: Class A requires a linked runtime stop: %v", ErrStateConflict, err)
 		}
-		if positiveStop != 1 {
-			return fmt.Errorf("%w: Class A requires positive D11 stop evidence matching restore/session/generation/deadline/lineage; assertion is insufficient", ErrStateConflict)
+		var currentSession, currentGeneration string
+		if err := tx.QueryRowContext(ctx, `SELECT session_id,terminal_generation FROM worker_sessions WHERE pair_id=?`, pairID).Scan(&currentSession, &currentGeneration); err != nil {
+			return err
+		}
+		if currentSession != sessionID || (stage == "RESTORE_CONFIRMED" && currentGeneration != runtimeGeneration) || (stage == "RESTORE_REQUESTED" && currentGeneration != storedGeneration) {
+			return fmt.Errorf("%w: runtime identity/generation changed", ErrStateConflict)
+		}
+		valid, err := positiveD11StopEvidence(ctx, tx, pairID, sessionID, runtimeGeneration, operationID, "")
+		if err != nil {
+			return err
+		}
+		if !valid {
+			return fmt.Errorf("%w: Class A lacks positive current-runtime D11 evidence", ErrStateConflict)
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT a.attempt_id,a.session_id,a.terminal_generation FROM task_attempts a JOIN tasks t ON t.task_id=a.task_id WHERE t.pair_id=? AND a.quarantine_state='QUARANTINED'`, pairID)
+		if err != nil {
+			return err
+		}
+		type lineage struct{ id, session, generation string }
+		var lineages []lineage
+		for rows.Next() {
+			var l lineage
+			if err := rows.Scan(&l.id, &l.session, &l.generation); err != nil {
+				rows.Close()
+				return err
+			}
+			lineages = append(lineages, l)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		for _, l := range lineages {
+			valid, err := positiveD11StopEvidence(ctx, tx, pairID, l.session, l.generation, "", l.id)
+			if err != nil {
+				return err
+			}
+			if !valid {
+				return fmt.Errorf("%w: Class A lacks positive D11 evidence for attempt %s", ErrStateConflict, l.id)
+			}
 		}
 	}
 	if _, err := appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: claimEvent, EventType: domain.AuditPairRestoreRecoveryClaimed, Timestamp: resolvedAt, PairID: pairID, Actor: actor, Details: map[string]any{"operation_id": operationID, "basis": string(basis), "principal": principal, "evidence": evidence}}); err != nil {
@@ -486,6 +503,41 @@ func (s *Store) ResolveAmbiguousRestore(ctx context.Context, operationID, pairID
 	return tx.Commit()
 }
 
+// positiveD11StopEvidence checks the committed stop row and its exact audit
+// tuple. Empty restoreID/attemptID means that dimension is not constrained.
+func positiveD11StopEvidence(ctx context.Context, tx *sql.Tx, pairID, sessionID, generation, restoreID, attemptID string) (bool, error) {
+	var found int
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM stop_operations o JOIN audit_events e
+		ON e.event_type='STOP_OPERATION_CONFIRMED'
+		AND json_extract(e.details_json,'$.stop_operation_id')=o.operation_id
+		AND json_extract(e.details_json,'$.restore_operation_id') IS o.restore_operation_id
+		AND e.pair_id=o.pair_id AND e.task_id IS o.task_id AND e.contract_id IS o.contract_id AND e.attempt_id IS o.attempt_id
+		AND json_extract(e.details_json,'$.session_id')=o.session_id
+		AND json_extract(e.details_json,'$.target_generation')=o.terminal_generation
+		AND json_extract(e.details_json,'$.confirmation_deadline_at')=o.confirmation_deadline_at
+		AND json_extract(e.details_json,'$.termination_confirmed_at')=o.termination_confirmed_at
+		AND json_extract(e.details_json,'$.observed_session_id')=o.session_id
+		AND json_extract(e.details_json,'$.observed_generation')=o.terminal_generation
+		AND json_extract(e.details_json,'$.is_terminated')=1
+		WHERE o.pair_id=? AND o.session_id=? AND o.terminal_generation=?
+		AND (?='' OR o.restore_operation_id=?) AND (?='' OR o.attempt_id=?)
+		AND o.stage='STOP_TERMINATION_CONFIRMED' AND o.resolution_state='TERMINATION_CONFIRMED'
+		AND o.call_completed_at IS NOT NULL AND o.confirmation_deadline_at IS NOT NULL
+		AND o.termination_confirmed_at IS NOT NULL AND o.resolved_at IS NOT NULL
+		AND o.termination_confirmed_at<o.confirmation_deadline_at
+		AND (o.purpose='PAIR_MAINTENANCE' AND o.task_id IS NULL AND o.contract_id IS NULL AND o.attempt_id IS NULL
+		  OR o.purpose IN ('QUARANTINE_CLEANUP','RUNNING_ATTEMPT_STOP') AND o.attempt_id IS NOT NULL
+		  AND EXISTS(SELECT 1 FROM task_attempts a JOIN tasks t ON t.task_id=a.task_id
+		    WHERE a.attempt_id=o.attempt_id AND a.task_id=o.task_id AND a.contract_id=o.contract_id
+		    AND t.pair_id=o.pair_id AND a.session_id=o.session_id AND a.terminal_generation=o.terminal_generation
+		    AND a.ended_at IS NOT NULL AND a.quarantine_state='QUARANTINED')))
+		`, pairID, sessionID, generation, restoreID, restoreID, attemptID, attemptID).Scan(&found)
+	if err != nil {
+		return false, fmt.Errorf("store: verify positive D11 evidence: %w", err)
+	}
+	return found == 1, nil
+}
+
 // ClaimRestoreCleanup transfers one unresolved restore operation to the narrow
 // linked-stop path. It does not authorize a /kill call by itself.
 func (s *Store) ClaimRestoreCleanup(ctx context.Context, operationID, pairID, sessionID, targetGeneration, principal, actor string, claimedAt time.Time) error {
@@ -502,7 +554,14 @@ func (s *Store) ClaimRestoreCleanup(ctx context.Context, operationID, pairID, se
 
 // ClaimRestoreCleanupWithStop atomically transfers restore cleanup ownership,
 // persists the linked STOP_REQUESTED row, and writes both required audit events.
-func (s *Store) ClaimRestoreCleanupWithStop(ctx context.Context, stop domain.StopOperation, principal, actor string, claimedAt time.Time) error {
+// RestoreCleanupObservation is a fresh upstream observation supplied through
+// the trusted operator boundary. It is not causal proof of /restore success.
+type RestoreCleanupObservation struct {
+	SessionID, TerminalGeneration string
+	IsTerminated                  bool
+}
+
+func (s *Store) ClaimRestoreCleanupWithStop(ctx context.Context, stop domain.StopOperation, principal, actor string, claimedAt time.Time, observations ...RestoreCleanupObservation) error {
 	if stop.OperationID == "" || stop.RestoreOperationID == nil || *stop.RestoreOperationID == "" || stop.PairID == "" || stop.SessionID == "" || stop.TerminalGeneration == "" || principal == "" || actor == "" {
 		return fmt.Errorf("store: linked restore cleanup stop tuple is incomplete")
 	}
@@ -527,6 +586,16 @@ func (s *Store) ClaimRestoreCleanupWithStop(ctx context.Context, stop domain.Sto
 	if stop.Stage != domain.StopRequested || stop.ResolutionState != domain.StopResolutionInFlight {
 		return fmt.Errorf("store: linked cleanup must begin at STOP_REQUESTED/IN_FLIGHT")
 	}
+	var observation RestoreCleanupObservation
+	if len(observations) > 1 {
+		return fmt.Errorf("store: exactly one cleanup observation may be supplied")
+	}
+	if len(observations) == 1 {
+		observation = observations[0]
+	}
+	if stop.Purpose == domain.PairMaintenance && (observation.SessionID != stop.SessionID || observation.TerminalGeneration != stop.TerminalGeneration || observation.IsTerminated) {
+		return fmt.Errorf("%w: PAIR_MAINTENANCE requires fresh exact live-runtime observation", ErrStateConflict)
+	}
 	claimEventID, err := newAuditEventID()
 	if err != nil {
 		return err
@@ -547,10 +616,18 @@ func (s *Store) ClaimRestoreCleanupWithStop(ctx context.Context, stop domain.Sto
 		}
 		return err
 	}
-	if pairID != stop.PairID || sessionID != stop.SessionID || state != string(domain.RestoreRecoveryClaimed) || !owner.Valid || owner.String != principal || (stop.TerminalGeneration != expected && (!observed.Valid || stop.TerminalGeneration != observed.String)) {
+	validObservedGeneration := stop.Purpose == domain.PairMaintenance && observation.SessionID == sessionID && observation.TerminalGeneration == stop.TerminalGeneration
+	if pairID != stop.PairID || sessionID != stop.SessionID || state != string(domain.RestoreRecoveryClaimed) || !owner.Valid || owner.String != principal || (stop.TerminalGeneration != expected && (!observed.Valid || stop.TerminalGeneration != observed.String) && !validObservedGeneration) {
 		return fmt.Errorf("%w: cleanup claim tuple/owner/generation mismatch", ErrStateConflict)
 	}
-	if _, err := appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: claimEventID, EventType: domain.AuditPairRestoreCleanupClaimed, Timestamp: claimedAt, PairID: pairID, Actor: actor, Details: map[string]any{"operation_id": *stop.RestoreOperationID, "session_id": sessionID, "target_generation": stop.TerminalGeneration, "principal": principal}}); err != nil {
+	var workerSession, workerGeneration, workerQuarantine string
+	if err := tx.QueryRowContext(ctx, `SELECT session_id,terminal_generation,quarantine_state FROM worker_sessions WHERE pair_id=?`, pairID).Scan(&workerSession, &workerGeneration, &workerQuarantine); err != nil {
+		return err
+	}
+	if workerSession != sessionID || workerQuarantine != string(domain.QuarantineQuarantined) || (observed.Valid && workerGeneration != observed.String) || (!observed.Valid && workerGeneration != expected) {
+		return fmt.Errorf("%w: restore cleanup WorkerSession guard changed", ErrStateConflict)
+	}
+	if _, err := appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: claimEventID, EventType: domain.AuditPairRestoreCleanupClaimed, Timestamp: claimedAt, PairID: pairID, Actor: actor, Details: map[string]any{"operation_id": *stop.RestoreOperationID, "session_id": sessionID, "expected_generation": expected, "target_generation": stop.TerminalGeneration, "observation_session_id": observation.SessionID, "observation_generation": observation.TerminalGeneration, "principal": principal}}); err != nil {
 		return err
 	}
 	res, err := tx.ExecContext(ctx, `UPDATE pair_restore_operations SET resolution_state='RESTORE_CLEANUP_CLAIMED',version=version+1 WHERE operation_id=? AND pair_id=? AND session_id=? AND resolution_state='RESTORE_RECOVERY_CLAIMED' AND recovery_principal=? AND version=?`, *stop.RestoreOperationID, pairID, sessionID, principal, version)
@@ -563,7 +640,7 @@ func (s *Store) ClaimRestoreCleanupWithStop(ctx context.Context, stop domain.Sto
 		}
 		return fmt.Errorf("%w: cleanup ownership CAS lost", ErrStateConflict)
 	}
-	if err := createStopOperationTx(ctx, tx, stop); err != nil {
+	if err := createStopOperationTx(ctx, tx, stop, observation.TerminalGeneration); err != nil {
 		return err
 	}
 	return tx.Commit()
