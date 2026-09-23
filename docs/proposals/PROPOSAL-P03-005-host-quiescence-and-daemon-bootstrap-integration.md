@@ -1,6 +1,6 @@
 # PROPOSAL-P03-005 — Host Quiescence & Daemon Bootstrap Integration (TASK-P03-004)
 
-> **Status:** `PROPOSED_FOR_SUPERVISOR_REAUDIT` (Revision 1)
+> **Status:** `PROPOSED_FOR_SUPERVISOR_REAUDIT` (Revision 2)
 > **Authority:** `docs/24_CHANGE_GOVERNANCE.md` (Level 3 Canonical Architecture / Level 5 Roadmap Alignment)
 > **Active Gate:** `TASK_P03_003D_HANDOFF_VERIFICATION`
 > **Proposed Phase Allocation:** Phase P03 subtask `TASK-P03-004`
@@ -21,9 +21,10 @@
      * Verified operator principal unproven at runtime
      vẫn đang ở trạng thái OPEN. Do đó, **chưa thể tuyên bố toàn bộ Phase P03 hoàn tất**.
 
-3. **Ranh giới với Phase P04**:
+3. **Ranh giới với Phase P04 & Loại bỏ Verification Runner khỏi P03**:
    - Theo `docs/17_ROADMAP.md` và `docs/22_MODULE_PROVENANCE.md`, Phase P04 sở hữu độc quyền Evidence & Review Engine (`EvidenceCollector`, `ReviewBundleBuilder`, policy validator, git diff verification).
-   - P04 **hoàn toàn không sở hữu** daemon bootstrap, server entrypoint hay host quiescence. Việc gán trách nhiệm daemon bootstrap vào P04 là vi phạm phân định ranh giới kiến trúc.
+   - Production verification runner và các công cụ thực thi verification profile thuộc sở hữu của Phase P04 và Phase P05 (`docs/21_TRACEABILITY_MATRIX.md`).
+   - Subtask `TASK-P03-004` **loại bỏ production verification runner khỏi scope**, chỉ tập trung vào host/bootstrap, admission và test harness kiểm chứng exit gate P03.
 
 4. **Phân bổ Subtask `TASK-P03-004` Thuộc Phase P03**:
    - Để thỏa mãn exit gate của Phase P03 trước khi chuyển giao sang P04, đề xuất bổ sung subtask `TASK-P03-004 Host Quiescence & Daemon Bootstrap Integration` trong Phase P03 theo đúng quy trình `docs/24_CHANGE_GOVERNANCE.md`.
@@ -37,7 +38,7 @@
    - Điều phối toàn bộ vòng đời khởi động, phục vụ và dừng an toàn của tiến trình Supervisor.
 
 2. **Tách Biệt Hai Cấp Độ Quiescence**:
-   - Tách rõ ràng `ProcessOwnerLease` dài hạn cấp process theo DB (giữ từ trước `Runner.Run` đến sau shutdown drain/Store close) khỏi `ExclusiveScope` ngắn hạn do `Runner.Run` tự acquire và release. Entrypoint không acquire lần hai.
+   - Tách rõ ràng `ProcessOwnerLease` dài hạn cấp process theo DB (giữ từ TRƯỚC `Store.Open()`/migration đến SAU shutdown drain và `Store.Close()`) khỏi `ExclusiveScope` ngắn hạn do `Runner.Run(ctx)` tự acquire và release khi quét snapshot. Entrypoint không acquire lần hai.
 
 3. **Hiện thực Thống nhất Ba Interface Host tại Một Trusted Boundary**:
    - Cùng một host provider phải thực hiện đồng thời:
@@ -46,15 +47,16 @@
      * `stop.TimeoutAdmission`: `AcquireEffect(ctx context.Context, pairID string, purpose string) (TimeoutPermit, error)` (tham số thứ ba là `purpose string`, ví dụ `"TIMEOUT_MONITOR"`).
    - Đóng admission, drain/join, cấp exclusive ownership và release permit theo cùng một authority duy nhất.
 
-4. **Cơ chế Exclusivity An toàn trên Windows**:
-   - Không sử dụng POSIX `flock` hay `SIGKILL`. Không khóa trực tiếp SQLite DB file.
-   - Khóa chính là Windows Named Mutex (`Local\AISupervisor_<DBHash>`) có explicit DACL và `bInheritHandle = FALSE`.
-   - Khóa phụ là Sidecar Lock File (`<db_path>.supervisor.owner`) lưu metadata liên lạc.
-   - V1 chỉ áp dụng **Cooperative Takeover** (qua local IPC). Nếu owner cũ không thoát -> fail-closed ngay lập tức. Bỏ hành vi tự động `TerminateProcess`.
+4. **Cơ chế Machine-Wide Exclusivity trên Windows**:
+   - Không sử dụng `Local\` Named Mutex do bị cô lập theo Windows Logon Session.
+   - Khóa chính là Windows Exclusive Sidecar Lock File Handle (`CreateFileW` với `dwShareMode = 0`) tại `<canonical_db_path>.owner.lock`, có hiệu lực toàn máy và kernel tự đóng khi crash.
+   - File metadata tách biệt `<canonical_db_path>.owner.json` lưu thông tin liên lạc IPC (Named Pipe).
+   - Chuẩn hóa canonical path, chỉ hỗ trợ NTFS/ReFS cục bộ (cấm network/SMB shares), cấm handle inheritance (`bInheritHandle = FALSE`).
+   - Cạnh tranh giữa hai Windows logon sessions trả về `ERROR_SHARING_VIOLATION` (32).
+   - V1 chỉ áp dụng **Cooperative Takeover** qua Named Pipe. Nếu owner cũ không thoát -> fail-closed ngay lập tức. Bỏ hành vi tự động `TerminateProcess`.
 
 5. **Phân biệt Wire Effect Ranh giới vs. Outcome Chưa biết**:
-   - Bỏ khẳng định cho rằng việc terminate process hoặc đóng socket chứng minh AO chưa nhận effect.
-   - Phân biệt: caller cũ không thể phát effect mới vs. effect đã phát có outcome chưa biết.
+   - Việc process cũ thoát chỉ chứng minh caller cũ không thể phát effect mới; không chứng minh AO chưa nhận effect đã phát trước đó.
    - Mọi intent mơ hồ (`STOP_REQUESTED`, `SEND_REQUESTED`, `RESTORE_REQUESTED`) phải giữ fail-closed, dùng observation/reconciliation, tuyệt đối không replay.
 
 6. **Quy trình Khởi động Startup-Before-Serve & Sơ đồ Ma trận**:
@@ -65,7 +67,7 @@
    - `TimeoutMonitor`: Host scheduling định kỳ gọi `m.Tick(ctx)`.
 
 7. **Graceful Shutdown**:
-   - Đóng listener admission -> Dừng `Poller` (`Poller.Stop()`) -> Dừng scheduler `TimeoutMonitor` -> Drain/join toàn bộ effect callers TRƯỚC KHI đóng Store và database connection.
+   - Đóng listener admission -> Dừng `Poller` (`Poller.Stop()`) -> Dừng scheduler `TimeoutMonitor` -> Drain/join toàn bộ effect callers TRƯỚC KHI đóng Store và giải phóng lock handle `.owner.lock`.
 
 ---
 
@@ -74,9 +76,15 @@
 1. **Ma trận Kiểm chứng Binary Thật**:
    - Kiểm tra trạng thái cổng/admission thực tế bằng network probe qua 8 kịch bản (trước/đang/sau Run, Complete+PendingAO, Run lỗi, hai process cạnh tranh, shutdown drain, 5 bước P03 exit gate).
    - Tách biệt hoàn toàn test Mock AO tự động khỏi bài kiểm chứng Live AO có kiểm soát.
-2. **Ranh giới Tooling & An ninh SEC-003**:
-   - Giới hạn P03 host ở bootstrap/admission và verification runner tối thiểu; không triển khai trước bộ 12 tool P05.
-   - Ghi nhận ChatGPT Web là reasoning agent, Control Plane cung cấp local tools. Ở P04/P05 đối soát tool log/runner với `docs/11`, `docs/02`, và `SEC-003`. Tuyệt đối không mở arbitrary shell execution.
-3. **Invariants Bất biến**:
+
+2. **Kích hoạt 5 Bước Exit Gate P03**:
+   - Khi chưa có 12 tool P05, 5 bước exit gate P03 (session create, dispatch, observation reconciliation, raw workspace-file read, teardown) được kích hoạt thông qua exit gate test harness gửi HTTP calls trực tiếp vào local admission endpoints của daemon.
+   - Network probe xác minh socket đóng trước khi scan hoàn tất, mở sau khi hoàn tất. Log chỉ đóng vai trò bổ trợ.
+
+3. **Ranh giới Tooling & An ninh SEC-003**:
+   - Giới hạn P03 host ở bootstrap/admission và test harness tối thiểu; loại bỏ production verification runner khỏi P03 (chuyển về P04/P05).
+   - Ghi nhận ChatGPT Web là reasoning agent, Control Plane cung cấp local tools. Ở P04/P05 đối soát tool log/runner với `docs/11_CHATGPT_TOOL_SURFACE.md`, `docs/02_REQUIREMENTS.md`, và `docs/07_SECURITY_MODEL.md` (SEC-003). Tuyệt đối không cấp arbitrary shell execution.
+
+4. **Invariants Bất biến**:
    - `AUTOMATIC_RESTORE = DISABLED`: Tiếp tục tắt fail-closed.
    - 8 Operational policies tiếp tục giữ nguyên `UNSET` trong tài liệu; runtime bắt buộc phải được inject giá trị cấu hình hợp lệ, thiếu thì fail-closed khi khởi động.
