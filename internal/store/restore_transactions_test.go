@@ -617,3 +617,102 @@ func TestPhysicalEvidenceRejectsPersistedEqualDeadline(t *testing.T) {
 		t.Fatalf("equality accepted as Class A physical proof: valid=%v err=%v", valid, err)
 	}
 }
+
+func TestRestorePhysicalEvidenceTimestampPrecisionAndFailClosed(t *testing.T) {
+	base := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name, confirmedRaw, deadlineRaw string
+		accepted                        bool
+	}{
+		{"whole_second_before_500ms", formatTime(base), formatTime(base.Add(500 * time.Millisecond)), true},
+		{"different_fraction_digits", formatTime(base.Add(900 * time.Millisecond)), formatTime(base.Add(950 * time.Millisecond)), true},
+		{"before_1ns", formatTime(base.Add(500*time.Millisecond - time.Nanosecond)), formatTime(base.Add(500 * time.Millisecond)), true},
+		{"equal", formatTime(base.Add(500 * time.Millisecond)), formatTime(base.Add(500 * time.Millisecond)), false},
+		{"after_1ns", formatTime(base.Add(500*time.Millisecond + time.Nanosecond)), formatTime(base.Add(500 * time.Millisecond)), false},
+		{"malformed_confirmation", "invalid-timestamp", formatTime(base.Add(500 * time.Millisecond)), false},
+		{"malformed_deadline", formatTime(base), "invalid-timestamp", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			s, _ := createTestStore(t)
+			defer s.Close()
+			setupReadyTask(t, s, "task-precision", "contract-precision")
+			pairID := "pair-d-task-precision"
+			seedWorkerSessionForTest(t, s, domain.WorkerSession{PairID: pairID, SessionID: "session-precision", RuntimeType: "agy_tui", WorkerAgentID: "agy", Status: domain.WorkerSessionTerminated, TerminalGeneration: "g1", QuarantineState: domain.QuarantineClean})
+			req := domain.RestoreReservation{AuthorizationID: "auth-precision", OperationID: "restore-precision", PairID: pairID, SessionID: "session-precision", ExpectedGeneration: "g1", RiskScope: "POSSIBLE_PROMPT_REPLAY", AuthorizedPrincipal: "verified-subject", Actor: "supervisor"}
+			if err := s.ReservePairRestore(ctx, req); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.RecordPairRestoreUnknown(ctx, req.OperationID, "supervisor"); err != nil {
+				t.Fatal(err)
+			}
+			principal := "verified-subject"
+			if err := s.ClaimRestoreRecovery(ctx, req.OperationID, pairID, req.SessionID, req.ExpectedGeneration, principal, "supervisor", time.Now().UTC()); err != nil {
+				t.Fatal(err)
+			}
+			stop := domain.StopOperation{OperationID: "stop-precision", Purpose: domain.PairMaintenance, PairID: pairID, SessionID: req.SessionID, TerminalGeneration: req.ExpectedGeneration, RestoreOperationID: &req.OperationID, RestorePrincipal: &principal, Actor: "supervisor"}
+			if err := s.ClaimRestoreCleanupWithStop(ctx, stop, principal, "supervisor", time.Now().UTC(), RestoreCleanupObservation{SessionID: req.SessionID, TerminalGeneration: req.ExpectedGeneration}); err != nil {
+				t.Fatal(err)
+			}
+			confirmD11StopForRestoreTest(t, s, stop)
+			// The normal stop API cannot persist equality or malformed times.
+			// Build a legacy candidate whose matching audit tuple is complete.
+			if _, err := s.db.ExecContext(ctx, `UPDATE stop_operations SET termination_confirmed_at=?,confirmation_deadline_at=? WHERE operation_id=?`, tc.confirmedRaw, tc.deadlineRaw, stop.OperationID); err != nil {
+				t.Fatal(err)
+			}
+			tx, err := s.db.BeginTx(ctx, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			eventID, err := newAuditEventID()
+			if err != nil {
+				tx.Rollback()
+				t.Fatal(err)
+			}
+			_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditStopOperationConfirmed, Timestamp: time.Now().UTC(), PairID: pairID, Actor: "supervisor", Details: map[string]any{"stop_operation_id": stop.OperationID, "restore_operation_id": req.OperationID, "session_id": stop.SessionID, "target_generation": stop.TerminalGeneration, "confirmation_deadline_at": tc.deadlineRaw, "termination_confirmed_at": tc.confirmedRaw, "observed_session_id": stop.SessionID, "observed_generation": stop.TerminalGeneration, "is_terminated": true}})
+			if err != nil {
+				tx.Rollback()
+				t.Fatal(err)
+			}
+			if err := tx.Commit(); err != nil {
+				t.Fatal(err)
+			}
+			err = s.ResolveAmbiguousRestore(ctx, req.OperationID, pairID, req.SessionID, req.ExpectedGeneration, domain.PhysicalExecutionResolution, "matching D11 evidence", principal, "supervisor", time.Now().UTC())
+			if tc.accepted && err != nil {
+				t.Fatalf("valid physical evidence rejected: %v", err)
+			}
+			if !tc.accepted && !errors.Is(err, ErrStateConflict) {
+				t.Fatalf("invalid physical evidence accepted: %v", err)
+			}
+			op, err := s.GetPairRestoreOperation(ctx, req.OperationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stage, resolution string
+			if err := s.db.QueryRowContext(ctx, `SELECT stage,resolution_state FROM stop_operations WHERE operation_id=?`, stop.OperationID).Scan(&stage, &resolution); err != nil {
+				t.Fatal(err)
+			}
+			var confirmationAudits, resolutionAudits int
+			if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE event_type='STOP_OPERATION_CONFIRMED' AND json_extract(details_json,'$.stop_operation_id')=?`, stop.OperationID).Scan(&confirmationAudits); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE event_type='PAIR_RESTORE_RESOLVED' AND json_extract(details_json,'$.operation_id')=?`, req.OperationID).Scan(&resolutionAudits); err != nil {
+				t.Fatal(err)
+			}
+			if stage != string(domain.StopTerminationConfirmed) || resolution != string(domain.StopResolutionTerminationConfirmed) || confirmationAudits != 2 {
+				t.Fatalf("stop proof changed: stage=%s resolution=%s audits=%d", stage, resolution, confirmationAudits)
+			}
+			if tc.accepted {
+				if op.ResolutionState != domain.RestoreResolved || op.ResolutionBasis == nil || *op.ResolutionBasis != domain.PhysicalExecutionResolution || resolutionAudits != 1 {
+					t.Fatalf("Tx D physical result missing: %+v audits=%d", op, resolutionAudits)
+				}
+			} else if op.ResolutionState != domain.RestoreCleanupClaimed || op.ResolutionBasis != nil || resolutionAudits != 0 {
+				t.Fatalf("Tx D partial commit: %+v audits=%d", op, resolutionAudits)
+			}
+			worker, err := s.GetWorkerSessionByPair(ctx, pairID)
+			if err != nil || worker.QuarantineState != domain.QuarantineQuarantined {
+				t.Fatalf("quarantine cleared by Tx D: %+v %v", worker, err)
+			}
+		})
+	}
+}

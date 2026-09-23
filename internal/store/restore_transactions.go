@@ -506,8 +506,7 @@ func (s *Store) ResolveAmbiguousRestore(ctx context.Context, operationID, pairID
 // positiveD11StopEvidence checks the committed stop row and its exact audit
 // tuple. Empty restoreID/attemptID means that dimension is not constrained.
 func positiveD11StopEvidence(ctx context.Context, tx *sql.Tx, pairID, sessionID, generation, restoreID, attemptID string) (bool, error) {
-	var found int
-	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM stop_operations o JOIN audit_events e
+	rows, err := tx.QueryContext(ctx, `SELECT o.termination_confirmed_at,o.confirmation_deadline_at FROM stop_operations o JOIN audit_events e
 		ON e.event_type='STOP_OPERATION_CONFIRMED'
 		AND json_extract(e.details_json,'$.stop_operation_id')=o.operation_id
 		AND json_extract(e.details_json,'$.restore_operation_id') IS o.restore_operation_id
@@ -524,18 +523,39 @@ func positiveD11StopEvidence(ctx context.Context, tx *sql.Tx, pairID, sessionID,
 		AND o.stage='STOP_TERMINATION_CONFIRMED' AND o.resolution_state='TERMINATION_CONFIRMED'
 		AND o.call_completed_at IS NOT NULL AND o.confirmation_deadline_at IS NOT NULL
 		AND o.termination_confirmed_at IS NOT NULL AND o.resolved_at IS NOT NULL
-		AND o.termination_confirmed_at<o.confirmation_deadline_at
 		AND (o.purpose='PAIR_MAINTENANCE' AND o.task_id IS NULL AND o.contract_id IS NULL AND o.attempt_id IS NULL
 		  OR o.purpose IN ('QUARANTINE_CLEANUP','RUNNING_ATTEMPT_STOP') AND o.attempt_id IS NOT NULL
 		  AND EXISTS(SELECT 1 FROM task_attempts a JOIN tasks t ON t.task_id=a.task_id
 		    WHERE a.attempt_id=o.attempt_id AND a.task_id=o.task_id AND a.contract_id=o.contract_id
 		    AND t.pair_id=o.pair_id AND a.session_id=o.session_id AND a.terminal_generation=o.terminal_generation
-		    AND a.ended_at IS NOT NULL AND a.quarantine_state='QUARANTINED')))
-		`, pairID, sessionID, generation, restoreID, restoreID, attemptID, attemptID).Scan(&found)
+		    AND a.ended_at IS NOT NULL AND a.quarantine_state='QUARANTINED'))
+		`, pairID, sessionID, generation, restoreID, restoreID, attemptID, attemptID)
 	if err != nil {
 		return false, fmt.Errorf("store: verify positive D11 evidence: %w", err)
 	}
-	return found == 1, nil
+	defer rows.Close()
+	valid := false
+	for rows.Next() {
+		var confirmedRaw, deadlineRaw string
+		if err := rows.Scan(&confirmedRaw, &deadlineRaw); err != nil {
+			return false, fmt.Errorf("store: read positive D11 timestamps: %w", err)
+		}
+		confirmedAt, err := parseTime(confirmedRaw)
+		if err != nil {
+			return false, fmt.Errorf("%w: malformed D11 confirmation timestamp: %v", ErrStateConflict, err)
+		}
+		deadlineAt, err := parseTime(deadlineRaw)
+		if err != nil {
+			return false, fmt.Errorf("%w: malformed D11 deadline timestamp: %v", ErrStateConflict, err)
+		}
+		if confirmedAt.Before(deadlineAt) {
+			valid = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("store: iterate positive D11 evidence: %w", err)
+	}
+	return valid, nil
 }
 
 // ClaimRestoreCleanup transfers one unresolved restore operation to the narrow
