@@ -1,4 +1,4 @@
-﻿# TASK-P03-003B External Audit 001
+# TASK-P03-003B External Audit 001
 
 - Verdict: `REVISION_REQUIRED`.
 - Audited implementation SHA: `4b45c55d47a9bc7ede4c778e21355a476e198169`.

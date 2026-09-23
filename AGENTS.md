@@ -52,7 +52,7 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003B CONTRACT PLANNING
+# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003B REMEDIATION
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
@@ -82,23 +82,23 @@ This document establishes immutable operational directives for all AI coding age
 > External Supervisor audited implementation commit `c793fb66069e780f2fcc97129456fb5068b44f3d` and required revision for findings `3A-R1-001` through `3A-R1-004` (`docs/audits/P03_TASK_003A_EXTERNAL_AUDIT_001.md`). `TASK_P03_003A_IMPLEMENTATION = REVISION_REQUIRED`.
 > External Supervisor re-audited implementation commit `deeb4404e801d259cb589a2ef9b031f93b4b0367`, closed findings `3A-R1-001` through `3A-R1-004`, and approved `TASK_P03_003A_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED` (`docs/audits/P03_TASK_003A_EXTERNAL_REAUDIT_001.md`). The audited code was merged at `b8b0c95576d87677e8d48210d9838cc2f599752a`.
 > Architecture classification established: `P03_ARCHITECTURE_CHANGE = YES`, `P03_ADR_REQUIRED = YES`.
-> Parent `TASK-P03-003` is released only for subtask 3A. Subtasks 3B, 3C, and 3D remain **NOT_RELEASED**.
-> Production coding is **`HELD_PENDING_TASK_P03_003B_CONTRACT_RELEASE`**.
-> The active phase gate is **`TASK_P03_003B_CONTRACT_PLANNING`**.
+> Parent `TASK-P03-003` is released for 3A and 3B only. Subtasks 3C and 3D remain **NOT_RELEASED**.
+> `TASK_P03_003B_IMPLEMENTATION = REVISION_REQUIRED`; code remains authorized only for 3B remediation.
+> The active phase gate is **`TASK_P03_003B_REMEDIATION`**.
 
-> External Supervisor approved ADR-016 addendum design at audited SHA 3807343f06f99c0e11460c74522a2efb3be19491; ADD-R1-001..003 CLOSED. DESIGN_BLOCKER_3B_RESTORE_PROTOCOL=CLOSED_BY_APPROVED_ADDENDUM. New canonical reconciliation is READY_FOR_EXTERNAL_AUDIT; candidate 3B remains NOT_RELEASED and code HELD.
+> External Supervisor approved ADR-016 addendum design at audited SHA 3807343f06f99c0e11460c74522a2efb3be19491; ADD-R1-001..003 CLOSED. DESIGN_BLOCKER_3B_RESTORE_PROTOCOL=CLOSED_BY_APPROVED_ADDENDUM. Canonical reconciliation per addendum is EXTERNAL_AUDIT_APPROVED.
 > Host/bootstrap integration owns verified operator principal evidence at the trusted boundary. Library fake-principal tests do not enable runtime restore or linked stop. AUTOMATIC_RESTORE=DISABLED. 3C/3D remain NOT_RELEASED; DESIGN_BLOCKER_3D_STARTUP_WIRING preserved.
 > External Supervisor approved and released CONTRACT-TASK-P03-003B-01 from candidate SHA `ae8deb9ee41479d0e0868dced53ed89135252923`, blob `84bd84535352c2d28dbc1eba820aa8b22382dd99`, with code base SHA `b8b0c95576d87677e8d48210d9838cc2f599752a`. Only 3B implementation is authorized.
 
 1. **TASK-P03-003B IMPLEMENTATION GATE**:
-   - `TASK_P03_003B = RELEASED`; `TASK_P03_003B_IMPLEMENTATION = IN_PROGRESS`.
-   - Implement only `docs/tasks/TASK_CONTRACT_P03_003B.md`, from code base SHA `b8b0c95576d87677e8d48210d9838cc2f599752a` on branch `codex/p03-003b`.
+   - `TASK_P03_003B = RELEASED`; `TASK_P03_003B_IMPLEMENTATION = REVISION_REQUIRED`.
+   - Remediate only `docs/tasks/TASK_CONTRACT_P03_003B.md`, from code base SHA `b8b0c95576d87677e8d48210d9838cc2f599752a` on branch `codex/p03-003b`.
    - Governance/release artifact stays separate from implementation diff. Read the release artifact and assigned contract as well as approved addendum/canonical specs.
    - Host/bootstrap verified principal is a fail-closed dependency; AUTOMATIC_RESTORE remains DISABLED unless completion evidence reaches the trusted boundary.
 
 2. **TASK-P03-003 PARTIAL RELEASE GUARD**:
    - `TASK_P03_003A = RELEASED`.
-   - `TASK_P03_003B = RELEASED`; `TASK_P03_003B_IMPLEMENTATION = IN_PROGRESS`.
+   - `TASK_P03_003B = RELEASED`; `TASK_P03_003B_IMPLEMENTATION = REVISION_REQUIRED`.
    - `TASK_P03_003C = NOT_RELEASED` and `TASK_P03_003D = NOT_RELEASED`.
    - `DESIGN_BLOCKER_3D_STARTUP_WIRING` remains preserved for 3D and does not block 3A.
 
@@ -124,17 +124,18 @@ This document establishes immutable operational directives for all AI coding age
    - `ADR_016_ACCEPTANCE = GRANTED`
    - `TASK_P03_003A = RELEASED`
    - `TASK_P03_003A_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED`
-   - `TASK_P03_003B = NOT_RELEASED`
+   - `TASK_P03_003B = RELEASED`
+   - `TASK_P03_003B_IMPLEMENTATION = REVISION_REQUIRED`
    - `TASK_P03_003C = NOT_RELEASED`
    - `TASK_P03_003D = NOT_RELEASED`
-   - `P03_CODE = HELD_PENDING_TASK_P03_003B_CONTRACT_RELEASE`
-   - `ACTIVE_GATE = TASK_P03_003B_CONTRACT_PLANNING`
+   - `P03_CODE = AUTHORIZED_3B_ONLY`
+   - `ACTIVE_GATE = TASK_P03_003B_REMEDIATION`
    - `DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED`
    - `ADR_016_ADDENDUM_DESIGN = EXTERNAL_APPROVED` (audited `3807343f06f99c0e11460c74522a2efb3be19491`)
    - `DESIGN_BLOCKER_3B_RESTORE_PROTOCOL = CLOSED_BY_APPROVED_ADDENDUM`
-   - `P03_ADDENDUM_CANONICAL_RECONCILIATION = READY_FOR_EXTERNAL_AUDIT`
-   - `TASK_P03_003B = RELEASED`; `TASK_P03_003B_IMPLEMENTATION = IN_PROGRESS`; `AUTOMATIC_RESTORE = DISABLED`
-   - `P03_CODE = AUTHORIZED_3B_ONLY`; `ACTIVE_GATE = TASK_P03_003B_IMPLEMENTATION`
+   - `P03_ADDENDUM_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED`
+   - `TASK_P03_003B = RELEASED`; `TASK_P03_003B_IMPLEMENTATION = REVISION_REQUIRED`; `AUTOMATIC_RESTORE = DISABLED`
+   - `P03_CODE = AUTHORIZED_3B_ONLY`; `ACTIVE_GATE = TASK_P03_003B_REMEDIATION`
    - Host/bootstrap integration owns verified operator principal evidence; until verified, runtime restore and linked stop remain disabled.
 
 > **Current remediation gate (2026-09-23)**: External Supervisor audited implementation `4b45c55d47a9bc7ede4c778e21355a476e198169`: original suite PASS, five audit probes FAIL; findings `3B-R1-001..005` OPEN; verdict `REVISION_REQUIRED` (`docs/audits/P03_TASK_003B_EXTERNAL_AUDIT_001.md`). `TASK_P03_003B_IMPLEMENTATION = REVISION_REQUIRED`; `P03_CODE = AUTHORIZED_3B_ONLY`; `ACTIVE_GATE = TASK_P03_003B_REMEDIATION`. Preserve `AUTOMATIC_RESTORE = DISABLED`, 3C/3D `NOT_RELEASED`, host-principal dependency, and `DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED`.
