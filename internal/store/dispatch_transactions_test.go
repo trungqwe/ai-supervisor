@@ -31,6 +31,7 @@ func TestDurableSendIntentConfirmationAndUnknownDelivery(t *testing.T) {
 		if err != nil || op.Stage != domain.SendConfirmed {
 			t.Fatalf("dispatch confirmation: %+v %v", op, err)
 		}
+		assertAuditEventTypes(t, s, map[string]int{domain.AuditDispatchSendRequested: 1, domain.AuditDispatchSendConfirmed: 1}, "dispatch-attempt-send-confirm")
 		_ = pair
 	})
 	t.Run("unknown delivery is terminal and stale confirmation loses", func(t *testing.T) {
@@ -62,11 +63,32 @@ func TestDurableSendIntentConfirmationAndUnknownDelivery(t *testing.T) {
 		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE task_id=? AND event_type='TASK_STATE_TRANSITION' AND (json_extract(details_json,'$.from_state')='DISPATCHED' AND json_extract(details_json,'$.to_state')='FAILED' OR json_extract(details_json,'$.from_state')='FAILED' AND json_extract(details_json,'$.to_state')='HUMAN_REQUIRED')`, attempt.TaskID).Scan(&transitions); err != nil || transitions != 2 {
 			t.Fatalf("D12 transition audit count=%d err=%v, want both legal edges", transitions, err)
 		}
+		assertAuditEventTypes(t, s, map[string]int{domain.AuditDispatchSendRequested: 1, domain.AuditUncertainDeliveryQuarantine: 1}, "dispatch-attempt-send-unknown")
 		session, err := s.GetWorkerSessionByPair(ctx, pair)
 		if err != nil || session.QuarantineState != domain.QuarantineQuarantined {
 			t.Fatalf("session quarantine: %+v %v", session, err)
 		}
 	})
+}
+
+func assertAuditEventTypes(t *testing.T, s *Store, want map[string]int, operationID string) {
+	t.Helper()
+	events, err := s.ListAuditEvents(context.Background(), 0, MaxAuditLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int{}
+	for _, event := range events {
+		id, _ := event.Event.Details["dispatch_operation_id"].(string)
+		if id == operationID {
+			got[event.Event.EventType]++
+		}
+	}
+	for eventType, count := range want {
+		if got[eventType] != count {
+			t.Errorf("event_type %q count=%d, want %d; got=%v", eventType, got[eventType], count, got)
+		}
+	}
 }
 
 func TestSendConfirmationAuditFailureLeavesSendIntent(t *testing.T) {
@@ -78,7 +100,7 @@ func TestSendConfirmationAuditFailureLeavesSendIntent(t *testing.T) {
 	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_send_confirmation_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='TASK_STATE_TRANSITION' AND json_extract(NEW.details_json,'$.stage')='SEND_CONFIRMED' BEGIN SELECT RAISE(ABORT,'injected send confirmation audit failure'); END`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_send_confirmation_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='DISPATCH_SEND_CONFIRMED' BEGIN SELECT RAISE(ABORT,'injected send confirmation audit failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, time.Now()); err == nil {
@@ -131,7 +153,7 @@ func TestSendIntentAuditFailureLeavesBoundState(t *testing.T) {
 	s, _ := createTestStore(t)
 	defer s.Close()
 	_, attempt := setupBoundAttempt(t, s, "task-send-audit-fail", "contract-send-audit-fail", "attempt-send-audit-fail")
-	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_send_intent_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='TASK_STATE_TRANSITION' BEGIN SELECT RAISE(ABORT,'injected audit failure'); END`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_send_intent_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='DISPATCH_SEND_REQUESTED' BEGIN SELECT RAISE(ABORT,'injected audit failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordSendRequested(ctx, "dispatch-attempt-send-audit-fail", *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err == nil {

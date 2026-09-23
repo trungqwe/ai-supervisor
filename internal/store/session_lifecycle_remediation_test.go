@@ -285,5 +285,35 @@ func TestStore_StopResolutionCompetingWriters(t *testing.T) {
 	}
 }
 
+func TestStopTerminationConfirmationAndAuditRollbackAtomically(t *testing.T) {
+	ctx := context.Background()
+	s, _ := createTestStore(t)
+	defer s.Close()
+	pairID, attempt := setupBoundAttempt(t, s, "task-stop-confirm-audit", "contract-stop-confirm-audit", "attempt-stop-confirm-audit")
+	taskID, contractID, attemptID := attempt.TaskID, attempt.ContractID, attempt.AttemptID
+	stop := domain.StopOperation{OperationID: "stop-confirm-audit", Purpose: domain.RunningAttemptStop, PairID: pairID, TaskID: &taskID, ContractID: &contractID, AttemptID: &attemptID, SessionID: *attempt.SessionID, TerminalGeneration: *attempt.TerminalGeneration, Stage: domain.StopRequested, Actor: "supervisor"}
+	if err := s.CreateStopOperation(ctx, stop); err != nil {
+		t.Fatal(err)
+	}
+	callAt := time.Now().UTC().Truncate(time.Microsecond)
+	deadline := callAt.Add(time.Minute)
+	if err := s.UpdateStopOperationStage(ctx, stop.OperationID, domain.StopRequested, domain.StopCallSucceeded, StopStageUpdate{CallCompletedAt: &callAt, ConfirmationDeadlineAt: &deadline}); err != nil {
+		t.Fatal(err)
+	}
+	confirmedAt := callAt.Add(time.Second)
+	resolution := domain.StopResolutionTerminationConfirmed
+	update := StopStageUpdate{ExpectedResolutionState: domain.StopResolutionInFlight, TerminationConfirmedAt: &confirmedAt, ResolvedAt: &confirmedAt, ResolutionState: &resolution, ObservedSessionID: stop.SessionID, ObservedGeneration: stop.TerminalGeneration, ObservedIsTerminated: true}
+	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_stop_confirmation_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='STOP_OPERATION_CONFIRMED' BEGIN SELECT RAISE(ABORT,'injected stop confirmation audit failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateStopOperationStage(ctx, stop.OperationID, domain.StopCallSucceeded, domain.StopTerminationConfirmed, update); err == nil {
+		t.Fatal("stop confirmation survived audit rollback")
+	}
+	got, err := s.GetStopOperation(ctx, stop.OperationID)
+	if err != nil || got.Stage != domain.StopCallSucceeded || got.ResolutionState != domain.StopResolutionInFlight || got.TerminationConfirmedAt != nil {
+		t.Fatalf("partial stop confirmation state: %+v %v", got, err)
+	}
+}
+
 func ptrTime(value time.Time) *time.Time                                             { return &value }
 func ptrStopResolution(value domain.StopResolutionState) *domain.StopResolutionState { return &value }

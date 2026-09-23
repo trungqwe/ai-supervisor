@@ -26,7 +26,7 @@ func TestProvisioningReservationAuditFailureRollsBack(t *testing.T) {
 	s, _ := createTestStore(t)
 	defer s.Close()
 	setupProvisioningPair(t, s, "pair-provision-audit")
-	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_provision_request_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='TASK_STATE_TRANSITION' BEGIN SELECT RAISE(ABORT,'injected provisioning audit failure'); END`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_provision_request_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='PAIR_SESSION_PROVISION_REQUESTED' BEGIN SELECT RAISE(ABORT,'injected provisioning audit failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	err := s.ReservePairProvisioning(ctx, domain.PairProvisioningOperation{OperationID: "provision-audit", PairID: "pair-provision-audit", ClientToken: "token-audit"}, "supervisor")
@@ -54,7 +54,7 @@ func TestProvisioningConfirmationAuditFailureLeavesIntentAndNoSession(t *testing
 	if err := s.ReservePairProvisioning(ctx, op, "supervisor"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_provision_confirmation_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='TASK_STATE_TRANSITION' BEGIN SELECT RAISE(ABORT,'injected provisioning confirmation audit failure'); END`); err != nil {
+	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_provision_confirmation_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='PAIR_SESSION_PROVISIONED' BEGIN SELECT RAISE(ABORT,'injected provisioning confirmation audit failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	err := s.ConfirmPairProvisioning(ctx, op.OperationID, domain.WorkerSession{PairID: op.PairID, SessionID: "session-provision-confirm-audit", RuntimeType: "agy_tui", WorkerAgentID: "agy", Status: domain.WorkerSessionIdle, TerminalGeneration: "generation"}, "supervisor", time.Now().UTC())

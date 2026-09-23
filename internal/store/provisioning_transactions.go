@@ -63,7 +63,7 @@ OR EXISTS(SELECT 1 FROM tasks t WHERE t.pair_id=? AND (
 	if err != nil {
 		return mapLifecycleWriteError(err, "provisioning reservation")
 	}
-	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditTaskStateTransition, Timestamp: now, PairID: operation.PairID, Actor: actor, Details: map[string]any{"operation_id": operation.OperationID, "stage": "PROVISION_REQUESTED", "client_token": operation.ClientToken}})
+	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditPairSessionProvisionRequested, Timestamp: now, PairID: operation.PairID, Actor: actor, Details: map[string]any{"operation_id": operation.OperationID, "stage": "PROVISION_REQUESTED", "client_token": operation.ClientToken}})
 	if err != nil {
 		return err
 	}
@@ -109,7 +109,7 @@ func (s *Store) ConfirmPairProvisioning(ctx context.Context, operationID string,
 	if pairID != session.PairID {
 		return fmt.Errorf("%w: provisioned WorkerSession Pair mismatch", ErrStateConflict)
 	}
-	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditTaskStateTransition, Timestamp: completedAt, PairID: pairID, Actor: actor, Details: map[string]any{"operation_id": operationID, "stage": "PROVISION_CONFIRMED", "session_id": session.SessionID, "terminal_generation": session.TerminalGeneration}})
+	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditPairSessionProvisioned, Timestamp: completedAt, PairID: pairID, Actor: actor, Details: map[string]any{"operation_id": operationID, "stage": "PROVISION_CONFIRMED", "session_id": session.SessionID, "terminal_generation": session.TerminalGeneration}})
 	if err != nil {
 		return err
 	}
@@ -159,7 +159,7 @@ func (s *Store) FailPairProvisioning(ctx context.Context, operationID, actor, re
 		}
 		return err
 	}
-	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditTaskStateTransition, Timestamp: failedAt, PairID: pairID, Actor: actor, Details: map[string]any{"operation_id": operationID, "stage": "PROVISION_FAILED", "reason": reason}})
+	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditPairSessionProvisionFailed, Timestamp: failedAt, PairID: pairID, Actor: actor, Details: map[string]any{"operation_id": operationID, "stage": "PROVISION_FAILED", "reason": reason}})
 	if err != nil {
 		return err
 	}

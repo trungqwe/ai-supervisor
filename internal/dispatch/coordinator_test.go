@@ -31,6 +31,13 @@ func (f *fakeAO) CreateWorkerSession(context.Context, string, string) (*ao.Creat
 	return f.createResult, f.createErr
 }
 func (f *fakeAO) GetWorkerStatus(context.Context, string) (*ao.WorkerStatus, error) {
+	if f.statusResult != nil || f.statusErr != nil {
+		return f.statusResult, f.statusErr
+	}
+	if f.restores > 0 && f.resumeResult != nil {
+		status := f.resumeResult.Session
+		return &status, nil
+	}
 	return f.statusResult, f.statusErr
 }
 func (f *fakeAO) ResumeWorker(ctx context.Context, sessionID string) (*ao.ResumeWorkerResult, error) {
@@ -216,6 +223,39 @@ func TestRestoreConfirmationAuditFailurePersistsUnknownAndDoesNotRetry(t *testin
 	}
 }
 
+func TestRestoreRequiresPostHTTP200GetToMatchIdentityAndGeneration(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(ctx, store.Config{DBPath: filepath.Join(t.TempDir(), "restore-post-get.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	seedRestorablePair(t, s, "pair-restore-post-get", "session-restore-post-get", "old")
+	req := restoreRequest("pair-restore-post-get", "session-restore-post-get", "old", "restore-post-get")
+	upstream := &fakeAO{
+		resumeResult: &ao.ResumeWorkerResult{SessionID: req.SessionID, RestoreMode: ao.RestoreModeNative, Session: ao.WorkerStatus{ID: req.SessionID, TerminalGeneration: "new", Activity: ao.ActivitySnapshot{State: ao.ActivityStateIdle}}},
+		statusResult: &ao.WorkerStatus{ID: req.SessionID, TerminalGeneration: "other-generation", Activity: ao.ActivitySnapshot{State: ao.ActivityStateIdle}},
+	}
+	c := Coordinator{Store: s, AO: upstream, Operator: verifiedOperator{principal: "verified-host", ok: true}, RestoreEnabled: true}
+	if err := c.Restore(ctx, req); err == nil {
+		t.Fatal("mismatched post-restore generation was accepted")
+	}
+	op, err := s.GetPairRestoreOperation(ctx, req.OperationID)
+	if err != nil || op.Stage != "RESTORE_REQUESTED" || op.ResolutionState != domain.RestoreOutcomeUnknown {
+		t.Fatalf("mismatched GET was not contained: %+v %v", op, err)
+	}
+	ws, err := s.GetWorkerSessionByPair(ctx, req.PairID)
+	if err != nil || ws.TerminalGeneration != "old" || ws.QuarantineState != domain.QuarantineQuarantined {
+		t.Fatalf("DB claimed unconfirmed generation: %+v %v", ws, err)
+	}
+	if upstream.restores != 1 {
+		t.Fatalf("restore was retried after ambiguous GET: %d calls", upstream.restores)
+	}
+	if err := c.Restore(ctx, req); err == nil || upstream.restores != 1 {
+		t.Fatalf("unresolved restore replayed: err=%v calls=%d", err, upstream.restores)
+	}
+}
+
 func TestRestoreDurableIntentSurvivesCrashBeforeAOAndIsNotReissued(t *testing.T) {
 	ctx := context.Background()
 	cfg := store.Config{DBPath: filepath.Join(t.TempDir(), "restore-crash-before-effect.db"), BusyTimeoutMs: 5000}
@@ -280,6 +320,19 @@ func TestProvisioningPersistsBeforeOneAOCallAndRejectsDuplicate(t *testing.T) {
 	if err != nil || got.Stage != domain.ProvisionConfirmed {
 		t.Fatalf("confirmed provisioning state: %+v %v", got, err)
 	}
+	events, err := s.ListAuditEvents(ctx, 0, store.MaxAuditLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provisionAudit := map[string]bool{}
+	for _, event := range events {
+		if id, _ := event.Event.Details["operation_id"].(string); id == op.OperationID {
+			provisionAudit[event.Event.EventType] = true
+		}
+	}
+	if !provisionAudit[domain.AuditPairSessionProvisionRequested] || !provisionAudit[domain.AuditPairSessionProvisioned] {
+		t.Fatalf("approved provisioning event_type evidence missing: %v", provisionAudit)
+	}
 	if upstream.creates != 1 {
 		t.Fatalf("AO create calls=%d, want 1", upstream.creates)
 	}
@@ -322,6 +375,19 @@ func TestProvisioningAmbiguousCreateIsFailedAndNeverRespawned(t *testing.T) {
 	}
 	if upstream.creates != 1 {
 		t.Fatalf("ambiguous create calls=%d, want 1", upstream.creates)
+	}
+	events, err := s.ListAuditEvents(ctx, 0, store.MaxAuditLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundFailureEvent := false
+	for _, event := range events {
+		if id, _ := event.Event.Details["operation_id"].(string); id == op.OperationID && event.Event.EventType == domain.AuditPairSessionProvisionFailed {
+			foundFailureEvent = true
+		}
+	}
+	if !foundFailureEvent {
+		t.Fatal("approved PAIR_SESSION_PROVISION_FAILED event_type missing")
 	}
 }
 
@@ -439,6 +505,129 @@ func TestDispatchHTTP200ConfirmsAcceptanceWithoutRunningTask(t *testing.T) {
 	}
 }
 
+func TestHTTP200ConfirmationRollbackRunsFreshD5ContainmentWithoutResend(t *testing.T) {
+	ctx := context.Background()
+	cfg := store.Config{DBPath: filepath.Join(t.TempDir(), "dispatch-confirm-rollback.db")}
+	s, err := store.Open(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	prepareDispatchCoordinatorFixture(t, s, "confirm-rollback")
+	upstream := &fakeAO{statusResult: &ao.WorkerStatus{ID: "session-confirm-rollback", TerminalGeneration: "generation-confirm-rollback", Activity: ao.ActivitySnapshot{State: ao.ActivityStateIdle}}, dispatchResult: &ao.DispatchTaskResult{SessionID: "session-confirm-rollback"}}
+	c := Coordinator{Store: s, AO: upstream}
+	raw, err := sql.Open("sqlite", cfg.DSN())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.ExecContext(ctx, `CREATE TRIGGER reject_send_confirm_for_remediation BEFORE INSERT ON audit_events WHEN NEW.event_type='DISPATCH_SEND_CONFIRMED' BEGIN SELECT RAISE(ABORT,'injected confirmation rollback'); END`); err != nil {
+		t.Fatal(err)
+	}
+	_ = raw.Close()
+	report, _ := store.CanonicalExpectedReportPath("task-confirm-rollback", "attempt-confirm-rollback")
+	if err := c.Dispatch(ctx, "task-confirm-rollback", "contract-confirm-rollback", "attempt-confirm-rollback", "dispatch-confirm-rollback", "session-confirm-rollback", "generation-confirm-rollback", report, "contract", "supervisor"); err == nil {
+		t.Fatal("HTTP 200 transaction rollback was reported as success")
+	}
+	if upstream.sends != 1 {
+		t.Fatalf("send call count=%d, want exactly one", upstream.sends)
+	}
+	op, err := s.GetDispatchOperation(ctx, "dispatch-confirm-rollback")
+	if err != nil || op.Stage != domain.SendRequested || op.ResolutionState == nil || *op.ResolutionState != domain.RecoveryDeliveryOutcomeUnknown {
+		t.Fatalf("fresh D5 CAS did not contain confirmation rollback: %+v %v", op, err)
+	}
+	task, err := s.GetTask(ctx, "task-confirm-rollback")
+	if err != nil || task.State != domain.StateHumanRequired {
+		t.Fatalf("D5 Task containment: %+v %v", task, err)
+	}
+	assertDispatchAuditTypes(t, s, "dispatch-confirm-rollback", domain.AuditDispatchSendRequested, domain.AuditUncertainDeliveryQuarantine)
+}
+
+func TestInvalidSendResponseWithD5AuditFailureLeavesIntentAndNeverResends(t *testing.T) {
+	ctx := context.Background()
+	cfg := store.Config{DBPath: filepath.Join(t.TempDir(), "dispatch-invalid-d5-failure.db")}
+	s, err := store.Open(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	prepareDispatchCoordinatorFixture(t, s, "invalid-d5-failure")
+	upstream := &fakeAO{statusResult: &ao.WorkerStatus{ID: "session-invalid-d5-failure", TerminalGeneration: "generation-invalid-d5-failure", Activity: ao.ActivitySnapshot{State: ao.ActivityStateIdle}}, dispatchResult: &ao.DispatchTaskResult{SessionID: "different-session"}}
+	c := Coordinator{Store: s, AO: upstream}
+	raw, err := sql.Open("sqlite", cfg.DSN())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.ExecContext(ctx, `CREATE TRIGGER reject_unknown_quarantine BEFORE INSERT ON audit_events WHEN NEW.event_type='UNCERTAIN_DELIVERY_QUARANTINE_IMPOSED' BEGIN SELECT RAISE(ABORT,'injected D5 audit failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	_ = raw.Close()
+	report, _ := store.CanonicalExpectedReportPath("task-invalid-d5-failure", "attempt-invalid-d5-failure")
+	if err := c.Dispatch(ctx, "task-invalid-d5-failure", "contract-invalid-d5-failure", "attempt-invalid-d5-failure", "dispatch-invalid-d5-failure", "session-invalid-d5-failure", "generation-invalid-d5-failure", report, "contract", "supervisor"); err == nil {
+		t.Fatal("invalid response with failed containment unexpectedly succeeded")
+	}
+	if upstream.sends != 1 {
+		t.Fatalf("send call count=%d, want exactly one", upstream.sends)
+	}
+	op, err := s.GetDispatchOperation(ctx, "dispatch-invalid-d5-failure")
+	if err != nil || op.Stage != domain.SendRequested || op.ResolutionState != nil {
+		t.Fatalf("failed D5 must leave durable intent for recovery: %+v %v", op, err)
+	}
+	if err := c.Dispatch(ctx, "task-invalid-d5-failure", "contract-invalid-d5-failure", "attempt-invalid-d5-failure", "dispatch-invalid-d5-failure", "session-invalid-d5-failure", "generation-invalid-d5-failure", report, "contract", "supervisor"); err == nil {
+		t.Fatal("retry of existing dispatched intent unexpectedly succeeded")
+	}
+	if upstream.sends != 1 {
+		t.Fatalf("ambiguous intent was resent: %d calls", upstream.sends)
+	}
+}
+
+func prepareDispatchCoordinatorFixture(t *testing.T, s *store.Store, suffix string) {
+	t.Helper()
+	ctx := context.Background()
+	pairID, taskID, contractID := "pair-"+suffix, "task-"+suffix, "contract-"+suffix
+	sessionID, generation := "session-"+suffix, "generation-"+suffix
+	if err := s.CreateProject(ctx, domain.Project{ProjectID: "project-" + suffix, Name: suffix, RootPath: "/" + suffix}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreatePair(ctx, domain.Pair{PairID: pairID, ProjectID: "project-" + suffix, CurrentPhaseID: "P03", State: "ACTIVE"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateTask(ctx, domain.Task{TaskID: taskID, PhaseID: "P03", PairID: pairID, State: domain.StateDraft}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertTaskContract(ctx, domain.TaskContract{ContractID: contractID, TaskID: taskID, RevisionNumber: 1, BaseSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", AllowedScope: []string{"internal/domain/**"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TransitionTask(ctx, taskID, domain.StateDraft, domain.StateReady); err != nil {
+		t.Fatal(err)
+	}
+	provision := domain.PairProvisioningOperation{OperationID: "provision-" + suffix, PairID: pairID, ClientToken: "token-" + suffix}
+	if err := s.ReservePairProvisioning(ctx, provision, "supervisor"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ConfirmPairProvisioning(ctx, provision.OperationID, domain.WorkerSession{PairID: pairID, SessionID: sessionID, RuntimeType: "agy_tui", WorkerAgentID: "agy", Status: domain.WorkerSessionIdle, TerminalGeneration: generation, QuarantineState: domain.QuarantineClean}, "supervisor", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertDispatchAuditTypes(t *testing.T, s *store.Store, operationID string, want ...string) {
+	t.Helper()
+	events, err := s.ListAuditEvents(context.Background(), 0, store.MaxAuditLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, event := range events {
+		if id, _ := event.Event.Details["dispatch_operation_id"].(string); id == operationID {
+			got[event.Event.EventType] = true
+		}
+	}
+	for _, eventType := range want {
+		if !got[eventType] {
+			t.Errorf("audit event_type %q missing for %s; got=%v", eventType, operationID, got)
+		}
+	}
+}
+
 func TestPreSendObservationMatrixKeepsOrClosesExactAttempt(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
@@ -517,7 +706,7 @@ func TestPreSendObservationMatrixKeepsOrClosesExactAttempt(t *testing.T) {
 				}
 				found := false
 				for _, event := range events {
-					if event.Event.AttemptID == "attempt-pre-send" && event.Event.Details["error_code"] == "PRE_SEND_ADMISSIBILITY_REJECTED" {
+					if event.Event.AttemptID == "attempt-pre-send" && event.Event.EventType == domain.AuditPreSendAdmissibilityRejected && event.Event.Details["error_code"] == "PRE_SEND_ADMISSIBILITY_REJECTED" {
 						found = true
 						break
 					}

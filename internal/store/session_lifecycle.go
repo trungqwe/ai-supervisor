@@ -45,6 +45,9 @@ type StopStageUpdate struct {
 	TerminationConfirmedAt  *time.Time
 	ResolvedAt              *time.Time
 	ResolutionState         *domain.StopResolutionState
+	ObservedSessionID       string
+	ObservedGeneration      string
+	ObservedIsTerminated    bool
 }
 
 func nullableString(value *string) any {
@@ -336,11 +339,28 @@ func (s *Store) CreateStopOperation(ctx context.Context, operation domain.StopOp
 	if operation.RequestedAt.IsZero() {
 		operation.RequestedAt = timeNow()
 	}
+	if operation.Stage == "" {
+		operation.Stage = domain.StopRequested
+	}
+	if operation.Stage != domain.StopRequested || operation.ResolutionState != domain.StopResolutionInFlight {
+		return fmt.Errorf("store: new stop operation must begin at STOP_REQUESTED/IN_FLIGHT")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin stop operation transaction: %w", err)
 	}
 	defer tx.Rollback()
+	if err := createStopOperationTx(ctx, tx, operation); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit stop operation: %w", err)
+	}
+	return nil
+}
+
+func createStopOperationTx(ctx context.Context, tx *sql.Tx, operation domain.StopOperation) error {
+	var err error
 	if operation.Purpose == domain.RunningAttemptStop || operation.Purpose == domain.QuarantineCleanup {
 		if operation.AttemptID == nil {
 			return fmt.Errorf("%w: %s requires attempt lineage", ErrAttemptLineageMismatch, operation.Purpose)
@@ -445,9 +465,6 @@ INSERT INTO stop_operations (
 			return auditErr
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("store: commit stop operation: %w", err)
-	}
 	return nil
 }
 
@@ -530,6 +547,9 @@ func (s *Store) UpdateStopOperationStage(ctx context.Context, operationID string
 		(update.ResolutionState == nil || *update.ResolutionState != domain.StopResolutionTerminationConfirmed) {
 		return fmt.Errorf("%w: stop termination confirmation requires matching resolution", ErrInvalidOperationTransition)
 	}
+	if next == domain.StopTerminationConfirmed && (!update.ObservedIsTerminated || update.ObservedSessionID == "" || update.ObservedGeneration == "") {
+		return fmt.Errorf("%w: D11 confirmation requires positive same-session/generation termination observation", ErrStateConflict)
+	}
 	var resolution any
 	if update.ResolutionState != nil {
 		resolution = string(*update.ResolutionState)
@@ -539,9 +559,9 @@ func (s *Store) UpdateStopOperationStage(ctx context.Context, operationID string
 		return err
 	}
 	defer tx.Rollback()
-	var pairID string
-	var linkedRestore sql.NullString
-	if err := tx.QueryRowContext(ctx, `SELECT pair_id,restore_operation_id FROM stop_operations WHERE operation_id=?`, operationID).Scan(&pairID, &linkedRestore); err != nil {
+	var pairID, purpose, sessionID, generation, stopActor string
+	var taskID, contractID, attemptID, linkedRestore, storedDeadline sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT pair_id,purpose,task_id,contract_id,attempt_id,session_id,terminal_generation,actor,restore_operation_id,confirmation_deadline_at FROM stop_operations WHERE operation_id=?`, operationID).Scan(&pairID, &purpose, &taskID, &contractID, &attemptID, &sessionID, &generation, &stopActor, &linkedRestore, &storedDeadline); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrOperationNotFound
 		}
@@ -572,7 +592,35 @@ WHERE operation_id = ? AND stage = ? AND resolution_state = ?
 	if err := operationCASResult(result, err, operationID, "stop"); err != nil {
 		return err
 	}
+	if next == domain.StopTerminationConfirmed {
+		deadlineAt := update.ConfirmationDeadlineAt
+		if deadlineAt == nil && storedDeadline.Valid {
+			parsed, parseErr := parseTime(storedDeadline.String)
+			if parseErr != nil {
+				return parseErr
+			}
+			deadlineAt = &parsed
+		}
+		if update.TerminationConfirmedAt == nil || update.ResolvedAt == nil || deadlineAt == nil || update.TerminationConfirmedAt.After(*deadlineAt) || update.ObservedSessionID != sessionID || update.ObservedGeneration != generation || !update.ObservedIsTerminated {
+			return fmt.Errorf("store: D11 termination confirmation requires positive in-deadline evidence")
+		}
+		eventID, err := newAuditEventID()
+		if err != nil {
+			return err
+		}
+		_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditStopOperationConfirmed, Timestamp: *update.TerminationConfirmedAt, PairID: pairID, TaskID: taskID.String, ContractID: contractID.String, AttemptID: attemptID.String, Actor: stopActor, Details: map[string]any{"stop_operation_id": operationID, "restore_operation_id": nullableAuditString(linkedRestore), "purpose": purpose, "session_id": sessionID, "target_generation": generation, "confirmation_deadline_at": formatTime(*deadlineAt), "termination_confirmed_at": formatTime(*update.TerminationConfirmedAt), "observed_session_id": update.ObservedSessionID, "observed_generation": update.ObservedGeneration, "is_terminated": update.ObservedIsTerminated}})
+		if err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
+}
+
+func nullableAuditString(value sql.NullString) any {
+	if !value.Valid {
+		return nil
+	}
+	return value.String
 }
 
 func operationCASResult(result sql.Result, err error, operationID, kind string) error {

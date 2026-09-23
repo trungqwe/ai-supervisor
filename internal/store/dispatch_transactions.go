@@ -50,7 +50,7 @@ func (s *Store) RecordPreSendHold(ctx context.Context, operationID, disposition,
 			return fmt.Errorf("%w: pre-send hold precedence prevents downgrade", ErrStateConflict)
 		}
 	}
-	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditTaskStateTransition, Timestamp: at, PairID: pairID, TaskID: taskID, ContractID: contractID, AttemptID: attemptID, Actor: actor, Details: map[string]any{"dispatch_operation_id": operationID, "pre_send_disposition": disposition}})
+	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditPreSendAdmissibilityRejected, Timestamp: at, PairID: pairID, TaskID: taskID, ContractID: contractID, AttemptID: attemptID, Actor: actor, Details: map[string]any{"dispatch_operation_id": operationID, "pre_send_disposition": disposition}})
 	if err != nil {
 		return err
 	}
@@ -106,7 +106,7 @@ func (s *Store) RecordPreSendAdmissibilityRejected(ctx context.Context, operatio
 	if stage != string(domain.DispatchBound) {
 		return fmt.Errorf("%w: rejection requires DISPATCH_BOUND", ErrStateConflict)
 	}
-	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditTaskStateTransition, Timestamp: at, PairID: pairID, TaskID: taskID, ContractID: contractID, AttemptID: attemptID, Actor: actor, Details: map[string]any{"operation_id": operationID, "error_code": "PRE_SEND_ADMISSIBILITY_REJECTED", "observed_activity": observedActivity, "task_state": string(domain.StateDispatched), "attempt_remains_open": true}})
+	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditPreSendAdmissibilityRejected, Timestamp: at, PairID: pairID, TaskID: taskID, ContractID: contractID, AttemptID: attemptID, Actor: actor, Details: map[string]any{"operation_id": operationID, "error_code": "PRE_SEND_ADMISSIBILITY_REJECTED", "observed_activity": observedActivity, "task_state": string(domain.StateDispatched), "attempt_remains_open": true}})
 	if err != nil {
 		return err
 	}
@@ -210,7 +210,7 @@ func (s *Store) RecordSendRequested(ctx context.Context, operationID, observedSe
 	if valid != 1 {
 		return fmt.Errorf("%w: dispatch binding or Pair guard rejected", ErrQuarantinedExecution)
 	}
-	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditTaskStateTransition, Timestamp: at, PairID: pairID, TaskID: taskID, ContractID: contractID, AttemptID: attemptID, Actor: actor, Details: map[string]any{"dispatch_operation_id": operationID, "stage": "SEND_REQUESTED", "session_id": sessionID, "terminal_generation": generation}})
+	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditDispatchSendRequested, Timestamp: at, PairID: pairID, TaskID: taskID, ContractID: contractID, AttemptID: attemptID, Actor: actor, Details: map[string]any{"dispatch_operation_id": operationID, "stage": "SEND_REQUESTED", "session_id": sessionID, "terminal_generation": generation}})
 	if err != nil {
 		return err
 	}
@@ -267,7 +267,7 @@ func (s *Store) RecordSendConfirmed(ctx context.Context, operationID, actor stri
 	if err := tx.QueryRowContext(ctx, `SELECT contract_id FROM task_attempts WHERE attempt_id=? AND ended_at IS NULL`, attemptID).Scan(&contractID); err != nil {
 		return fmt.Errorf("%w: attempt is closed", ErrAttemptLineageMismatch)
 	}
-	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditTaskStateTransition, Timestamp: at, PairID: pairID, TaskID: taskID, ContractID: contractID, AttemptID: attemptID, Actor: actor, Details: map[string]any{"dispatch_operation_id": operationID, "stage": "SEND_CONFIRMED", "http_status": 200}})
+	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditDispatchSendConfirmed, Timestamp: at, PairID: pairID, TaskID: taskID, ContractID: contractID, AttemptID: attemptID, Actor: actor, Details: map[string]any{"dispatch_operation_id": operationID, "stage": "SEND_CONFIRMED", "http_status": 200}})
 	if err != nil {
 		return err
 	}
@@ -331,6 +331,14 @@ func (s *Store) RecordUnknownDelivery(ctx context.Context, operationID, actor st
 		return err
 	}
 	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditTaskStateTransition, Timestamp: at, PairID: pairID, TaskID: taskID, ContractID: contractID, AttemptID: attemptID, Actor: actor, Details: map[string]any{"dispatch_operation_id": operationID, "from_state": "DISPATCHED", "to_state": "FAILED", "failure_reason": domain.RecoveryUncertainDeliveryCrash, "recovery_disposition": domain.RecoveryUncertainDeliveryCrash, "resolution_state": domain.RecoveryDeliveryOutcomeUnknown}})
+	if err != nil {
+		return err
+	}
+	quarantineEventID, err := newAuditEventID()
+	if err != nil {
+		return err
+	}
+	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: quarantineEventID, EventType: domain.AuditUncertainDeliveryQuarantine, Timestamp: at, PairID: pairID, TaskID: taskID, ContractID: contractID, AttemptID: attemptID, Actor: actor, Details: map[string]any{"dispatch_operation_id": operationID, "resolution_state": domain.RecoveryDeliveryOutcomeUnknown, "session_id": sessionID, "terminal_generation": generation}})
 	if err != nil {
 		return err
 	}

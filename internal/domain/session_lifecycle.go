@@ -75,8 +75,14 @@ const (
 )
 
 const (
+	AuditPairSessionProvisionRequested  = "PAIR_SESSION_PROVISION_REQUESTED"
+	AuditPairSessionProvisioned         = "PAIR_SESSION_PROVISIONED"
+	AuditPairSessionProvisionFailed     = "PAIR_SESSION_PROVISION_FAILED"
 	RecoveryAOBlockedEscalated          = "AO_BLOCKED_ESCALATED"
 	AuditTaskDispatchBound              = "TASK_DISPATCH_BOUND"
+	AuditDispatchSendRequested          = "DISPATCH_SEND_REQUESTED"
+	AuditDispatchSendConfirmed          = "DISPATCH_SEND_CONFIRMED"
+	AuditUncertainDeliveryQuarantine    = "UNCERTAIN_DELIVERY_QUARANTINE_IMPOSED"
 	AuditTaskStateTransition            = "TASK_STATE_TRANSITION"
 	AuditWorkerBlockedEscalated         = "WORKER_BLOCKED_ESCALATED"
 	AuditPairRestoreRiskAccepted        = "PAIR_RESTORE_RISK_ACCEPTED"
@@ -88,9 +94,11 @@ const (
 	AuditPairRestoreCleanupClaimed      = "PAIR_RESTORE_CLEANUP_CLAIMED"
 	AuditPairRestoreResolved            = "PAIR_RESTORE_RESOLVED"
 	AuditPreSendStatusRecovered         = "PRE_SEND_STATUS_RECOVERED"
+	AuditPreSendAdmissibilityRejected   = "PRE_SEND_ADMISSIBILITY_REJECTED"
 	RecoveryDeliveryOutcomeUnknown      = "DELIVERY_OUTCOME_UNKNOWN"
 	RecoveryUncertainDeliveryCrash      = "UNCERTAIN_DELIVERY_CRASH"
 	AuditStopOperationRequested         = "STOP_OPERATION_REQUESTED"
+	AuditStopOperationConfirmed         = "STOP_OPERATION_CONFIRMED"
 )
 
 type RestoreResolutionState string

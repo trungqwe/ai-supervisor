@@ -95,8 +95,19 @@ func (c *Coordinator) Restore(ctx context.Context, request domain.RestoreReserva
 		durable, readErr := c.Store.GetPairRestoreOperation(recoveryCtx, request.OperationID)
 		return fmt.Errorf("dispatch: restore response invalid; CAS=%v durable=%+v read_error=%v; no retry permitted", transitionErr, durable, readErr)
 	}
+	if result.Session.ID != request.SessionID || result.Session.TerminalGeneration == "" {
+		recoveryCtx := context.WithoutCancel(ctx)
+		transitionErr := c.Store.RecordPairRestoreUnknown(recoveryCtx, request.OperationID, request.Actor)
+		return fmt.Errorf("dispatch: restore HTTP 200 body lacks exact session/generation provenance; CAS=%v; no retry permitted", transitionErr)
+	}
+	observed, observeErr := c.AO.GetWorkerStatus(context.WithoutCancel(ctx), request.SessionID)
+	if observeErr != nil || observed == nil || observed.ID != request.SessionID || observed.TerminalGeneration != result.Session.TerminalGeneration {
+		recoveryCtx := context.WithoutCancel(ctx)
+		transitionErr := c.Store.RecordPairRestoreUnknown(recoveryCtx, request.OperationID, request.Actor)
+		return fmt.Errorf("dispatch: post-restore GetWorkerStatus did not confirm same identity/generation; observation=%+v error=%v CAS=%v; no retry permitted", observed, observeErr, transitionErr)
+	}
 	status := domain.WorkerSessionActive
-	switch result.Session.Activity.State {
+	switch observed.Activity.State {
 	case ao.ActivityStateIdle, ao.ActivityStateWaitingInput:
 		status = domain.WorkerSessionIdle
 	case ao.ActivityStateActive, ao.ActivityStateBlocked:
@@ -162,18 +173,23 @@ func (c *Coordinator) ResolveAmbiguousRestore(ctx context.Context, operationID, 
 	return c.Store.ResolveAmbiguousRestore(ctx, operationID, pairID, sessionID, generation, basis, evidence, principal, principal, time.Now().UTC())
 }
 
-func (c *Coordinator) ClaimRestoreCleanup(ctx context.Context, operationID, pairID, sessionID, targetGeneration, actor string) error {
+func (c *Coordinator) ClaimRestoreCleanup(ctx context.Context, stop domain.StopOperation, actor string) error {
 	if c.Operator == nil || c.Store == nil {
 		return errors.New("dispatch: cleanup claim requires host operator boundary")
 	}
-	principal, verified, err := c.Operator.VerifiedRestorePrincipal(ctx, pairID, sessionID, targetGeneration, "RESTORE_CLEANUP_CLAIM")
+	if stop.RestoreOperationID == nil {
+		return errors.New("dispatch: linked cleanup requires restore operation ID")
+	}
+	principal, verified, err := c.Operator.VerifiedRestorePrincipal(ctx, stop.PairID, stop.SessionID, stop.TerminalGeneration, "RESTORE_CLEANUP_CLAIM")
 	if err != nil {
 		return err
 	}
 	if !verified || principal == "" {
 		return errors.New("dispatch: verified operator principal required")
 	}
-	return c.Store.ClaimRestoreCleanup(ctx, operationID, pairID, sessionID, targetGeneration, principal, principal, time.Now().UTC())
+	stop.RestorePrincipal = &principal
+	stop.Actor = principal
+	return c.Store.ClaimRestoreCleanupWithStop(ctx, stop, principal, principal, time.Now().UTC())
 }
 
 func (c *Coordinator) ClaimRestoreRecovery(ctx context.Context, operationID, pairID, sessionID, generation, actor string) error {
@@ -278,36 +294,99 @@ func (c *Coordinator) Dispatch(ctx context.Context, taskID, contractID, attemptI
 	}
 	result, err := c.AO.DispatchTaskContract(ctx, sessionID, message)
 	if err != nil {
-		recoveryCtx := context.WithoutCancel(ctx)
-		if transitionErr := c.Store.RecordUnknownDelivery(recoveryCtx, operationID, actor, time.Now().UTC()); transitionErr != nil {
-			persisted, readErr := c.Store.GetDispatchOperation(recoveryCtx, operationID)
-			if readErr == nil && persisted.ResolutionState != nil && *persisted.ResolutionState == domain.RecoveryDeliveryOutcomeUnknown {
-				return fmt.Errorf("dispatch: concurrent recovery persisted terminal DELIVERY_OUTCOME_UNKNOWN; no retry: %w", err)
-			}
-			if readErr == nil && persisted.Stage == domain.SendConfirmed {
-				return fmt.Errorf("dispatch: concurrent HTTP 200 confirmation won; durable state reread; original caller outcome: %w", err)
-			}
-			return fmt.Errorf("dispatch: delivery outcome unresolved and durable CAS did not win (%v; reread=%+v, %v); no retry: %w", transitionErr, persisted, readErr, err)
-		}
-		return fmt.Errorf("dispatch: delivery outcome unknown; no retry permitted: %w", err)
+		return c.containAmbiguousSend(ctx, operationID, attempt.AttemptID, actor, err)
 	}
 	if result == nil || result.SessionID != sessionID {
-		_ = c.Store.RecordUnknownDelivery(context.WithoutCancel(ctx), operationID, actor, time.Now().UTC())
-		return errors.New("dispatch: invalid send response; delivery outcome unknown")
+		return c.containAmbiguousSend(ctx, operationID, attempt.AttemptID, actor, errors.New("invalid send response"))
 	}
 	commitCtx := context.WithoutCancel(ctx)
 	if err := c.Store.RecordSendConfirmed(commitCtx, operationID, actor, true, time.Now().UTC()); err != nil {
-		persisted, readErr := c.Store.GetDispatchOperation(commitCtx, operationID)
-		if readErr == nil && persisted.Stage == domain.SendConfirmed {
-			return nil
-		}
-		if readErr == nil && persisted.ResolutionState != nil && *persisted.ResolutionState == domain.RecoveryDeliveryOutcomeUnknown {
-			return fmt.Errorf("dispatch: durable unknown-delivery resolution won despite late HTTP 200; do not overwrite: %w", err)
-		}
-		return fmt.Errorf("dispatch: HTTP 200 received but confirmation CAS/commit failed; durable state reread=%+v read_error=%v: %w", persisted, readErr, err)
+		return c.containAmbiguousSend(commitCtx, operationID, attempt.AttemptID, actor, fmt.Errorf("HTTP 200 confirmation transaction failed: %w", err))
 	}
 	_ = attempt
 	return nil
+}
+
+// containAmbiguousSend rereads the full durable dispatch tuple and its audit
+// chain before attempting a fresh D5 CAS. It never retries the AO send.
+func (c *Coordinator) containAmbiguousSend(ctx context.Context, operationID, attemptID, actor string, cause error) error {
+	recoveryCtx := context.WithoutCancel(ctx)
+	read := func() (domain.DispatchOperation, domain.Task, domain.TaskAttempt, map[string]bool, error) {
+		op, err := c.Store.GetDispatchOperation(recoveryCtx, operationID)
+		if err != nil {
+			return op, domain.Task{}, domain.TaskAttempt{}, nil, err
+		}
+		task, err := c.Store.GetTask(recoveryCtx, op.TaskID)
+		if err != nil {
+			return op, task, domain.TaskAttempt{}, nil, err
+		}
+		attempt, err := c.Store.GetTaskAttempt(recoveryCtx, attemptID)
+		if err != nil {
+			return op, task, attempt, nil, err
+		}
+		if err := c.Store.VerifyAuditChain(recoveryCtx); err != nil {
+			return op, task, attempt, nil, err
+		}
+		found := map[string]bool{}
+		var after int64
+		for {
+			events, err := c.Store.ListAuditEvents(recoveryCtx, after, store.MaxAuditLimit)
+			if err != nil {
+				return op, task, attempt, nil, err
+			}
+			for _, event := range events {
+				after = event.Sequence
+				id, _ := event.Event.Details["dispatch_operation_id"].(string)
+				if id != operationID || event.Event.PairID != op.PairID || event.Event.TaskID != op.TaskID || event.Event.AttemptID != op.AttemptID {
+					continue
+				}
+				if event.Event.EventType == domain.AuditDispatchSendRequested || event.Event.EventType == domain.AuditUncertainDeliveryQuarantine {
+					sessionID, _ := event.Event.Details["session_id"].(string)
+					generation, _ := event.Event.Details["terminal_generation"].(string)
+					if sessionID != op.SessionID || generation != op.TerminalGeneration {
+						continue
+					}
+				}
+				found[event.Event.EventType] = true
+				if event.Event.EventType == domain.AuditTaskStateTransition {
+					from, _ := event.Event.Details["from_state"].(string)
+					to, _ := event.Event.Details["to_state"].(string)
+					if from != "" && to != "" {
+						found[domain.AuditTaskStateTransition+":"+from+"->"+to] = true
+					}
+				}
+			}
+			if len(events) < store.MaxAuditLimit {
+				break
+			}
+		}
+		return op, task, attempt, found, nil
+	}
+	op, task, attempt, auditTypes, readErr := read()
+	if readErr != nil {
+		return fmt.Errorf("dispatch: ambiguous delivery; durable tuple/audit reread failed, no resend: cause=%v reread=%w", cause, readErr)
+	}
+	if op.OperationID != operationID || op.AttemptID != attemptID || attempt.AttemptID != attemptID || attempt.TaskID != op.TaskID || attempt.ContractID == "" || task.TaskID != op.TaskID || task.PairID != op.PairID || task.CurrentAttempt != attempt.AttemptNumber {
+		return fmt.Errorf("dispatch: ambiguous delivery tuple is stale or inconsistent, no resend: cause=%v", cause)
+	}
+	if op.Stage == domain.SendConfirmed && auditTypes[domain.AuditDispatchSendConfirmed] {
+		return nil
+	}
+	if op.ResolutionState != nil && *op.ResolutionState == domain.RecoveryDeliveryOutcomeUnknown && auditTypes[domain.AuditUncertainDeliveryQuarantine] && auditTypes[domain.AuditTaskStateTransition+":DISPATCHED->FAILED"] && auditTypes[domain.AuditTaskStateTransition+":FAILED->HUMAN_REQUIRED"] {
+		return fmt.Errorf("dispatch: D5 winner is durable; late caller cannot overwrite unknown delivery, no resend: %w", cause)
+	}
+	if op.Stage != domain.SendRequested || op.ResolutionState != nil || attempt.EndedAt != nil || task.State != domain.StateDispatched || !auditTypes[domain.AuditDispatchSendRequested] || attempt.SessionID == nil || *attempt.SessionID != op.SessionID || attempt.TerminalGeneration == nil || *attempt.TerminalGeneration != op.TerminalGeneration {
+		return fmt.Errorf("dispatch: ambiguous delivery durable tuple is not the exact SEND_REQUESTED intent, no resend: cause=%v", cause)
+	}
+	containErr := c.Store.RecordUnknownDelivery(recoveryCtx, operationID, actor, time.Now().UTC())
+	op, task, attempt, auditTypes, readErr = read()
+	if readErr != nil {
+		return fmt.Errorf("dispatch: D5 containment failed (%v), exact reread failed (%v); intent requires recovery; no resend: %w", containErr, readErr, cause)
+	}
+	if op.ResolutionState != nil && *op.ResolutionState == domain.RecoveryDeliveryOutcomeUnknown && auditTypes[domain.AuditUncertainDeliveryQuarantine] && auditTypes[domain.AuditTaskStateTransition+":DISPATCHED->FAILED"] && auditTypes[domain.AuditTaskStateTransition+":FAILED->HUMAN_REQUIRED"] && task.State == domain.StateHumanRequired && attempt.EndedAt != nil {
+		return fmt.Errorf("dispatch: delivery outcome unknown; D5 containment is durable, no retry permitted: %w", cause)
+	}
+	return fmt.Errorf("dispatch: D5 containment failed (%v); durable state remains operation=%+v task=%s attempt_ended=%t; recovery required and no resend: %w", containErr, op, task.State, attempt.EndedAt != nil, cause)
 }
 
 // RecoverPreSend is an explicit operator path: it fetches fresh status, asks the
