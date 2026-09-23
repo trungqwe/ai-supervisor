@@ -76,15 +76,30 @@ The Control Plane enforces two independent safety gates across execution and all
 Quarantine may be cleared ONLY in a single atomic SQLite transaction verifying the exact lineage tuple `(attempt_id, session_id, terminal_generation)` under one of three governed resolution classes:
 
 1. **Class A (`PHYSICAL_EXECUTION_RESOLUTION`)**:
-   - **Preconditions**: Physical termination of the matching generation is durably confirmed under `WORKER_STOPPED_ALLOWED_IFF`:
-     1. `stop_operations.purpose == 'RUNNING_ATTEMPT_STOP'`;
-     2. Positive kill call acceptance proven (`stage == 'STOP_CALL_SUCCEEDED'`);
-     3. Observed `session_id` matches `stop_operations.session_id`;
-     4. Observed `terminal_generation` matches `stop_operations.terminal_generation` (string equality);
-     5. Upstream returns `isTerminated == true`;
-     6. Observation occurs within restart-stable temporal window `now < confirmation_deadline_at`.
-   - **Resolution Action**: Sets `task_attempts.quarantine_state = 'CLEAN'`; if authorized, sets `worker_sessions.quarantine_state = 'CLEAN'`; sets `task_attempts.recovery_disposition = 'WORKER_STOPPED'`; emits audit event `QUARANTINE_RESOLVED_PHYSICAL`.
-   - **Constraint**: Clean-worktree inspection is NOT a condition for physical execution clearance.
+   - **Preconditions**: Physical termination of the matching generation is durably confirmed under positive intentional stop evidence:
+     1. Positive kill call acceptance proven (`stage == 'STOP_CALL_SUCCEEDED'`);
+     2. Observed `session_id` matches `stop_operations.session_id`;
+     3. Observed `terminal_generation` matches `stop_operations.terminal_generation` (string equality);
+     4. Upstream returns `isTerminated == true`;
+     5. Observation occurs within restart-stable temporal window `now < confirmation_deadline_at`.
+   - **Branch A1: Active Attempt Live Stop (`purpose == 'RUNNING_ATTEMPT_STOP'`)**:
+     - Governed strictly by `WORKER_STOPPED_ALLOWED_IFF` (ADR-016 §17) on a task in `RUNNING`.
+     - Sets `task_attempts.ended_at = now`; records `task_attempts.recovery_disposition = 'WORKER_STOPPED'`; transitions TaskState `RUNNING -> FAILED` (`failure_reason = WORKER_STOPPED`).
+     - Clears attempt quarantine (`task_attempts.quarantine_state = 'CLEAN'`) and Pair lane quarantine (`worker_sessions.quarantine_state = 'CLEAN'`); emits audit event `QUARANTINE_RESOLVED_PHYSICAL`.
+   - **Branch A2: Governed Quarantine Cleanup (`purpose == 'QUARANTINE_CLEANUP'`)**:
+     - Governed by ADR-016 D5/D6/D11 (§11, §12, §17 Purpose Matrix).
+     - Precondition: Task is ALREADY in terminal failure (`FAILED` or `HUMAN_REQUIRED`) under active quarantine.
+     - Confirmed physical termination (`stage = 'STOP_TERMINATION_CONFIRMED'`, `resolution_state = 'TERMINATION_CONFIRMED'`) clears quarantine in a single atomic SQLite transaction:
+       - Sets `task_attempts.quarantine_state = 'CLEAN'`;
+       - If authorized, sets `worker_sessions.quarantine_state = 'CLEAN'`;
+       - Emits audit event `QUARANTINE_RESOLVED_PHYSICAL`.
+     - Invariants: Drives **ZERO TaskState transition** (task remains in its terminal state); executes **ZERO `ended_at` mutation** (already closed); and does **NOT** write `recovery_disposition = 'WORKER_STOPPED'` (which is reserved exclusively for live attempt stops under `WORKER_STOPPED_ALLOWED_IFF`). The attempt's diagnostic `recovery_disposition` accurately preserves its original failure cause (e.g. `UNCERTAIN_DELIVERY_CRASH`).
+   - **Fail-Closed Invariants across Class A**:
+     - If observation occurs at or after deadline (`now >= confirmation_deadline_at`), Condition 6 is violated: fails closed to `STOP_CONFIRMATION_TIMEOUT`. Quarantine remains ACTIVE. Recording `WORKER_STOPPED` or clearing quarantine is strictly PROHIBITED.
+     - If generation mismatch occurs: fails closed to `STOP_GENERATION_MISMATCH`. Quarantine remains ACTIVE.
+     - If transport fails ambiguously (`STOP_CALL_OUTCOME_UNKNOWN`): quarantine remains ACTIVE; automatic retry prohibited.
+     - If upstream returns HTTP 404: `STOP_TARGET_ABSENT`. 404 proves session absence, NOT physical termination; quarantine remains ACTIVE until operator Class B resolution.
+     - Clean-worktree inspection is NOT a condition for physical execution clearance.
 
 2. **Class B (`ADMINISTRATIVE_RISK_RESOLUTION` / HTTP 404 Session Absence)**:
    - **Preconditions**: Upstream returns HTTP 404 (Not Found) during status observation.
@@ -102,7 +117,7 @@ Upon Supervisor daemon restart, prior to accepting incoming client API requests,
 
 1. **Step 1: Pair Provisioning Operations Sweep**:
    - Query all rows with `pair_provisioning_operations.stage = 'PROVISION_REQUESTED'`.
-   - Transition each row to `stage = 'PROVISION_FAILED'`, `resolution_state = 'FAILED'`.
+   - Transition each row to `stage = 'PROVISION_FAILED'`, setting resolution metadata (`resolved_at = now`, `resolution_notes = 'STARTUP_RECOVERY_SWEEP'`).
    - Lock affected Pair lanes against automatic dispatch (`PROVISION_CONFIRMED` rows are NOT scanned as unresolved).
 2. **Step 2: Dispatch Operations Sweep (Unknown Delivery Containment)**:
    - Query all rows with `dispatch_operations.stage = 'SEND_REQUESTED'`.

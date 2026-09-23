@@ -220,26 +220,30 @@ classDiagram
    - *Invariants*:
      - Exactly one task may be in `DISPATCHED`, `RUNNING`, or `REVIEWING` state per Pair at any time.
      - Runtime lifecycle `status` (`ACTIVE` / `IDLE` / `TERMINATED`) is strictly separated from safety gate `quarantine_state` (`CLEAN` / `QUARANTINED`). A terminated session may be quarantined or clean.
-     - `CREATE_NEW_WORKER_SESSION_ALLOWED_IFF`: Creating a new worker session is permitted IF AND ONLY IF:
-       1. Zero existing `worker_sessions` rows exist for the Pair; OR
-       2. Existing Pair `worker_sessions.status == 'TERMINATED'` AND `quarantine_state == 'CLEAN'`; AND
-       3. No active `pair_provisioning_operations` row exists in `stage IN ('PROVISION_REQUESTED', 'PROVISION_FAILED')`; AND
-       4. No open `task_attempts` row exists with `quarantine_state == 'QUARANTINED'` for the Pair.
+     - `CREATE_NEW_WORKER_SESSION_ALLOWED_IFF` (ADR-016 §9): Creating a new worker session is permitted IF AND ONLY IF:
+       1. Zero existing `worker_sessions` rows currently exist for the Pair (`COUNT(*) == 0`); AND
+       2. Zero unresolved `pair_provisioning_operations` rows exist for the Pair (`# ONE_PAIR = AT_MOST_ONE_UNRESOLVED_PROVISIONING_OPERATION`, `stage IN ('PROVISION_REQUESTED', 'PROVISION_FAILED')`); AND
+       3. Zero active quarantine blocks provisioning (`worker_sessions.quarantine_state == 'CLEAN'` and all prior `task_attempts.quarantine_state == 'CLEAN'`).
+     - Session Non-Replacement & Exclusivity (`PROVISION_CONFIRMED` and `TERMINATED + CLEAN` do NOT authorize a second spawn):
+       - If a `worker_sessions` row already exists for the Pair (`ACTIVE` or `IDLE`): the existing session MUST be reused for subsequent tasks; new spawn is rejected.
+       - If the existing session is `TERMINATED` but restorable: the existing session MUST be resumed via the governed `ResumeWorker` wire path (`POST /api/v1/sessions/{sessionId}/restore`); allocating a new session ID is strictly prohibited.
+       - If `QUARANTINED`: provisioning is strictly locked.
+       - Unresolved crash / 404: Fail closed; requires operator administrative risk resolution. Blind overwrite or replacement of the Model-A current binding is strictly prohibited.
 
 3. **Durable Saga Operations (ADR-016 §27)**:
    - **`PairProvisioningOperation` (`pair_provisioning_operations`)**:
      - Tracks durable Pair-scoped sandbox provisioning across external side effects, providing crash consistency and unowned session containment.
      - Schema: `operation_id TEXT PRIMARY KEY`, `pair_id TEXT NOT NULL REFERENCES pairs(pair_id)`, `stage TEXT NOT NULL CHECK (stage IN ('PROVISION_REQUESTED', 'PROVISION_CONFIRMED', 'PROVISION_FAILED', 'PROVISION_RESOLVED'))`, `client_token TEXT NOT NULL`, `session_id TEXT`, `requested_at TEXT NOT NULL`, `completed_at TEXT`, `resolved_at TEXT`, `resolved_by TEXT`, `resolution_notes TEXT`.
      - Partial Unique Index: `idx_pair_provisioning_unresolved ON pair_provisioning_operations(pair_id) WHERE stage IN ('PROVISION_REQUESTED', 'PROVISION_FAILED')`.
-     - Resolution states: `IN_FLIGHT`, `PROVISION_SUCCEEDED`, `PROVISION_FAILED_RETRYABLE`, `PROVISION_FAILED_TERMINAL`, `PROVISION_SUPERSEDED`, `PROVISION_MANUALLY_RESOLVED`.
+     - Lifecycle Tracking: Managed exclusively through `stage` and resolution audit metadata (`resolved_at`, `resolved_by`, `resolution_notes`). Authoritative candidate DDL defines NO `resolution_state` column.
    - **`DispatchOperation` (`dispatch_operations`)**:
      - Tracks the 3-stage dispatch saga and guarantees 1:1 attempt cardinality (`# ONE_TASK_ATTEMPT = ONE_DISPATCH_OPERATION`).
      - Schema: `operation_id TEXT PRIMARY KEY`, `attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id)`, `pair_id TEXT NOT NULL REFERENCES pairs(pair_id)`, `task_id TEXT NOT NULL REFERENCES tasks(task_id)`, `session_id TEXT NOT NULL`, `terminal_generation TEXT NOT NULL`, `stage TEXT NOT NULL CHECK (stage IN ('DISPATCH_BOUND', 'SEND_REQUESTED', 'SEND_CONFIRMED'))`, `requested_at TEXT NOT NULL`, `confirmed_at TEXT`, `resolution_state TEXT`.
-     - Resolution states: `IN_FLIGHT`, `DISPATCH_CONFIRMED`, `DISPATCH_FAILED_TERMINAL`, `DISPATCH_RECOVERED_RETRYABLE`, `DISPATCH_SUPERSEDED`, `DISPATCH_MANUALLY_RESOLVED`.
+     - Persistence: `stage` records wire delivery facts. Authoritative candidate DDL defines `resolution_state TEXT` without an enumerated CHECK constraint; no closed resolution vocabulary is created by implication.
    - **`StopOperation` (`stop_operations`)**:
      - Tracks purpose-aware stop operations with restart-stable confirmation deadlines and stage provenance, preventing blind re-kill over runtimes lacking an atomic generation fence.
      - Schema: `operation_id TEXT PRIMARY KEY`, `purpose TEXT NOT NULL CHECK (purpose IN ('RUNNING_ATTEMPT_STOP', 'QUARANTINE_CLEANUP', 'PAIR_MAINTENANCE'))`, `pair_id TEXT NOT NULL REFERENCES pairs(pair_id)`, `task_id TEXT REFERENCES tasks(task_id)`, `contract_id TEXT REFERENCES task_contracts(contract_id)`, `attempt_id TEXT REFERENCES task_attempts(attempt_id)`, `session_id TEXT NOT NULL`, `terminal_generation TEXT NOT NULL`, `stage TEXT NOT NULL CHECK (stage IN ('STOP_REQUESTED', 'STOP_CALL_SUCCEEDED', 'STOP_CALL_FAILED', 'STOP_TERMINATION_CONFIRMED', 'STOP_TARGET_ABSENT'))`, `actor TEXT NOT NULL`, `requested_at TEXT NOT NULL`, `call_completed_at TEXT`, `confirmation_deadline_at TEXT`, `termination_confirmed_at TEXT`, `resolved_at TEXT`, `resolution_state TEXT NOT NULL DEFAULT 'IN_FLIGHT'`.
-     - Resolution states: `IN_FLIGHT`, `TERMINATION_CONFIRMED`, `STOP_TARGET_ABSENT`, `STOP_CONFIRMATION_TIMEOUT`, `STOP_GENERATION_MISMATCH`, `STOP_EFFECT_UNPROVEN_TARGET_ALREADY_TERMINATED`, `STOP_REISSUE_REQUIRES_HUMAN`, `STOP_CALL_FAILED`, `STOP_CALL_OUTCOME_UNKNOWN`, `ADMINISTRATIVE_RISK_ACCEPTED`.
+     - Governed Resolution States (ADR-016 §6 Item 5): `IN_FLIGHT`, `TERMINATION_CONFIRMED`, `STOP_TARGET_ABSENT`, `STOP_CONFIRMATION_TIMEOUT`, `STOP_GENERATION_MISMATCH`, `STOP_EFFECT_UNPROVEN_TARGET_ALREADY_TERMINATED`, `STOP_REISSUE_REQUIRES_HUMAN`, `STOP_CALL_FAILED`, `STOP_CALL_OUTCOME_UNKNOWN`, `ADMINISTRATIVE_RISK_ACCEPTED`.
      - Invariant: `stage` (wire-effect fact) is strictly distinct from `resolution_state` (governed outcome). Resolution tokens are never stored in `stage`.
 
 4. **Task, TaskContract & TaskAttempt (Model A Persistence)**:

@@ -66,8 +66,8 @@ sequenceDiagram
     participant AO as Agent Orchestrator (AOAdapter)
     participant Agy as Antigravity CLI
 
-    Note over SCP,AO: Pair Session Provisioning Decoupled (ADR-012 §10 amended by ADR-016 D2)
-    opt Pair WorkerSession Absent or Clean Terminated (CREATE_NEW_WORKER_SESSION_ALLOWED_IFF)
+    Note over SCP,AO: Pair Session Provisioning Decoupled (ADR-016 D2/D3: CREATE_NEW_WORKER_SESSION_ALLOWED_IFF requires COUNT(*)==0; TERMINATED+CLEAN does not authorize second spawn)
+    opt Pair WorkerSession Absent (CREATE_NEW_WORKER_SESSION_ALLOWED_IFF: COUNT(*) == 0)
         SCP->>DB: Record pair_provisioning_operations (PROVISION_REQUESTED)
         SCP->>AO: AOAdapter.createWorkerSession(projectId, harness="antigravity")
         AO-->>SCP: Return session details (HTTP 201 Created)

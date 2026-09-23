@@ -1,12 +1,12 @@
 # CONTRACT-TASK-P03-DOC-RECONCILIATION-01
 
-> **Contract ID**: `CONTRACT-TASK-P03-DOC-RECONCILIATION-01`  
-> **Task ID**: `TASK-P03-DOC-RECONCILIATION-ADR-016`  
-> **Revision Number**: `1`  
-> **Supersedes Contract ID**: `null`  
-> **Phase ID**: `P03`  
-> **Base SHA**: `906d5969347773bd7cf5bbe273b34fd4f549efce`  
-> **Status**: `DISPATCHED_AND_ACTIVE`  
+> **Contract ID**: `CONTRACT-TASK-P03-DOC-RECONCILIATION-01`
+> **Task ID**: `TASK-P03-DOC-RECONCILIATION-ADR-016`
+> **Revision Number**: `1`
+> **Supersedes Contract ID**: `null`
+> **Phase ID**: `P03`
+> **Base SHA**: `906d5969347773bd7cf5bbe273b34fd4f549efce`
+> **Status**: `DISPATCHED_AND_ACTIVE`
 > **Authority**: Issued pursuant to External Supervisor approval of `PLAN-P03-CANONICAL-RECONCILIATION-ADR-016.md` at commit `906d5969347773bd7cf5bbe273b34fd4f549efce` with mandatory pinned AO restore route correction.
 
 ---
