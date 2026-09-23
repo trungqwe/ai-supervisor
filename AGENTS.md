@@ -76,22 +76,22 @@ This document establishes immutable operational directives for all AI coding age
 > Scope of `PLAN-P03-CANONICAL-RECONCILIATION-ADR-016.md` (Items S1–S9) was formally **APPROVED** by External Supervisor at commit `906d5969347773bd7cf5bbe273b34fd4f549efce` with mandatory pinned AO restore route correction (`POST /api/v1/sessions/{sessionId}/restore`, `operationId: restoreSession`).
 > Blocker `ADR16-PLAN-BLOCKER-001` is **CLOSED**.
 > Historical canonical reconciliation baseline remains locked (`P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED`, Revision 3).
-> Single-pass canonical documentation reconciliation (Items S1–S9) pursuant to accepted ADR-016 is **COMPLETE**: `P03_ADR_016_CANONICAL_RECONCILIATION = READY_FOR_EXTERNAL_AUDIT`.
+> Single-pass canonical documentation reconciliation (Items S1–S9) pursuant to accepted ADR-016 is **EXTERNAL_AUDIT_APPROVED** at audited commit `41cf769b4cf8a980c95de3aa4be63140b04922c3` (`docs/audits/P03_ADR_016_CANONICAL_RECONCILIATION_EXTERNAL_AUDIT.md`).
 > Task Contract for documentation reconciliation `CONTRACT-TASK-P03-DOC-RECONCILIATION-01` completed (`docs/tasks/TASK_CONTRACT_P03_CANONICAL_RECONCILIATION_ADR_016.md`).
 > Architecture classification established: `P03_ARCHITECTURE_CHANGE = YES`, `P03_ADR_REQUIRED = YES`.
-> Production coding remains strictly **`HELD_PENDING_CANONICAL_RECONCILIATION_AND_TASK_CONTRACT`** (`TASK_P03_003 = NOT_RELEASED`).
-> The active phase gate is **`READY_FOR_EXTERNAL_AUDIT`**.
+> Production coding remains strictly **`HELD_PENDING_TASK_CONTRACT_RELEASE`** (`TASK_P03_003 = NOT_RELEASED`).
+> The active phase gate is **`TASK_P03_003_CONTRACT_PLANNING`**.
 
-1. **CANONICAL SPECIFICATION RECONCILIATION AUDIT GATE**:
-   - Single-pass reconciliation for canonical specifications (`docs/04`, `docs/05`, `docs/06`, `docs/08`, `docs/12`, `docs/14`, `docs/22`), phase spec (`docs/phases/P03_AO_INTEGRATION.md`), and traceability matrix (`docs/21`) is complete.
-   - Target files are prepared and submitted for complete document external audit.
+1. **TASK-P03-003 TASK CONTRACT PLANNING GATE**:
+   - Single-pass reconciliation for canonical specifications (`docs/04`, `docs/05`, `docs/06`, `docs/08`, `docs/12`, `docs/14`, `docs/22`), phase spec (`docs/phases/P03_AO_INTEGRATION.md`), and traceability matrix (`docs/21`) is formally approved.
+   - Immutable Task Contract planning and drafting for `TASK-P03-003` is authorized.
    - Absolutely ZERO production code implementation (`internal/**/*.go`);
    - Absolutely ZERO schema or database migration implementation;
-   - Absolutely ZERO production Task Contract release for `TASK-P03-003`.
+   - Absolutely ZERO production Task Contract release without formal External Supervisor approval.
 
 2. **TASK-P03-003 PRODUCTION CODE GUARD**:
    - Production coding of TASK-P03-003 remains strictly **HELD** (`TASK_P03_003 = NOT_RELEASED`).
-   - Implementation becomes authorized only upon formal External Supervisor approval of canonical specification reconciliation and an immutable TASK-P03-003 Task Contract release.
+   - Implementation becomes authorized only upon formal External Supervisor approval and release of an immutable TASK-P03-003 Task Contract.
 
 3. **EXPLICITLY FORBIDDEN IN THIS STAGE**:
    - Absolutely NO polling loops, tickers, or background worker threads;
@@ -105,7 +105,7 @@ This document establishes immutable operational directives for all AI coding age
 
 4. **FINAL GOVERNANCE STATE**:
    - `P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED` (Historical Baseline A)
-   - `P03_ADR_016_CANONICAL_RECONCILIATION = READY_FOR_EXTERNAL_AUDIT`
+   - `P03_ADR_016_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED`
    - `TASK_P03_001 = EXTERNAL_AUDIT_APPROVED`
    - `TASK_P03_002 = EXTERNAL_AUDIT_APPROVED`
    - `PROPOSAL_P03_002 = EXTERNAL_APPROVED`
@@ -114,5 +114,5 @@ This document establishes immutable operational directives for all AI coding age
    - `ADR_016 = EXTERNAL_APPROVED`
    - `ADR_016_ACCEPTANCE = GRANTED`
    - `TASK_P03_003 = NOT_RELEASED`
-   - `P03_CODE = HELD_PENDING_CANONICAL_RECONCILIATION_AND_TASK_CONTRACT`
-   - `ACTIVE_GATE = READY_FOR_EXTERNAL_AUDIT`
+   - `P03_CODE = HELD_PENDING_TASK_CONTRACT_RELEASE`
+   - `ACTIVE_GATE = TASK_P03_003_CONTRACT_PLANNING`
