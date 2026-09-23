@@ -52,7 +52,7 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003 ADR-016 RECONCILIATION EXECUTION
+# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003A IMPLEMENTATION
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
@@ -78,29 +78,31 @@ This document establishes immutable operational directives for all AI coding age
 > Historical canonical reconciliation baseline remains locked (`P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED`, Revision 3).
 > Single-pass canonical documentation reconciliation (Items S1–S9) pursuant to accepted ADR-016 is **EXTERNAL_AUDIT_APPROVED** at audited commit `41cf769b4cf8a980c95de3aa4be63140b04922c3` (`docs/audits/P03_ADR_016_CANONICAL_RECONCILIATION_EXTERNAL_AUDIT.md`).
 > Task Contract for documentation reconciliation `CONTRACT-TASK-P03-DOC-RECONCILIATION-01` completed (`docs/tasks/TASK_CONTRACT_P03_CANONICAL_RECONCILIATION_ADR_016.md`).
+> Contract `CONTRACT-TASK-P03-003A-01` was approved by External Supervisor from candidate commit `56b5ef38ba5a45d56d58dd368a0c47cf45e0886f`, blob `5364edf076b31b8a42a37fee29193fc36ccdf413`, and is formally released as `docs/tasks/TASK_CONTRACT_P03_003A.md`.
 > Architecture classification established: `P03_ARCHITECTURE_CHANGE = YES`, `P03_ADR_REQUIRED = YES`.
-> Production coding remains strictly **`HELD_PENDING_TASK_CONTRACT_RELEASE`** (`TASK_P03_003 = NOT_RELEASED`).
-> The active phase gate is **`TASK_P03_003_CONTRACT_PLANNING`**.
+> Parent `TASK-P03-003` is released only for subtask 3A. Subtasks 3B, 3C, and 3D remain **NOT_RELEASED**.
+> Production coding is **`AUTHORIZED_3A_ONLY`** under the immutable scope of `CONTRACT-TASK-P03-003A-01`.
+> The active phase gate is **`TASK_P03_003A_IMPLEMENTATION`**.
 
-1. **TASK-P03-003 TASK CONTRACT PLANNING GATE**:
-   - Single-pass reconciliation for canonical specifications (`docs/04`, `docs/05`, `docs/06`, `docs/08`, `docs/12`, `docs/14`, `docs/22`), phase spec (`docs/phases/P03_AO_INTEGRATION.md`), and traceability matrix (`docs/21`) is formally approved.
-   - Immutable Task Contract planning and drafting for `TASK-P03-003` is authorized.
-   - Absolutely ZERO production code implementation (`internal/**/*.go`);
-   - Absolutely ZERO schema or database migration implementation;
-   - Absolutely ZERO production Task Contract release without formal External Supervisor approval.
+1. **TASK-P03-003A IMPLEMENTATION GATE**:
+   - Implementation must start from `base_sha = 1daf0b91efc7f065eb07146d642c0b6f6c259212`.
+   - Allowed scope is strictly `internal/domain/**` and `internal/store/**`.
+   - Implement migration v3, domain models, StateStore operations, `AtomicTerminalTransition`, and `AtomicAttemptClosureTransition` according to accepted ADR-016 and the released contract.
+   - After commit and push, stop for independent audit; do not merge to `main`.
 
-2. **TASK-P03-003 PRODUCTION CODE GUARD**:
-   - Production coding of TASK-P03-003 remains strictly **HELD** (`TASK_P03_003 = NOT_RELEASED`).
-   - Implementation becomes authorized only upon formal External Supervisor approval and release of an immutable TASK-P03-003 Task Contract.
+2. **TASK-P03-003 PARTIAL RELEASE GUARD**:
+   - `TASK_P03_003A = RELEASED`.
+   - `TASK_P03_003B = NOT_RELEASED`, `TASK_P03_003C = NOT_RELEASED`, and `TASK_P03_003D = NOT_RELEASED`.
+   - `DESIGN_BLOCKER_3D_STARTUP_WIRING` remains preserved for 3D and does not block 3A.
 
 3. **EXPLICITLY FORBIDDEN IN THIS STAGE**:
    - Absolutely NO polling loops, tickers, or background worker threads;
-   - Absolutely NO StateStore mutations or new tables;
    - Absolutely NO invented numeric operational timeout or poll interval defaults;
    - Absolutely NO synthetic worker heartbeat generation;
    - Absolutely NO SSE or `/api/v1/events` integration;
    - Absolutely NO workspace file fetching or WorkerReport handling;
-   - Absolutely NO Go production code modification (`internal/**/*.go`);
+   - Absolutely NO coordinator, AO calls, poller, or startup scanner implementation;
+   - Absolutely NO Go production code modification outside `internal/domain/**` and `internal/store/**`;
    - Absolutely NO modification to accepted ADR-016 or proposals.
 
 4. **FINAL GOVERNANCE STATE**:
@@ -113,6 +115,10 @@ This document establishes immutable operational directives for all AI coding age
    - `P03_ADR_REQUIRED = YES`
    - `ADR_016 = EXTERNAL_APPROVED`
    - `ADR_016_ACCEPTANCE = GRANTED`
-   - `TASK_P03_003 = NOT_RELEASED`
-   - `P03_CODE = HELD_PENDING_TASK_CONTRACT_RELEASE`
-   - `ACTIVE_GATE = TASK_P03_003_CONTRACT_PLANNING`
+   - `TASK_P03_003A = RELEASED`
+   - `TASK_P03_003B = NOT_RELEASED`
+   - `TASK_P03_003C = NOT_RELEASED`
+   - `TASK_P03_003D = NOT_RELEASED`
+   - `P03_CODE = AUTHORIZED_3A_ONLY`
+   - `ACTIVE_GATE = TASK_P03_003A_IMPLEMENTATION`
+   - `DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED`
