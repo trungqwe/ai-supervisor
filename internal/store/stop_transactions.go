@@ -326,6 +326,44 @@ func getStopOperationTx(ctx context.Context, tx *sql.Tx, id string) (domain.Stop
 	return stop, err
 }
 
+// ClassifyAbandonedStopAlive is startup-only: the caller must hold exclusive
+// host quiescence, so no creator retains an in-stack effect permit. It never
+// issues /kill and preserves the wire stage and call provenance.
+func (s *Store) ClassifyAbandonedStopAlive(ctx context.Context, operationID, sessionID, generation, actor, invocation string, at time.Time) error {
+	if operationID == "" || sessionID == "" || generation == "" || actor == "" || at.IsZero() {
+		return ErrStateConflict
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stop, err := getStopOperationTx(ctx, tx, operationID)
+	if err != nil {
+		return err
+	}
+	if stop.SessionID != sessionID || stop.TerminalGeneration != generation {
+		return ErrStateConflict
+	}
+	if stop.Stage == domain.StopRequested && stop.ResolutionState == domain.StopResolutionReissueRequiresHuman {
+		return nil
+	}
+	if stop.Stage != domain.StopRequested || stop.ResolutionState != domain.StopResolutionInFlight || stop.SessionID != sessionID || stop.TerminalGeneration != generation {
+		return ErrStateConflict
+	}
+	if err = guardStopRestoreOwner(ctx, tx, stop); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE stop_operations SET resolution_state='STOP_REISSUE_REQUIRES_HUMAN',resolved_at=? WHERE operation_id=? AND stage='STOP_REQUESTED' AND resolution_state='IN_FLIGHT' AND purpose=? AND pair_id=? AND session_id=? AND terminal_generation=? AND COALESCE(task_id,'')=? AND COALESCE(contract_id,'')=? AND COALESCE(attempt_id,'')=? AND COALESCE(restore_operation_id,'')=?`, formatTime(at), operationID, string(stop.Purpose), stop.PairID, stop.SessionID, stop.TerminalGeneration, valueOrEmpty(stop.TaskID), valueOrEmpty(stop.ContractID), valueOrEmpty(stop.AttemptID), valueOrEmpty(stop.RestoreOperationID))
+	if err = operationCASResult(res, err, operationID, "abandoned stop"); err != nil {
+		return err
+	}
+	if err = appendStopAudit(ctx, tx, stop, domain.AuditStopOperationResolved, at, map[string]any{"old_stage": "STOP_REQUESTED", "new_stage": "STOP_REQUESTED", "old_resolution": "IN_FLIGHT", "new_resolution": "STOP_REISSUE_REQUIRES_HUMAN", "observed_session_id": sessionID, "observed_generation": generation, "is_terminated": false, "observation_source": "GetWorkerStatus", "observation_time": formatTime(at), "reason": "AUTOMATIC_REISSUE_PROHIBITED", "recovery_invocation": invocation, "actor": actor}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func closeLiveStopTx(ctx context.Context, tx *sql.Tx, stop domain.StopOperation, outcome StopTerminalOutcome, physical bool) error {
 	if stop.TaskID == nil || stop.ContractID == nil || stop.AttemptID == nil {
 		return ErrAttemptLineageMismatch
