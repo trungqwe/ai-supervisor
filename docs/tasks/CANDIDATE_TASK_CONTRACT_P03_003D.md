@@ -1,6 +1,6 @@
-# DRAFT TASK CONTRACT: TASK-P03-003D
+# CANDIDATE TASK CONTRACT: TASK-P03-003D
 
-> **Status:** `DRAFT_PENDING_EXTERNAL_SUPERVISOR_APPROVAL`; `TASK_P03_003D=NOT_RELEASED`; `P03_CODE=HELD_PENDING_TASK_P03_003D_CONTRACT_RELEASE`.
+> **Status:** `CANDIDATE_PENDING_RELEASE_AUDIT`; `TASK_P03_003D=NOT_RELEASED`; `P03_CODE=HELD_PENDING_TASK_P03_003D_CONTRACT_RELEASE`.
 > **Proposed code base SHA:** `583e700eb125a08cc6bd7d63b6b27a6f3d4cc527` (merge 3C đã tồn tại). Artifact contract sau release được giao riêng; không nhúng SHA tự tham chiếu.
 > **Authority:** ADR-016 D5/D7/D10/D12/D13 và §§19, 22, 25; ADR-016 addendum §§3–7; hai clarification stop; canonical `docs/06`, `docs/12`, `docs/14`; parent decomposition §3.4. Draft không cấp quyền viết Go hay đổi schema.
 
