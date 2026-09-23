@@ -47,8 +47,9 @@
 |---|---|---|
 | v4 DDL, one-shot authorization, host principal fail-closed | docs/05 §3; docs/12 §3 | AC-3B-04, AC-3B-13 |
 | Pair admission, concurrent restore/provision/dispatch guard | docs/04 §2.3; docs/05 §3 | AC-3B-01, AC-3B-05 |
-| Restore ambiguity, no retry, generation/snapshot | docs/12 §3; docs/14 §1.3 | AC-3B-06, AC-3B-07 |
-| Linked stop old/new generation, mixed clearance | docs/05 §3; docs/14 §1.3 | AC-3B-12 (persistence/interface), 3C clearance AC |
-| Pre-send hold precedence/CAS | docs/06 §3; docs/12 §3 | AC-3B-08, AC-3B-09 |
-| DELIVERY_OUTCOME_UNKNOWN terminal, stale 200 | docs/06 §3; docs/14 §1.3 | AC-3B-10, AC-3B-11 |
+| Restore ambiguity, no retry, generation/snapshot | docs/12 §3; docs/14 §§1.2.2–1.2.3 | AC-3B-06, AC-3B-07 |
+| Linked stop old/new generation, mixed clearance | docs/05 §3; docs/14 §§1.2.2–1.2.3 | AC-3B-12 (persistence/interface), 3C clearance AC |
+| Pre-send hold precedence/CAS, AO-unreachable và successful GET | docs/06 §3; docs/12 §3; docs/14 §1.2.3 Step 5 | AC-3B-08, AC-3B-09 |
+| DELIVERY_OUTCOME_UNKNOWN terminal, stale 200 | docs/06 §3; docs/14 §1.2.3 Step 2 | AC-3B-10, AC-3B-11 |
 | Provenance and ownership | docs/22 §4; docs/phases/P03 §4 | AC-3B-10 |
+| Migration v4 current-version assertion, audit chain và historical rollback | docs/05 §3; docs/tasks/CANDIDATE_TASK_CONTRACT_P03_003B.md §3 | AC-3B-04, AC-3B-13 |

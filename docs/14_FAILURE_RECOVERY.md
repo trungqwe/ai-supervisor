@@ -73,7 +73,7 @@ The Control Plane enforces two independent safety gates across execution and all
 
 #### 1.2.2 Quarantine Clearance Classes (ADR-016 §6, §12)
 
-Quarantine may be cleared ONLY in a single atomic SQLite transaction verifying the exact lineage tuple `(attempt_id, session_id, terminal_generation)` under one of three governed resolution classes:
+Quarantine may be cleared ONLY in a single atomic SQLite transaction verifying the exact lineage tuple `(attempt_id, session_id, terminal_generation)` under one of three governed resolution classes. For a stop with `restore_operation_id`, stop confirmation records evidence **only**: first resolve the linked restore operation in Tx D (exact operation/stage/resolution/claim/version and audit), then run a separate D6 clearance transaction checking WorkerSession and **each** related attempt against its own lineage, evidence and authority. A failed CAS/audit rolls back the entire clearance; resolving the restore operation does not clear quarantine. A stop without `restore_operation_id` retains the ADR-016 D6/D11 behavior below and the audited 3A attempt snapshot/stop lineage check.
 
 1. **Class A (`PHYSICAL_EXECUTION_RESOLUTION`)**:
    - **Preconditions**: Physical termination of the matching generation is durably confirmed under positive intentional stop evidence:
@@ -89,11 +89,12 @@ Quarantine may be cleared ONLY in a single atomic SQLite transaction verifying t
    - **Branch A2: Governed Quarantine Cleanup (`purpose == 'QUARANTINE_CLEANUP'`)**:
      - Governed by ADR-016 D5/D6/D11 (§11, §12, §17 Purpose Matrix).
      - Precondition: Task is ALREADY in terminal failure (`FAILED` or `HUMAN_REQUIRED`) under active quarantine.
-     - Confirmed physical termination (`stage = 'STOP_TERMINATION_CONFIRMED'`, `resolution_state = 'TERMINATION_CONFIRMED'`) clears quarantine in a single atomic SQLite transaction:
+     - For an ordinary stop (`restore_operation_id IS NULL`), confirmed physical termination (`stage = 'STOP_TERMINATION_CONFIRMED'`, `resolution_state = 'TERMINATION_CONFIRMED'`) clears quarantine in a single atomic SQLite transaction:
        - Sets `task_attempts.quarantine_state = 'CLEAN'`;
        - If authorized, sets `worker_sessions.quarantine_state = 'CLEAN'`;
        - Emits audit event `QUARANTINE_RESOLVED_PHYSICAL`.
      - Invariants: Drives **ZERO TaskState transition** (task remains in its terminal state); executes **ZERO `ended_at` mutation** (already closed); and does **NOT** write `recovery_disposition = 'WORKER_STOPPED'` (which is reserved exclusively for live attempt stops under `WORKER_STOPPED_ALLOWED_IFF`). The attempt's diagnostic `recovery_disposition` accurately preserves its original failure cause (e.g. `UNCERTAIN_DELIVERY_CRASH`).
+     - For linked `QUARANTINE_CLEANUP` (`restore_operation_id IS NOT NULL`), target session/generation must equal the immutable snapshot of that **closed** attempt. Confirmation records Class A evidence for that lineage but leaves both quarantine gates unchanged until Tx D and the separate D6 clearance. Runtime generation mới không được gắn stop vào attempt cũ để lách 3A-R1-002.
    - **Fail-Closed Invariants across Class A**:
      - If observation occurs at or after deadline (`now >= confirmation_deadline_at`), Condition 6 is violated: fails closed to `STOP_CONFIRMATION_TIMEOUT`. Quarantine remains ACTIVE. Recording `WORKER_STOPPED` or clearing quarantine is strictly PROHIBITED.
      - If generation mismatch occurs: fails closed to `STOP_GENERATION_MISMATCH`. Quarantine remains ACTIVE.
@@ -105,31 +106,37 @@ Quarantine may be cleared ONLY in a single atomic SQLite transaction verifying t
    - **Preconditions**: Upstream returns HTTP 404 (Not Found) during status observation.
    - **Governance Truth**: HTTP 404 proves public session absence, NOT physical process termination (`SESSION_ABSENCE_IS_NOT_PHYSICAL_TERMINATION`). Session absence alone or session replacement NEVER clears quarantine.
    - **Resolution Action**: Both quarantine gates remain ACTIVE until an authorized operator explicitly executes administrative risk resolution, recording absence evidence, risk acknowledgement, and setting `task_attempts.recovery_disposition = 'QUARANTINE_RESOLVED_ADMINISTRATIVE'`. Emits audit event `QUARANTINE_RESOLVED_ADMINISTRATIVE`.
+   - If the stop is linked to restore, 404/absence remains evidence only. Tx D records administrative resolution with verified operator risk acceptance for each unresolved lineage; the separate D6 transaction performs any clearance afterward. No missing session or new generation clears an old attempt.
 
 3. **Class C (`ADMINISTRATIVE_RISK_RESOLUTION` / Human Risk Acceptance)**:
    - **Preconditions**: Target worker execution cannot be contacted, verified, or proven stopped (e.g. persistent transport partition, daemon crash).
    - **Resolution Action**: An authorized human operator explicitly accepts residual duplicate-execution risk. Persists `stop_operations.resolution_state = 'ADMINISTRATIVE_RISK_ACCEPTED'`; sets `task_attempts.quarantine_state = 'CLEAN'`; sets `worker_sessions.quarantine_state = 'CLEAN'`; records `recovery_disposition = 'QUARANTINE_RESOLVED_ADMINISTRATIVE'`; emits audit event `QUARANTINE_RESOLVED_ADMINISTRATIVE`.
    - **Constraint**: This is administrative risk assumption, NOT physical termination. It is strictly PROHIBITED to record `WORKER_STOPPED` or `TERMINATION_CONFIRMED`.
+   - For a linked restore stop, administrative risk acceptance is scoped separately to current WorkerSession generation and every affected old attempt; Tx D must finish before D6 clearance. A fake attempt is never allocated for a no-attempt `PAIR_MAINTENANCE` stop.
 
 #### 1.2.3 Synchronous Startup Recovery Sweep (ADR-016 §19)
 
 Upon Supervisor daemon restart, prior to accepting incoming client API requests, the daemon executes a deterministic 5-step synchronous recovery scanner:
+
+**Restore preclassification before Step 1** (approved addendum §§3–5): inspect `pair_restore_operations` and establish `RESTORE_UNRESOLVED` ownership/Pair guards before provisioning, dispatch or stop decisions. `RESTORE_REQUESTED/IN_FLIGHT` after crash enters `RESTORE_OUTCOME_UNKNOWN` with WorkerSession and related-attempt quarantine in Tx C; `RESTORE_CONFIRMED/IN_FLIGHT` retains HTTP 200 provenance and lock. Ambiguous Tx C/CAS failure requires durable reread; no `/restore` or `/kill` reissue. This preclassification is a prerequisite to the existing five sweeps, not a new TaskState transition or a permission for a later sweep to bypass restore ownership. Host principal remains required for operator recovery and linked stop.
 
 1. **Step 1: Pair Provisioning Operations Sweep**:
    - Query all rows with `pair_provisioning_operations.stage = 'PROVISION_REQUESTED'`.
    - Transition each row to `stage = 'PROVISION_FAILED'`, setting resolution metadata (`resolved_at = now`, `resolution_notes = 'STARTUP_RECOVERY_SWEEP'`).
    - Lock affected Pair lanes against automatic dispatch (`PROVISION_CONFIRMED` rows are NOT scanned as unresolved).
 2. **Step 2: Dispatch Operations Sweep (Unknown Delivery Containment)**:
-   - Query all rows with `dispatch_operations.stage = 'SEND_REQUESTED'`.
+   - Query `dispatch_operations.stage = 'SEND_REQUESTED' AND resolution_state IS NULL`; terminal `DELIVERY_OUTCOME_UNKNOWN` is read-only on replay.
    - Apply D5 unknown delivery fail-closed handling:
      - Transition task `DISPATCHED -> FAILED` (reason: `UNCERTAIN_DELIVERY_CRASH`);
      - Set `task_attempts.recovery_disposition = 'UNCERTAIN_DELIVERY_CRASH'`;
      - Set `task_attempts.quarantine_state = 'QUARANTINED'`;
      - Set `worker_sessions.quarantine_state = 'QUARANTINED'`;
+     - CAS `dispatch_operations.resolution_state IS NULL` to terminal `DELIVERY_OUTCOME_UNKNOWN`; retain `stage = 'SEND_REQUESTED'` through later clearance.
      - Emit audit event `UNCERTAIN_DELIVERY_QUARANTINE_IMPOSED`.
    - `SEND_CONFIRMED` rows are accepted writes; they are reconciled against authoritative upstream status rather than unknown delivery.
 3. **Step 3: In-Flight Stop Operations Sweep**:
    - Query all rows where `stop_operations.resolution_state = 'IN_FLIGHT'` and `stage IN ('STOP_REQUESTED', 'STOP_CALL_SUCCEEDED')`.
+   - Separate ordinary stops (`restore_operation_id IS NULL`) from linked `QUARANTINE_CLEANUP`/`PAIR_MAINTENANCE`. For linked stops, verify same restore operation/Pair/session, trusted ownership and target generation; do not bypass the restore guard. If restore/stop CAS or audit fails, reread durable state. No startup `/kill` reissue. 3A-R1-002 still requires exact attempt session/generation whenever `attempt_id` is non-NULL.
    - For `STOP_REQUESTED`:
      - If alive with matching generation: automatic `/kill` reissue is strictly PROHIBITED (`PINNED_KILL_GENERATION_ATOMIC_FENCE = ABSENT`). Record `resolution_state = 'STOP_REISSUE_REQUIRES_HUMAN'`. Retain active quarantine; require human intervention (`STOP_REISSUE_REQUIRES_HUMAN`).
      - If `isTerminated == true`: kill call was never confirmed transmitted/accepted. Retain `stage = 'STOP_REQUESTED'`, set `resolution_state = 'STOP_EFFECT_UNPROVEN_TARGET_ALREADY_TERMINATED'`. If `purpose == 'RUNNING_ATTEMPT_STOP'` and task is `RUNNING`: transition task `RUNNING -> FAILED` (reason: `WORKER_TERMINATION_UNKNOWN`). Retain quarantine; do NOT record `WORKER_STOPPED`.
@@ -147,9 +154,9 @@ Upon Supervisor daemon restart, prior to accepting incoming client API requests,
              - *Sub-case 3a: Live Attempt Stop (`purpose == 'RUNNING_ATTEMPT_STOP'` on task in `RUNNING`)*:
                All 6 verifiable conditions of `WORKER_STOPPED_ALLOWED_IFF` are met. Execute `AtomicTerminalTransition`: set `task_attempts.ended_at = now`, record `task_attempts.recovery_disposition = 'WORKER_STOPPED'`, transition TaskState `RUNNING -> FAILED` (`failure_reason = WORKER_STOPPED`), and release attempt and Pair lane quarantine (`quarantine_state = 'CLEAN'`).
              - *Sub-case 3b: Governed Quarantine Cleanup (`purpose == 'QUARANTINE_CLEANUP'`)*:
-               Governed by ADR-016 D5/D6/D11. Task is already in terminal state (`FAILED` or `HUMAN_REQUIRED`). Confirmed physical termination performs Class A clearance: sets `task_attempts.quarantine_state = 'CLEAN'` and `worker_sessions.quarantine_state = 'CLEAN'`, emitting `QUARANTINE_RESOLVED_PHYSICAL`. Strictly enforces **ZERO TaskState transition**, **ZERO `ended_at` mutation**, and does **NOT** write `recovery_disposition = 'WORKER_STOPPED'`. Original diagnostic failure reason is preserved.
+               Governed by ADR-016 D5/D6/D11. Task is already in terminal state (`FAILED` or `HUMAN_REQUIRED`). For `restore_operation_id IS NULL`, confirmed physical termination performs the existing Class A clearance: sets attempt/WorkerSession quarantine to `CLEAN` and emits `QUARANTINE_RESOLVED_PHYSICAL`. For `restore_operation_id IS NOT NULL`, confirmation writes **only** stop/Class A evidence for the exact closed-attempt snapshot; quarantine stays `QUARANTINED` until restore Tx D and separate per-lineage D6 clearance. Both paths preserve **ZERO TaskState transition**, **ZERO `ended_at` mutation**, no `WORKER_STOPPED` disposition, and the original diagnostic failure reason.
              - *Sub-case 3c: Infrastructure Maintenance (`purpose == 'PAIR_MAINTENANCE'`)*:
-               ZERO TaskState transition, no attempt mutation; updates Pair lane maintenance state only.
+               Ordinary stop: ZERO TaskState transition and no attempt mutation; updates Pair lane maintenance state only. Approved linked new-generation restore cleanup: `restore_operation_id IS NOT NULL`, no `task_id`/`contract_id`/`attempt_id`, verified operator authority and old/new generation provenance. Confirmation is Class A evidence **only for the target runtime generation**; it does not clear WorkerSession or any historical attempt quarantine before Tx D and separate D6 clearance. New-generation termination never proves old-generation execution resolution; do not create a fake attempt.
            - **Case 2: First observation at or after deadline (`now >= confirmation_deadline_at`)**:
              Condition 6 of `WORKER_STOPPED_ALLOWED_IFF` is NOT met. Pinned AO wire contract exposes no process exit timestamp, exit code, or OS signal (`PUBLIC_CRASH_EVIDENCE_AVAILABLE_IN_PINNED_BASELINE = NONE`); the control plane MUST NOT speculate whether process exit occurred before or after the deadline. Under strict fail-closed handling, recording `WORKER_STOPPED` and clearing quarantine are strictly PROHIBITED. Retain `stage = 'STOP_CALL_SUCCEEDED'`, set `resolution_state = 'STOP_CONFIRMATION_TIMEOUT'`, `resolved_at = now`. If `purpose == 'RUNNING_ATTEMPT_STOP'` and task is `RUNNING`: transition task `RUNNING -> FAILED` (`STOP_CONFIRMATION_TIMEOUT`). For both live stops and cleanups, quarantine remains ACTIVE on attempt and Pair.
        4. *Matching Generation and Alive (`isTerminated == false`)*:
@@ -166,8 +173,8 @@ Upon Supervisor daemon restart, prior to accepting incoming client API requests,
    - Zero network calls are made (pure control plane deterministic escalation).
 5. **Step 5: In-Flight Task & Pair Lane Reconciliation**:
    - Probe AO daemon availability exclusively via approved adapter methods: `CheckHealth(ctx)` / `CheckReadiness(ctx)`.
-   - *If AO is Reachable*: Reconcile in-flight tasks via `GetWorkerStatus(ctx, sessionID)` using opaque string generation matching. If active/idle with matching generation, resume standard lifecycle observation. If session absent (404) or terminated, execute atomic failure transition.
-   - *If AO is Unreachable*: Do NOT blindly fail in-flight tasks. Mark tasks with `recovery_disposition = 'RECOVERY_PENDING'`, lock affected Pair lanes, and schedule background reconciliation retries using caller-injected `SUPERVISOR_ACTIVITY_POLL_INTERVAL` as checking cadence. Absolutely zero new operational policies, retry counts, or backoff formulas are invented.
+   - *If AO is Reachable*: Reconcile in-flight tasks via `GetWorkerStatus(ctx, sessionID)` using opaque string generation matching. If active/idle with matching generation, resume standard lifecycle observation **subject to exact attempt/stage/hold CAS**; a successful GET alone never clears `PRE_SEND_PROTOCOL_UNVERIFIED` or either quarantine gate. Protocol hold requires verified operator compatibility decision plus fresh matching GET and audit; `RECOVERY_PENDING` can clear only by its approved same-attempt CAS. If session absent (404) or terminated, execute the applicable atomic failure transition.
+   - *If AO is Unreachable*: Do NOT blindly fail in-flight tasks. For open `DISPATCH_BOUND` pre-send attempts, CAS exact lineage, stage and **old disposition**: `NULL -> RECOVERY_PENDING` or `RECOVERY_PENDING -> RECOVERY_PENDING`; if already `PRE_SEND_PROTOCOL_UNVERIFIED`, retain that stronger hold and audit the outage without overwriting it. Other affected tasks follow their existing recovery rules without replacing a stronger disposition. Keep affected Pair lanes unavailable for send, and schedule background reconciliation using caller-injected `SUPERVISOR_ACTIVITY_POLL_INTERVAL`; no new operational policy, retry count or backoff is invented. A competing writer's CAS win requires durable reread, never blind hold downgrade or send.
 
 
 ### 1.3 ADR-016 addendum restore và hold recovery

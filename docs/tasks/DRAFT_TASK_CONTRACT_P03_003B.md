@@ -55,6 +55,7 @@
     "internal/store/migrations.go",
     "internal/store/migrations_v3_test.go",
     "internal/store/store_test.go",
+    "internal/store/audit_test.go",
     "internal/store/migrations_v4_test.go",
     "internal/store/dispatch.go",
     "internal/store/dispatch_test.go",
@@ -86,6 +87,7 @@
   ],
   "constraints": [
     "Use approved ADR-016 addendum v4 DDL and registry exactly; migration v3 remains intact. Never alter immutable attempt snapshot or 3A stop lineage.",
+    "In audit_test.go, update only expected CURRENT schema version after Open/reopen for v4; preserve audit-chain, historical migration data and rollback assertions. Do not mechanically change source-version or rollback literals 1/2/3 to 4.",
     "Only verified host principal may enable operator-authorized restore or linked stop; 3B implements/test fail-closed trusted interface. AUTOMATIC_RESTORE=DISABLED.",
     "Tx A consumes one-shot authorization and commits RESTORE_REQUESTED/audit before /restore; no AO call in SQLite transaction; one Pair owner. Lost/invalid response, 404/409, canceled context or commit ambiguity never triggers retry.",
     "Tx B confirms valid HTTP 200, WorkerSession generation and restore operation/audit atomically. GET generation is not causal proof. Restore after DISPATCH_BOUND never rewrites bound snapshot.",
@@ -187,6 +189,8 @@
 ## 3. Acceptance coverage và evidence
 
 AC-3B-01..13 trong JSON là acceptance dự kiến, chưa phải PASS implementation. Fake AO test chứng minh thứ tự durable intent/effect/confirmation, concurrent Pair callers, old/new generation, hold precedence, stale confirmation và mọi rollback CAS/audit. Fresh/v3→v4/rerun migration, FK/CHECK/unique/trigger và dữ liệu cũ phải được probe. Cần log lệnh/exit code, diff whitelist, audit chain, số AO calls và state sau crash. Không dùng race detector như bằng chứng đầy đủ về connection leak.
+
+`internal/store/audit_test.go` được phép cập nhật **chỉ** expected CURRENT schema version sau `Open`/reopen khi migration v4 được triển khai; phải giữ nguyên kiểm chứng audit hash chain, rollback migration lỗi và dữ liệu lịch sử. Các literal `1`/`2`/`3` biểu thị source schema, fixture hoặc expected rollback không được đổi máy móc thành `4`. Rà assertion version trong `internal/store/*test.go` cho thấy các file cần sửa expected CURRENT version là `store_test.go`, `migrations_v3_test.go` và `audit_test.go`, đều thuộc `allowed_scope`; lượt này chưa sửa Go test.
 
 go-test-p03-003b: CwdPolicy=worktree_root; MaxTimeoutSeconds=300; ParameterSchema object, additionalProperties=false, required package/flags; package enum ./internal/dispatch/..., ./internal/store/..., ./...; flags đúng hai phần tử duy nhất -v và -race. Negative cases timeout_seconds=301, flag -exec, package ./internal/ao/..., cwd ../escape phải bị ValidateRaw từ chối. timeout_seconds là policy verification, không phải AO operational timeout; semantic validation không chứng minh P04 runner hoặc process isolation.
 
