@@ -426,13 +426,13 @@ WHERE c.contract_id = ? AND c.task_id = ? AND t.pair_id = ?
 INSERT INTO stop_operations (
     operation_id, purpose, pair_id, task_id, contract_id, attempt_id, session_id,
     terminal_generation, stage, actor, requested_at, call_completed_at,
-    confirmation_deadline_at, termination_confirmed_at, resolved_at, resolution_state, restore_operation_id
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    confirmation_deadline_at, termination_confirmed_at, resolved_at, resolution_state, restore_operation_id, initiating_failure_reason
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `, operation.OperationID, string(operation.Purpose), operation.PairID, nullableString(operation.TaskID),
 		nullableString(operation.ContractID), nullableString(operation.AttemptID), operation.SessionID,
 		operation.TerminalGeneration, string(operation.Stage), operation.Actor, formatTime(operation.RequestedAt),
 		nullableTime(operation.CallCompletedAt), nullableTime(operation.ConfirmationDeadlineAt),
-		nullableTime(operation.TerminationConfirmedAt), nullableTime(operation.ResolvedAt), string(operation.ResolutionState), nullableString(operation.RestoreOperationID))
+		nullableTime(operation.TerminationConfirmedAt), nullableTime(operation.ResolvedAt), string(operation.ResolutionState), nullableString(operation.RestoreOperationID), nullableString(operation.InitiatingFailureReason))
 	if err != nil {
 		return mapLifecycleWriteError(err, "stop operation")
 	}
@@ -462,15 +462,15 @@ func (s *Store) GetStopOperation(ctx context.Context, operationID string) (domai
 	var purpose, stage, requestedAt, resolutionState string
 	var taskID, contractID, attemptID sql.NullString
 	var callCompletedAt, deadlineAt, terminationAt, resolvedAt sql.NullString
-	var restoreOperationID sql.NullString
+	var restoreOperationID, initiatingFailureReason sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 SELECT operation_id, purpose, pair_id, task_id, contract_id, attempt_id, session_id,
        terminal_generation, stage, actor, requested_at, call_completed_at,
-       confirmation_deadline_at, termination_confirmed_at, resolved_at, resolution_state, restore_operation_id
+       confirmation_deadline_at, termination_confirmed_at, resolved_at, resolution_state, restore_operation_id, initiating_failure_reason
 FROM stop_operations WHERE operation_id = ?
 `, operationID).Scan(&operation.OperationID, &purpose, &operation.PairID, &taskID, &contractID,
 		&attemptID, &operation.SessionID, &operation.TerminalGeneration, &stage, &operation.Actor,
-		&requestedAt, &callCompletedAt, &deadlineAt, &terminationAt, &resolvedAt, &resolutionState, &restoreOperationID)
+		&requestedAt, &callCompletedAt, &deadlineAt, &terminationAt, &resolvedAt, &resolutionState, &restoreOperationID, &initiatingFailureReason)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.StopOperation{}, ErrOperationNotFound
 	}
@@ -484,6 +484,7 @@ FROM stop_operations WHERE operation_id = ?
 	setNullableString(&operation.ContractID, contractID)
 	setNullableString(&operation.AttemptID, attemptID)
 	setNullableString(&operation.RestoreOperationID, restoreOperationID)
+	setNullableString(&operation.InitiatingFailureReason, initiatingFailureReason)
 	operation.RequestedAt, err = parseTime(requestedAt)
 	if err != nil {
 		return domain.StopOperation{}, err

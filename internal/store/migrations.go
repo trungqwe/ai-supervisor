@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	CurrentSchemaVersion = 4
+	CurrentSchemaVersion = 5
 	GenesisAuditHash     = "0000000000000000000000000000000000000000000000000000000000000000"
 )
 
@@ -287,8 +287,65 @@ WHEN NEW.operation_id IS NOT OLD.operation_id OR NEW.authorization_id IS NOT OLD
 BEGIN SELECT RAISE(ABORT,'restore operation identity or lifecycle violation'); END;
 `
 
+const v5Schema = `
+CREATE TABLE attempt_execution_budgets (
+    attempt_id TEXT PRIMARY KEY REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+    dispatch_operation_id TEXT NOT NULL UNIQUE REFERENCES dispatch_operations(operation_id) ON DELETE RESTRICT,
+    origin_at TEXT NOT NULL,
+    deadline_at TEXT NOT NULL,
+    duration_ns INTEGER NOT NULL CHECK(duration_ns > 0),
+    policy_ref TEXT NOT NULL CHECK(length(trim(policy_ref)) > 0),
+    binding_basis TEXT NOT NULL CHECK(binding_basis IN ('SEND_CONFIRMATION_ATOMIC','LEGACY_OPERATOR_VERIFIED')),
+    authorized_principal TEXT,
+    evidence_ref TEXT,
+    bound_at TEXT NOT NULL,
+    CHECK ((binding_basis='SEND_CONFIRMATION_ATOMIC' AND authorized_principal IS NULL AND evidence_ref IS NULL)
+        OR (binding_basis='LEGACY_OPERATOR_VERIFIED'
+            AND authorized_principal IS NOT NULL AND evidence_ref IS NOT NULL
+            AND length(trim(authorized_principal)) > 0 AND length(trim(evidence_ref)) > 0))
+);
+CREATE TRIGGER trg_execution_budget_immutable_update BEFORE UPDATE ON attempt_execution_budgets
+BEGIN SELECT RAISE(ABORT,'execution budget immutable'); END;
+CREATE TRIGGER trg_execution_budget_immutable_delete BEFORE DELETE ON attempt_execution_budgets
+BEGIN SELECT RAISE(ABORT,'execution budget immutable'); END;
+ALTER TABLE stop_operations ADD COLUMN initiating_failure_reason TEXT
+    CHECK (initiating_failure_reason IS NULL OR initiating_failure_reason='TIMEOUT');
+CREATE UNIQUE INDEX idx_one_live_stop_per_attempt ON stop_operations(attempt_id)
+    WHERE purpose='RUNNING_ATTEMPT_STOP';
+CREATE TRIGGER trg_stop_cause_immutable BEFORE UPDATE OF initiating_failure_reason ON stop_operations
+WHEN NEW.initiating_failure_reason IS NOT OLD.initiating_failure_reason
+BEGIN SELECT RAISE(ABORT,'stop cause immutable'); END;
+CREATE TRIGGER trg_execution_budget_lineage BEFORE INSERT ON attempt_execution_budgets
+WHEN NOT EXISTS (
+    SELECT 1 FROM dispatch_operations d
+    JOIN task_attempts a ON a.attempt_id=d.attempt_id
+    JOIN tasks t ON t.task_id=a.task_id AND t.current_attempt=a.attempt_number
+    WHERE d.operation_id=NEW.dispatch_operation_id AND d.attempt_id=NEW.attempt_id
+      AND a.ended_at IS NULL
+      AND ((NEW.binding_basis='SEND_CONFIRMATION_ATOMIC'
+            AND t.state='DISPATCHED' AND d.stage='SEND_REQUESTED' AND d.confirmed_at IS NULL)
+        OR (NEW.binding_basis='LEGACY_OPERATOR_VERIFIED'
+            AND t.state IN ('DISPATCHED','RUNNING')
+            AND d.stage='SEND_CONFIRMED' AND d.confirmed_at=NEW.origin_at))
+)
+BEGIN SELECT RAISE(ABORT,'execution budget lineage invalid'); END;
+CREATE TRIGGER trg_dispatch_requires_execution_budget
+BEFORE UPDATE OF stage,confirmed_at ON dispatch_operations
+WHEN NEW.stage='SEND_CONFIRMED' AND
+    (NEW.confirmed_at IS NULL OR NOT EXISTS (
+        SELECT 1 FROM attempt_execution_budgets b
+        WHERE b.dispatch_operation_id=NEW.operation_id
+          AND b.attempt_id=NEW.attempt_id AND b.origin_at=NEW.confirmed_at))
+BEGIN SELECT RAISE(ABORT,'send confirmation requires exact budget'); END;
+CREATE TRIGGER trg_dispatch_confirmed_immutable
+BEFORE UPDATE OF stage,confirmed_at ON dispatch_operations
+WHEN OLD.stage='SEND_CONFIRMED' AND
+    (NEW.stage<>'SEND_CONFIRMED' OR NEW.confirmed_at IS NOT OLD.confirmed_at)
+BEGIN SELECT RAISE(ABORT,'confirmed send provenance immutable'); END;
+`
+
 func migrate(ctx context.Context, db *sql.DB) error {
-	return migrateWithSchemas(ctx, db, v1Schema, v2Schema, v3Schema, v4Schema)
+	return migrateWithSchemas(ctx, db, v1Schema, v2Schema, v3Schema, v4Schema, v5Schema)
 }
 
 func migrateWithSchemas(ctx context.Context, db *sql.DB, v1DDL, v2DDL, v3DDL string, v4DDLs ...string) error {
@@ -363,6 +420,7 @@ func migrateWithSchemas(ctx context.Context, db *sql.DB, v1DDL, v2DDL, v3DDL str
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("store: failed to commit v3 migration: %w", err)
 		}
+		userVersion = 3
 	}
 
 	// V3 is immutable history. Only normal Open supplies the approved V4 schema.
@@ -381,6 +439,25 @@ func migrateWithSchemas(ctx context.Context, db *sql.DB, v1DDL, v2DDL, v3DDL str
 		}
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("store: failed to commit v4 migration: %w", err)
+		}
+		userVersion = 4
+	}
+
+	if userVersion < 5 && len(v4DDLs) > 1 {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("store: failed to begin v5 migration transaction: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, v4DDLs[1]); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("store: failed to execute v5 migration DDL: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "PRAGMA user_version = 5"); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("store: failed to set PRAGMA user_version = 5: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("store: failed to commit v5 migration: %w", err)
 		}
 	}
 

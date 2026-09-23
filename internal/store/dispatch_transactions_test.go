@@ -2,11 +2,110 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/trungqwe/ai-supervisor/internal/domain"
 )
+
+func TestSendConfirmationBindsImmutableExecutionBudget(t *testing.T) {
+	ctx := context.Background()
+	s, _ := createTestStore(t)
+	defer s.Close()
+	_, attempt := setupBoundAttempt(t, s, "task-budget", "contract-budget", "attempt-budget")
+	opID := "dispatch-attempt-budget"
+	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	origin := time.Date(2026, 1, 2, 3, 4, 5, 123456789, time.UTC)
+	policy := domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "policy-v1"}
+	if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, origin); err == nil {
+		t.Fatal("missing policy accepted")
+	}
+	if _, err := s.GetExecutionBudget(ctx, attempt.AttemptID); err == nil {
+		t.Fatal("budget before confirmation")
+	}
+	if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, origin, policy); err != nil {
+		t.Fatal(err)
+	}
+	budget, err := s.GetExecutionBudget(ctx, attempt.AttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !budget.OriginAt.Equal(origin) || !budget.DeadlineAt.Equal(origin.Add(time.Hour)) || budget.PolicyRef != "policy-v1" || budget.BindingBasis != "SEND_CONFIRMATION_ATOMIC" {
+		t.Fatalf("budget=%+v", budget)
+	}
+	if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, origin, domain.ExecutionBudgetPolicy{Duration: 2 * time.Hour, PolicyRef: "policy-v2"}); err == nil {
+		t.Fatal("policy change after confirmation")
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE attempt_execution_budgets SET deadline_at=? WHERE attempt_id=?`, formatTime(origin.Add(2*time.Hour)), attempt.AttemptID); err == nil {
+		t.Fatal("mutable deadline")
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE dispatch_operations SET confirmed_at=? WHERE operation_id=?`, formatTime(origin.Add(time.Second)), opID); err == nil {
+		t.Fatal("mutable confirmed_at")
+	}
+	assertAuditEventTypes(t, s, map[string]int{domain.AuditDispatchSendConfirmed: 1}, opID)
+}
+
+func TestSendConfirmationAuditFailureRollsBackBudget(t *testing.T) {
+	ctx := context.Background()
+	s, _ := createTestStore(t)
+	defer s.Close()
+	_, attempt := setupBoundAttempt(t, s, "task-budget-rollback", "contract-budget-rollback", "attempt-budget-rollback")
+	opID := "dispatch-attempt-budget-rollback"
+	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_budget_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='DISPATCH_SEND_CONFIRMED' BEGIN SELECT RAISE(ABORT,'injected budget audit failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "policy-v1"})
+	if err == nil || !strings.Contains(err.Error(), "injected budget audit failure") {
+		t.Fatalf("audit failure=%v", err)
+	}
+	if _, err := s.GetExecutionBudget(ctx, attempt.AttemptID); err == nil {
+		t.Fatal("partial budget")
+	}
+	op, err := s.GetDispatchOperation(ctx, opID)
+	if err != nil || op.Stage != domain.SendRequested {
+		t.Fatalf("partial confirmation: %+v %v", op, err)
+	}
+}
+
+func TestLegacyBudgetBindingUsesHistoricalConfirmationAndAudit(t *testing.T) {
+	ctx := context.Background()
+	s, _ := createTestStore(t)
+	defer s.Close()
+	_, attempt := setupBoundAttempt(t, s, "task-legacy-budget", "contract-legacy-budget", "attempt-legacy-budget")
+	opID := "dispatch-attempt-legacy-budget"
+	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// A v4 row predates the v5 trigger. Construct its exact on-disk shape.
+	if _, err := s.db.ExecContext(ctx, `DROP TRIGGER trg_dispatch_requires_execution_budget`); err != nil {
+		t.Fatal(err)
+	}
+	origin := time.Date(2026, 3, 4, 5, 6, 7, 987654321, time.UTC)
+	if _, err := s.db.ExecContext(ctx, `UPDATE dispatch_operations SET stage='SEND_CONFIRMED',confirmed_at=? WHERE operation_id=?`, formatTime(origin), opID); err != nil {
+		t.Fatal(err)
+	}
+	policy := domain.ExecutionBudgetPolicy{Duration: 90 * time.Minute, PolicyRef: "historical-p1"}
+	if err := s.BindLegacyExecutionBudget(ctx, attempt.AttemptID, "operator", "LEGACY_EXECUTION_BUDGET_RECONCILIATION", "policy-record-1", policy, origin.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.GetExecutionBudget(ctx, attempt.AttemptID)
+	if err != nil || !b.OriginAt.Equal(origin) || !b.DeadlineAt.Equal(origin.Add(policy.Duration)) || b.BindingBasis != "LEGACY_OPERATOR_VERIFIED" {
+		t.Fatalf("budget=%+v err=%v", b, err)
+	}
+	if err := s.BindLegacyExecutionBudget(ctx, attempt.AttemptID, "operator", "LEGACY_EXECUTION_BUDGET_RECONCILIATION", "policy-record-1", policy, origin.Add(time.Hour)); err != nil {
+		t.Fatalf("exact replay=%v", err)
+	}
+	if err := s.BindLegacyExecutionBudget(ctx, attempt.AttemptID, "operator", "LEGACY_EXECUTION_BUDGET_RECONCILIATION", "policy-record-2", policy, origin.Add(time.Hour)); err == nil {
+		t.Fatal("changed evidence accepted")
+	}
+	assertAuditEventTypes(t, s, map[string]int{domain.AuditExecutionBudgetLegacyBound: 1}, opID)
+}
 
 func TestDurableSendIntentConfirmationAndUnknownDelivery(t *testing.T) {
 	ctx := context.Background()
@@ -17,10 +116,10 @@ func TestDurableSendIntentConfirmationAndUnknownDelivery(t *testing.T) {
 		if err := s.RecordSendRequested(ctx, "dispatch-attempt-send-confirm", *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.RecordSendConfirmed(ctx, "dispatch-attempt-send-confirm", "supervisor", true, time.Now()); err != nil {
+		if err := s.RecordSendConfirmed(ctx, "dispatch-attempt-send-confirm", "supervisor", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.RecordSendConfirmed(ctx, "dispatch-attempt-send-confirm", "supervisor", true, time.Now()); err == nil {
+		if err := s.RecordSendConfirmed(ctx, "dispatch-attempt-send-confirm", "supervisor", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err == nil {
 			t.Fatal("duplicate send confirmation unexpectedly succeeded")
 		}
 		task, err := s.GetTask(ctx, attempt.TaskID)
@@ -44,7 +143,7 @@ func TestDurableSendIntentConfirmationAndUnknownDelivery(t *testing.T) {
 		if err := s.RecordUnknownDelivery(ctx, "dispatch-attempt-send-unknown", "supervisor", time.Now()); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.RecordSendConfirmed(ctx, "dispatch-attempt-send-unknown", "supervisor", true, time.Now()); err == nil {
+		if err := s.RecordSendConfirmed(ctx, "dispatch-attempt-send-unknown", "supervisor", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err == nil {
 			t.Fatal("late HTTP 200 overwrote unknown delivery")
 		}
 		op, err := s.GetDispatchOperation(ctx, "dispatch-attempt-send-unknown")
@@ -103,7 +202,7 @@ func TestSendConfirmationAuditFailureLeavesSendIntent(t *testing.T) {
 	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_send_confirmation_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='DISPATCH_SEND_CONFIRMED' BEGIN SELECT RAISE(ABORT,'injected send confirmation audit failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, time.Now()); err == nil {
+	if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err == nil {
 		t.Fatal("confirmation survived audit failure")
 	}
 	op, err := s.GetDispatchOperation(ctx, opID)

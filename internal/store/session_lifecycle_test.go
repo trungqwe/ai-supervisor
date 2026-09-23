@@ -173,7 +173,7 @@ func TestStore_LifecycleOperationCRUDAndConstraints(t *testing.T) {
 		t.Fatalf("dispatch DISPATCH_BOUND -> SEND_REQUESTED: %v", err)
 	}
 	confirmedAt := time.Now().UTC()
-	if err := s.RecordSendConfirmed(ctx, gotDispatch.OperationID, "supervisor", true, confirmedAt); err != nil {
+	if err := s.RecordSendConfirmed(ctx, gotDispatch.OperationID, "supervisor", true, confirmedAt, domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
 		t.Fatalf("dispatch SEND_REQUESTED -> SEND_CONFIRMED: %v", err)
 	}
 	if err := s.CreateDispatchOperation(ctx, domain.DispatchOperation{

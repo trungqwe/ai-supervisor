@@ -108,6 +108,7 @@ const (
 	AuditAdministrativeRiskAccepted       = "ADMINISTRATIVE_RISK_ACCEPTED"
 	AuditQuarantineResolvedPhysical       = "QUARANTINE_RESOLVED_PHYSICAL"
 	AuditQuarantineResolvedAdministrative = "QUARANTINE_RESOLVED_ADMINISTRATIVE"
+	AuditExecutionBudgetLegacyBound       = "EXECUTION_BUDGET_LEGACY_BOUND"
 )
 
 type RestoreResolutionState string
@@ -218,22 +219,43 @@ type DispatchOperation struct {
 
 // StopOperation records a purpose-aware stop wire effect and its reconciliation.
 type StopOperation struct {
-	OperationID            string              `json:"operation_id"`
-	Purpose                StopPurpose         `json:"purpose"`
-	PairID                 string              `json:"pair_id"`
-	TaskID                 *string             `json:"task_id,omitempty"`
-	ContractID             *string             `json:"contract_id,omitempty"`
-	AttemptID              *string             `json:"attempt_id,omitempty"`
-	SessionID              string              `json:"session_id"`
-	TerminalGeneration     string              `json:"terminal_generation"`
-	Stage                  StopStage           `json:"stage"`
-	Actor                  string              `json:"actor"`
-	RequestedAt            time.Time           `json:"requested_at"`
-	CallCompletedAt        *time.Time          `json:"call_completed_at,omitempty"`
-	ConfirmationDeadlineAt *time.Time          `json:"confirmation_deadline_at,omitempty"`
-	TerminationConfirmedAt *time.Time          `json:"termination_confirmed_at,omitempty"`
-	ResolvedAt             *time.Time          `json:"resolved_at,omitempty"`
-	ResolutionState        StopResolutionState `json:"resolution_state"`
-	RestoreOperationID     *string             `json:"restore_operation_id,omitempty"`
-	RestorePrincipal       *string             `json:"restore_principal,omitempty"`
+	OperationID             string              `json:"operation_id"`
+	Purpose                 StopPurpose         `json:"purpose"`
+	PairID                  string              `json:"pair_id"`
+	TaskID                  *string             `json:"task_id,omitempty"`
+	ContractID              *string             `json:"contract_id,omitempty"`
+	AttemptID               *string             `json:"attempt_id,omitempty"`
+	SessionID               string              `json:"session_id"`
+	TerminalGeneration      string              `json:"terminal_generation"`
+	Stage                   StopStage           `json:"stage"`
+	Actor                   string              `json:"actor"`
+	RequestedAt             time.Time           `json:"requested_at"`
+	CallCompletedAt         *time.Time          `json:"call_completed_at,omitempty"`
+	ConfirmationDeadlineAt  *time.Time          `json:"confirmation_deadline_at,omitempty"`
+	TerminationConfirmedAt  *time.Time          `json:"termination_confirmed_at,omitempty"`
+	ResolvedAt              *time.Time          `json:"resolved_at,omitempty"`
+	ResolutionState         StopResolutionState `json:"resolution_state"`
+	RestoreOperationID      *string             `json:"restore_operation_id,omitempty"`
+	RestorePrincipal        *string             `json:"restore_principal,omitempty"`
+	InitiatingFailureReason *string             `json:"initiating_failure_reason,omitempty"`
+}
+
+// ExecutionBudget is an immutable, send-confirmation-based policy snapshot.
+// OriginAt is not evidence of actual execution start.
+type ExecutionBudget struct {
+	AttemptID           string
+	DispatchOperationID string
+	OriginAt            time.Time
+	DeadlineAt          time.Time
+	Duration            time.Duration
+	PolicyRef           string
+	BindingBasis        string
+	AuthorizedPrincipal *string
+	EvidenceRef         *string
+	BoundAt             time.Time
+}
+
+type ExecutionBudgetPolicy struct {
+	Duration  time.Duration
+	PolicyRef string
 }

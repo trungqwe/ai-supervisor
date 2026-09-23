@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/trungqwe/ai-supervisor/internal/domain"
@@ -29,6 +30,9 @@ func (s *Store) ReserveStopOperation(ctx context.Context, stop domain.StopOperat
 	}
 	if stop.RequestedAt.IsZero() {
 		stop.RequestedAt = timeNow()
+	}
+	if stop.InitiatingFailureReason != nil && (*stop.InitiatingFailureReason != "TIMEOUT" || stop.Purpose != domain.RunningAttemptStop) {
+		return ErrStateConflict
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -63,6 +67,26 @@ func (s *Store) ReserveStopOperation(ctx context.Context, stop domain.StopOperat
 		if state != string(domain.StateRunning) {
 			return fmt.Errorf("%w: live stop requires RUNNING", ErrStateConflict)
 		}
+		if stop.InitiatingFailureReason != nil {
+			var origin, deadline, dispatchSession, dispatchGeneration, stage, policyRef string
+			var duration int64
+			var guard int
+			err = tx.QueryRowContext(ctx, `SELECT b.origin_at,b.deadline_at,b.duration_ns,b.policy_ref,d.session_id,d.terminal_generation,d.stage, (a.quarantine_state='CLEAN' AND w.quarantine_state='CLEAN' AND (a.recovery_disposition IS NULL OR a.recovery_disposition='AO_WAITING_INPUT_OBSERVED') AND w.session_id=? AND w.terminal_generation=?) FROM attempt_execution_budgets b JOIN dispatch_operations d ON d.operation_id=b.dispatch_operation_id AND d.attempt_id=b.attempt_id JOIN task_attempts a ON a.attempt_id=b.attempt_id JOIN worker_sessions w ON w.pair_id=d.pair_id WHERE b.attempt_id=? AND d.pair_id=? AND d.task_id=?`, stop.SessionID, stop.TerminalGeneration, *stop.AttemptID, stop.PairID, *stop.TaskID).Scan(&origin, &deadline, &duration, &policyRef, &dispatchSession, &dispatchGeneration, &stage, &guard)
+			if err != nil {
+				return fmt.Errorf("%w: immutable timeout budget absent: %v", ErrStateConflict, err)
+			}
+			originAt, e := parseTime(origin)
+			if e != nil {
+				return e
+			}
+			deadlineAt, e := parseTime(deadline)
+			if e != nil {
+				return e
+			}
+			if duration <= 0 || strings.TrimSpace(policyRef) == "" || !originAt.Add(time.Duration(duration)).Equal(deadlineAt) || stage != string(domain.SendConfirmed) || guard != 1 || dispatchSession != stop.SessionID || dispatchGeneration != stop.TerminalGeneration || stop.RequestedAt.Before(deadlineAt) {
+				return ErrStateConflict
+			}
+		}
 	} else if stop.Purpose == domain.QuarantineCleanup {
 		if stop.AttemptID == nil || stop.TaskID == nil || stop.ContractID == nil {
 			return ErrAttemptLineageMismatch
@@ -96,12 +120,54 @@ func (s *Store) ReserveStopOperation(ctx context.Context, stop domain.StopOperat
 	return tx.Commit()
 }
 
+// ValidateTimeoutEffectOwner accepts only the double quarantine established by
+// this winner's reservation. Any new Pair risk or changed lineage is rejected.
+// It is a Supervisor precheck, not an AO generation fence.
+func (s *Store) ValidateTimeoutEffectOwner(ctx context.Context, operationID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stop, err := getStopOperationTx(ctx, tx, operationID)
+	if err != nil {
+		return err
+	}
+	if stop.InitiatingFailureReason == nil || *stop.InitiatingFailureReason != "TIMEOUT" || stop.Purpose != domain.RunningAttemptStop || stop.Stage != domain.StopRequested || stop.ResolutionState != domain.StopResolutionInFlight || stop.TaskID == nil || stop.ContractID == nil || stop.AttemptID == nil {
+		return ErrStateConflict
+	}
+	var valid int
+	err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+ SELECT 1 FROM tasks t JOIN task_attempts a ON a.task_id=t.task_id AND a.attempt_number=t.current_attempt
+ JOIN worker_sessions w ON w.pair_id=t.pair_id
+ JOIN dispatch_operations d ON d.attempt_id=a.attempt_id
+ WHERE t.pair_id=? AND t.task_id=? AND t.state='RUNNING' AND a.attempt_id=? AND a.contract_id=?
+ AND a.ended_at IS NULL AND (a.recovery_disposition IS NULL OR a.recovery_disposition='AO_WAITING_INPUT_OBSERVED') AND a.quarantine_state='QUARANTINED'
+ AND a.session_id=? AND a.terminal_generation=? AND w.session_id=? AND w.terminal_generation=?
+ AND w.quarantine_state='QUARANTINED' AND d.stage='SEND_CONFIRMED' AND d.resolution_state IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM stop_operations WHERE pair_id=? AND operation_id<>? AND resolution_state IN ('IN_FLIGHT','STOP_CALL_OUTCOME_UNKNOWN','STOP_CONFIRMATION_TIMEOUT','STOP_REISSUE_REQUIRES_HUMAN'))
+ AND NOT EXISTS(SELECT 1 FROM pair_restore_operations WHERE pair_id=? AND resolution_state<>'RESTORE_RESOLVED')
+ AND NOT EXISTS(SELECT 1 FROM pair_provisioning_operations WHERE pair_id=? AND stage IN ('PROVISION_REQUESTED','PROVISION_FAILED'))
+ AND NOT EXISTS(SELECT 1 FROM dispatch_operations WHERE pair_id=? AND resolution_state='DELIVERY_OUTCOME_UNKNOWN')
+ AND NOT EXISTS(SELECT 1 FROM task_attempts a JOIN tasks t ON t.task_id=a.task_id WHERE t.pair_id=? AND a.attempt_id<>? AND a.quarantine_state='QUARANTINED')`, stop.PairID, *stop.TaskID, *stop.AttemptID, *stop.ContractID, stop.SessionID, stop.TerminalGeneration, stop.SessionID, stop.TerminalGeneration, stop.PairID, operationID, stop.PairID, stop.PairID, stop.PairID, stop.PairID, *stop.AttemptID).Scan(&valid)
+	if err != nil {
+		return err
+	}
+	if valid != 1 {
+		return ErrQuarantinedExecution
+	}
+	return tx.Commit()
+}
+
 func appendStopAudit(ctx context.Context, tx *sql.Tx, stop domain.StopOperation, kind string, at time.Time, extra map[string]any) error {
 	id, err := newAuditEventID()
 	if err != nil {
 		return err
 	}
 	details := map[string]any{"stop_operation_id": stop.OperationID, "purpose": string(stop.Purpose), "session_id": stop.SessionID, "target_generation": stop.TerminalGeneration}
+	if stop.InitiatingFailureReason != nil {
+		details["initiating_failure_reason"] = *stop.InitiatingFailureReason
+	}
 	if stop.RestoreOperationID != nil {
 		details["restore_operation_id"] = *stop.RestoreOperationID
 	} else {
@@ -299,8 +365,8 @@ func stopOutcomeAuditType(o StopTerminalOutcome) string {
 func getStopOperationTx(ctx context.Context, tx *sql.Tx, id string) (domain.StopOperation, error) {
 	var stop domain.StopOperation
 	var purpose, stage, resolution, requested string
-	var task, contract, attempt, restore, call, deadline sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT operation_id,purpose,pair_id,task_id,contract_id,attempt_id,session_id,terminal_generation,stage,actor,requested_at,call_completed_at,confirmation_deadline_at,resolution_state,restore_operation_id FROM stop_operations WHERE operation_id=?`, id).Scan(&stop.OperationID, &purpose, &stop.PairID, &task, &contract, &attempt, &stop.SessionID, &stop.TerminalGeneration, &stage, &stop.Actor, &requested, &call, &deadline, &resolution, &restore)
+	var task, contract, attempt, restore, call, deadline, cause sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT operation_id,purpose,pair_id,task_id,contract_id,attempt_id,session_id,terminal_generation,stage,actor,requested_at,call_completed_at,confirmation_deadline_at,resolution_state,restore_operation_id,initiating_failure_reason FROM stop_operations WHERE operation_id=?`, id).Scan(&stop.OperationID, &purpose, &stop.PairID, &task, &contract, &attempt, &stop.SessionID, &stop.TerminalGeneration, &stage, &stop.Actor, &requested, &call, &deadline, &resolution, &restore, &cause)
 	if errors.Is(err, sql.ErrNoRows) {
 		return stop, ErrOperationNotFound
 	}
@@ -314,6 +380,7 @@ func getStopOperationTx(ctx context.Context, tx *sql.Tx, id string) (domain.Stop
 	setNullableString(&stop.ContractID, contract)
 	setNullableString(&stop.AttemptID, attempt)
 	setNullableString(&stop.RestoreOperationID, restore)
+	setNullableString(&stop.InitiatingFailureReason, cause)
 	stop.RequestedAt, err = parseTime(requested)
 	if err != nil {
 		return stop, err
@@ -324,6 +391,44 @@ func getStopOperationTx(ctx context.Context, tx *sql.Tx, id string) (domain.Stop
 	}
 	stop.ConfirmationDeadlineAt, err = parseNullableTime(deadline)
 	return stop, err
+}
+
+// ClassifyAbandonedStopAlive is startup-only: the caller must hold exclusive
+// host quiescence, so no creator retains an in-stack effect permit. It never
+// issues /kill and preserves the wire stage and call provenance.
+func (s *Store) ClassifyAbandonedStopAlive(ctx context.Context, operationID, sessionID, generation, actor, invocation string, at time.Time) error {
+	if operationID == "" || sessionID == "" || generation == "" || actor == "" || at.IsZero() {
+		return ErrStateConflict
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stop, err := getStopOperationTx(ctx, tx, operationID)
+	if err != nil {
+		return err
+	}
+	if stop.SessionID != sessionID || stop.TerminalGeneration != generation {
+		return ErrStateConflict
+	}
+	if stop.Stage == domain.StopRequested && stop.ResolutionState == domain.StopResolutionReissueRequiresHuman {
+		return nil
+	}
+	if stop.Stage != domain.StopRequested || stop.ResolutionState != domain.StopResolutionInFlight || stop.SessionID != sessionID || stop.TerminalGeneration != generation {
+		return ErrStateConflict
+	}
+	if err = guardStopRestoreOwner(ctx, tx, stop); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE stop_operations SET resolution_state='STOP_REISSUE_REQUIRES_HUMAN',resolved_at=? WHERE operation_id=? AND stage='STOP_REQUESTED' AND resolution_state='IN_FLIGHT' AND purpose=? AND pair_id=? AND session_id=? AND terminal_generation=? AND COALESCE(task_id,'')=? AND COALESCE(contract_id,'')=? AND COALESCE(attempt_id,'')=? AND COALESCE(restore_operation_id,'')=?`, formatTime(at), operationID, string(stop.Purpose), stop.PairID, stop.SessionID, stop.TerminalGeneration, valueOrEmpty(stop.TaskID), valueOrEmpty(stop.ContractID), valueOrEmpty(stop.AttemptID), valueOrEmpty(stop.RestoreOperationID))
+	if err = operationCASResult(res, err, operationID, "abandoned stop"); err != nil {
+		return err
+	}
+	if err = appendStopAudit(ctx, tx, stop, domain.AuditStopOperationResolved, at, map[string]any{"old_stage": "STOP_REQUESTED", "new_stage": "STOP_REQUESTED", "old_resolution": "IN_FLIGHT", "new_resolution": "STOP_REISSUE_REQUIRES_HUMAN", "observed_session_id": sessionID, "observed_generation": generation, "is_terminated": false, "observation_source": "GetWorkerStatus", "observation_time": formatTime(at), "reason": "AUTOMATIC_REISSUE_PROHIBITED", "recovery_invocation": invocation, "actor": actor}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func closeLiveStopTx(ctx context.Context, tx *sql.Tx, stop domain.StopOperation, outcome StopTerminalOutcome, physical bool) error {
@@ -374,7 +479,11 @@ func closeLiveStopTx(ctx context.Context, tx *sql.Tx, stop domain.StopOperation,
 	if err != nil {
 		return err
 	}
-	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: id, EventType: domain.AuditTaskStateTransition, Timestamp: outcome.At, PairID: stop.PairID, TaskID: *stop.TaskID, ContractID: *stop.ContractID, AttemptID: *stop.AttemptID, Actor: stop.Actor, Details: map[string]any{"from_state": "RUNNING", "to_state": "FAILED", "failure_reason": disposition, "recovery_disposition": disposition, "stop_operation_id": stop.OperationID}})
+	failureReason := disposition
+	if stop.InitiatingFailureReason != nil {
+		failureReason = *stop.InitiatingFailureReason
+	}
+	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: id, EventType: domain.AuditTaskStateTransition, Timestamp: outcome.At, PairID: stop.PairID, TaskID: *stop.TaskID, ContractID: *stop.ContractID, AttemptID: *stop.AttemptID, Actor: stop.Actor, Details: map[string]any{"from_state": "RUNNING", "to_state": "FAILED", "failure_reason": failureReason, "recovery_disposition": disposition, "stop_operation_id": stop.OperationID}})
 	if err != nil {
 		return err
 	}

@@ -10,8 +10,8 @@ import (
 func assertV4(t *testing.T, db *sql.DB) {
 	t.Helper()
 	var version int
-	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 4 {
-		t.Fatalf("user_version=%d err=%v, want 4", version, err)
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != CurrentSchemaVersion {
+		t.Fatalf("user_version=%d err=%v, want current %d", version, err, CurrentSchemaVersion)
 	}
 	for _, table := range []string{"restore_authorizations", "pair_restore_operations"} {
 		var count int

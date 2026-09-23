@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/trungqwe/ai-supervisor/internal/ao"
@@ -27,10 +28,11 @@ type OperatorBoundary interface {
 }
 
 type Coordinator struct {
-	Store          *store.Store
-	AO             AO
-	Operator       OperatorBoundary
-	RestoreEnabled bool
+	Store           *store.Store
+	AO              AO
+	Operator        OperatorBoundary
+	RestoreEnabled  bool
+	ExecutionPolicy domain.ExecutionBudgetPolicy // injected; no operational default
 }
 
 func (c *Coordinator) Provision(ctx context.Context, operation domain.PairProvisioningOperation, projectID, harness, actor string) error {
@@ -226,6 +228,15 @@ func (c *Coordinator) Dispatch(ctx context.Context, taskID, contractID, attemptI
 	if c.Store == nil || c.AO == nil {
 		return errors.New("dispatch: coordinator dependencies are not configured")
 	}
+	policy := c.ExecutionPolicy
+	if policy.Duration <= 0 || strings.TrimSpace(policy.PolicyRef) == "" {
+		return errors.New("dispatch: injected execution budget policy required before send")
+	}
+	now := time.Now().UTC()
+	deadline := now.Add(policy.Duration)
+	if !deadline.After(now) || now.Year() < 1 || deadline.Year() > 9999 {
+		return errors.New("dispatch: injected execution budget policy required before send")
+	}
 	task, err := c.Store.GetTask(ctx, taskID)
 	if err != nil {
 		return err
@@ -313,7 +324,7 @@ func (c *Coordinator) Dispatch(ctx context.Context, taskID, contractID, attemptI
 		return c.containAmbiguousSend(ctx, operationID, attempt.AttemptID, actor, errors.New("invalid send response"))
 	}
 	commitCtx := context.WithoutCancel(ctx)
-	if err := c.Store.RecordSendConfirmed(commitCtx, operationID, actor, true, time.Now().UTC()); err != nil {
+	if err := c.Store.RecordSendConfirmed(commitCtx, operationID, actor, true, time.Now().UTC(), policy); err != nil {
 		return c.containAmbiguousSend(commitCtx, operationID, attempt.AttemptID, actor, fmt.Errorf("HTTP 200 confirmation transaction failed: %w", err))
 	}
 	_ = attempt
