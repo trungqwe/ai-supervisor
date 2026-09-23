@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	CurrentSchemaVersion = 2
+	CurrentSchemaVersion = 3
 	GenesisAuditHash     = "0000000000000000000000000000000000000000000000000000000000000000"
 )
 
@@ -160,11 +160,77 @@ BEGIN
 END;
 `
 
+const v3Schema = `
+CREATE TABLE worker_sessions (
+    pair_id TEXT PRIMARY KEY REFERENCES pairs(pair_id) ON DELETE RESTRICT,
+    session_id TEXT NOT NULL UNIQUE,
+    runtime_type TEXT NOT NULL,
+    worktree_path TEXT,
+    worker_agent_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'IDLE', 'TERMINATED')),
+    terminal_generation TEXT NOT NULL,
+    quarantine_state TEXT NOT NULL DEFAULT 'CLEAN' CHECK (quarantine_state IN ('CLEAN', 'QUARANTINED')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+ALTER TABLE task_attempts ADD COLUMN session_id TEXT;
+ALTER TABLE task_attempts ADD COLUMN terminal_generation TEXT;
+ALTER TABLE task_attempts ADD COLUMN recovery_disposition TEXT;
+ALTER TABLE task_attempts ADD COLUMN quarantine_state TEXT NOT NULL DEFAULT 'CLEAN' CHECK (quarantine_state IN ('CLEAN', 'QUARANTINED'));
+
+CREATE TABLE pair_provisioning_operations (
+    operation_id TEXT PRIMARY KEY,
+    pair_id TEXT NOT NULL REFERENCES pairs(pair_id) ON DELETE RESTRICT,
+    stage TEXT NOT NULL CHECK (stage IN ('PROVISION_REQUESTED', 'PROVISION_CONFIRMED', 'PROVISION_FAILED', 'PROVISION_RESOLVED')),
+    client_token TEXT NOT NULL,
+    session_id TEXT,
+    requested_at TEXT NOT NULL,
+    completed_at TEXT,
+    resolved_at TEXT,
+    resolved_by TEXT,
+    resolution_notes TEXT
+);
+CREATE UNIQUE INDEX idx_pair_provisioning_unresolved ON pair_provisioning_operations(pair_id) WHERE stage IN ('PROVISION_REQUESTED', 'PROVISION_FAILED');
+
+CREATE TABLE dispatch_operations (
+    operation_id TEXT PRIMARY KEY,
+    attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+    pair_id TEXT NOT NULL REFERENCES pairs(pair_id) ON DELETE RESTRICT,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
+    session_id TEXT NOT NULL,
+    terminal_generation TEXT NOT NULL,
+    stage TEXT NOT NULL CHECK (stage IN ('DISPATCH_BOUND', 'SEND_REQUESTED', 'SEND_CONFIRMED')),
+    requested_at TEXT NOT NULL,
+    confirmed_at TEXT,
+    resolution_state TEXT
+);
+
+CREATE TABLE stop_operations (
+    operation_id TEXT PRIMARY KEY,
+    purpose TEXT NOT NULL CHECK (purpose IN ('RUNNING_ATTEMPT_STOP', 'QUARANTINE_CLEANUP', 'PAIR_MAINTENANCE')),
+    pair_id TEXT NOT NULL REFERENCES pairs(pair_id) ON DELETE RESTRICT,
+    task_id TEXT REFERENCES tasks(task_id) ON DELETE RESTRICT,
+    contract_id TEXT REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
+    attempt_id TEXT REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+    session_id TEXT NOT NULL,
+    terminal_generation TEXT NOT NULL,
+    stage TEXT NOT NULL CHECK (stage IN ('STOP_REQUESTED', 'STOP_CALL_SUCCEEDED', 'STOP_CALL_FAILED', 'STOP_TERMINATION_CONFIRMED', 'STOP_TARGET_ABSENT')),
+    actor TEXT NOT NULL,
+    requested_at TEXT NOT NULL,
+    call_completed_at TEXT,
+    confirmation_deadline_at TEXT,
+    termination_confirmed_at TEXT,
+    resolved_at TEXT,
+    resolution_state TEXT NOT NULL DEFAULT 'IN_FLIGHT'
+);
+`
+
 func migrate(ctx context.Context, db *sql.DB) error {
-	return migrateWithSchemas(ctx, db, v1Schema, v2Schema)
+	return migrateWithSchemas(ctx, db, v1Schema, v2Schema, v3Schema)
 }
 
-func migrateWithSchemas(ctx context.Context, db *sql.DB, v1DDL, v2DDL string) error {
+func migrateWithSchemas(ctx context.Context, db *sql.DB, v1DDL, v2DDL, v3DDL string) error {
 	var userVersion int
 	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&userVersion); err != nil {
 		return fmt.Errorf("store: failed to read PRAGMA user_version: %w", err)
@@ -215,6 +281,26 @@ func migrateWithSchemas(ctx context.Context, db *sql.DB, v1DDL, v2DDL string) er
 		}
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("store: failed to commit v2 migration: %w", err)
+		}
+		userVersion = 2
+	}
+
+	// Apply V3 if userVersion is 2.
+	if userVersion < 3 {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("store: failed to begin v3 migration transaction: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, v3DDL); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("store: failed to execute v3 migration DDL: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "PRAGMA user_version = 3"); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("store: failed to set PRAGMA user_version = 3: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("store: failed to commit v3 migration: %w", err)
 		}
 	}
 

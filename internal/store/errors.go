@@ -18,6 +18,11 @@ var (
 	ErrDuplicateKey               = errors.New("store: duplicate key constraint violation")
 	ErrForeignKeyViolation        = errors.New("store: foreign key constraint violation")
 	ErrUnsupportedSchemaVersion   = errors.New("store: unsupported database schema version")
+	ErrWorkerSessionNotFound      = errors.New("store: worker session not found")
+	ErrOperationNotFound          = errors.New("store: lifecycle operation not found")
+	ErrInvalidOperationTransition = errors.New("store: invalid lifecycle operation transition")
+	ErrAttemptLineageMismatch     = errors.New("store: task attempt lineage mismatch")
+	ErrQuarantinedExecution       = errors.New("store: dispatch blocked by quarantine or unresolved provisioning")
 
 	// Revision 2 additions
 	ErrAtomicDispatchRequired  = errors.New("store: READY -> DISPATCHED transition requires PrepareDispatch atomic allocation")

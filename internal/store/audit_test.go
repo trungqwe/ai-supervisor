@@ -16,7 +16,7 @@ import (
 	"github.com/trungqwe/ai-supervisor/internal/domain"
 )
 
-func TestStore_V1ToV2Migration(t *testing.T) {
+func TestStore_V1ToV3Migration(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "migration_v1_v2.db")
@@ -40,17 +40,18 @@ func TestStore_V1ToV2Migration(t *testing.T) {
 	}
 	rawDB.Close()
 
-	// 2. Open via store.Open -> should upgrade 1 -> 2
+	// 2. Open via store.Open -> should upgrade 1 -> 3
 	s, err := Open(ctx, cfg)
 	if err != nil {
 		t.Fatalf("failed to open store on existing V1 DB: %v", err)
 	}
+	defer s.Close()
 	ep, err := s.EffectivePragmas(ctx)
 	if err != nil {
 		t.Fatalf("EffectivePragmas failed: %v", err)
 	}
-	if ep.UserVersion != 2 {
-		t.Fatalf("expected user_version 2 after migration, got %d", ep.UserVersion)
+	if ep.UserVersion != 3 {
+		t.Fatalf("expected user_version 3 after migration, got %d", ep.UserVersion)
 	}
 
 	// Verify audit tables and singleton exist
@@ -64,14 +65,15 @@ func TestStore_V1ToV2Migration(t *testing.T) {
 	}
 	s.Close()
 
-	// 3. Reopen V2 DB -> idempotent
+	// 3. Reopen V3 DB -> idempotent
 	sReopen, err := Open(ctx, cfg)
 	if err != nil {
-		t.Fatalf("failed to reopen V2 DB: %v", err)
+		t.Fatalf("failed to reopen V3 DB: %v", err)
 	}
+	defer sReopen.Close()
 	epReopen, _ := sReopen.EffectivePragmas(ctx)
-	if epReopen.UserVersion != 2 {
-		t.Fatalf("expected user_version 2 on reopen, got %d", epReopen.UserVersion)
+	if epReopen.UserVersion != 3 {
+		t.Fatalf("expected user_version 3 on reopen, got %d", epReopen.UserVersion)
 	}
 	sReopen.Close()
 
@@ -82,6 +84,7 @@ func TestStore_V1ToV2Migration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open raw fail DB: %v", err)
 	}
+	defer rawFailDB.Close()
 	if _, err := rawFailDB.Exec(v1Schema); err != nil {
 		t.Fatalf("failed to execute v1Schema: %v", err)
 	}
@@ -90,7 +93,7 @@ func TestStore_V1ToV2Migration(t *testing.T) {
 	}
 
 	// Execute migration with broken V2 DDL
-	err = migrateWithSchemas(ctx, rawFailDB, v1Schema, "INVALID SYNTAX STATEMENT;")
+	err = migrateWithSchemas(ctx, rawFailDB, v1Schema, "INVALID SYNTAX STATEMENT;", v3Schema)
 	if err == nil {
 		t.Fatalf("expected error on broken V2 DDL, got nil")
 	}
@@ -107,8 +110,8 @@ func TestStore_V1ToV2Migration(t *testing.T) {
 	}
 	rawFailDB.Close()
 
-	t.Logf("SQLITE_SCHEMA_VERSION = 2")
-	t.Logf("V1_TO_V2_MIGRATION = PASS")
+	t.Logf("SQLITE_SCHEMA_VERSION = 3")
+	t.Logf("V1_TO_V3_MIGRATION = PASS")
 }
 
 func TestStore_AuditAppendOnly_Triggers(t *testing.T) {

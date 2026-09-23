@@ -16,10 +16,18 @@ var timeNow = func() time.Time {
 	return time.Now().UTC()
 }
 
+// DispatchBinding supplies the immutable execution snapshot for DISPATCH_BOUND.
+type DispatchBinding struct {
+	OperationID        string
+	SessionID          string
+	TerminalGeneration string
+}
+
 // GetTaskAttempt retrieves a TaskAttempt by attemptID.
 func (s *Store) GetTaskAttempt(ctx context.Context, attemptID string) (domain.TaskAttempt, error) {
 	query := `
-SELECT attempt_id, attempt_number, task_id, contract_id, expected_report_path, started_at, ended_at, worker_report_raw
+SELECT attempt_id, attempt_number, task_id, contract_id, expected_report_path, started_at,
+       ended_at, worker_report_raw, session_id, terminal_generation, recovery_disposition, quarantine_state
 FROM task_attempts
 WHERE attempt_id = ?
 `
@@ -28,6 +36,8 @@ WHERE attempt_id = ?
 	var startedAtStr string
 	var endedAtStr sql.NullString
 	var reportRaw sql.NullString
+	var sessionID, terminalGeneration, recoveryDisposition sql.NullString
+	var quarantineState string
 
 	err := s.db.QueryRowContext(ctx, query, attemptID).Scan(
 		&a.AttemptID,
@@ -38,6 +48,10 @@ WHERE attempt_id = ?
 		&startedAtStr,
 		&endedAtStr,
 		&reportRaw,
+		&sessionID,
+		&terminalGeneration,
+		&recoveryDisposition,
+		&quarantineState,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -63,6 +77,16 @@ WHERE attempt_id = ?
 	if reportRaw.Valid {
 		a.WorkerReportRaw = reportRaw.String
 	}
+	if sessionID.Valid {
+		a.SessionID = &sessionID.String
+	}
+	if terminalGeneration.Valid {
+		a.TerminalGeneration = &terminalGeneration.String
+	}
+	if recoveryDisposition.Valid {
+		a.RecoveryDisposition = &recoveryDisposition.String
+	}
+	a.QuarantineState = domain.QuarantineState(quarantineState)
 
 	return a, nil
 }
@@ -82,6 +106,35 @@ func (s *Store) PrepareDispatch(
 	attemptID string,
 	expectedReportPath string,
 	startedAt time.Time,
+) (domain.TaskAttempt, error) {
+	return s.prepareDispatch(ctx, taskID, contractID, attemptID, expectedReportPath, startedAt, nil)
+}
+
+// PrepareBoundDispatch extends the P02 dispatch allocation transaction with the
+// immutable ADR-016 session snapshot, dispatch operation, and audit event.
+func (s *Store) PrepareBoundDispatch(
+	ctx context.Context,
+	taskID string,
+	contractID string,
+	attemptID string,
+	expectedReportPath string,
+	startedAt time.Time,
+	binding DispatchBinding,
+) (domain.TaskAttempt, error) {
+	if strings.TrimSpace(binding.OperationID) == "" || strings.TrimSpace(binding.SessionID) == "" || strings.TrimSpace(binding.TerminalGeneration) == "" {
+		return domain.TaskAttempt{}, errors.New("store: dispatch binding operation_id, session_id, and terminal_generation are required")
+	}
+	return s.prepareDispatch(ctx, taskID, contractID, attemptID, expectedReportPath, startedAt, &binding)
+}
+
+func (s *Store) prepareDispatch(
+	ctx context.Context,
+	taskID string,
+	contractID string,
+	attemptID string,
+	expectedReportPath string,
+	startedAt time.Time,
+	binding *DispatchBinding,
 ) (domain.TaskAttempt, error) {
 	// Finding R2-003: Canonical report path enforcement
 	canonicalPath, err := CanonicalExpectedReportPath(taskID, attemptID)
@@ -197,21 +250,63 @@ WHERE contract_id = ? AND is_immutable = 0
 		}
 	}
 
-	// 6. Insert TaskAttempt
+	// 6. Insert TaskAttempt, including immutable execution snapshot when bound.
 	insertAttemptQuery := `
 INSERT INTO task_attempts (
     attempt_id, attempt_number, task_id, contract_id, expected_report_path, started_at
 ) VALUES (?, ?, ?, ?, ?, ?)
 `
+	insertArgs := []any{attemptID, allocatedAttemptNumber, taskID, contractID, expectedReportPath, formatTime(now)}
+	if binding != nil {
+		var sessionID, terminalGeneration, quarantineState string
+		err = tx.QueryRowContext(ctx, `
+SELECT session_id, terminal_generation, quarantine_state FROM worker_sessions
+WHERE pair_id = ?
+`, pairID).Scan(&sessionID, &terminalGeneration, &quarantineState)
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.TaskAttempt{}, ErrWorkerSessionNotFound
+		}
+		if err != nil {
+			return domain.TaskAttempt{}, fmt.Errorf("store: verify dispatch worker session: %w", err)
+		}
+		if sessionID != binding.SessionID || terminalGeneration != binding.TerminalGeneration {
+			return domain.TaskAttempt{}, fmt.Errorf("%w: dispatch binding does not match current pair session", ErrWorkerSessionNotFound)
+		}
+		if quarantineState != string(domain.QuarantineClean) {
+			return domain.TaskAttempt{}, fmt.Errorf("%w: pair %q session is %s", ErrQuarantinedExecution, pairID, quarantineState)
+		}
+		var blockedAttempts int
+		err = tx.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM task_attempts
+WHERE task_id = ? AND quarantine_state <> 'CLEAN'
+`, taskID).Scan(&blockedAttempts)
+		if err != nil {
+			return domain.TaskAttempt{}, fmt.Errorf("store: verify prior attempt quarantine: %w", err)
+		}
+		if blockedAttempts != 0 {
+			return domain.TaskAttempt{}, fmt.Errorf("%w: task %q has %d quarantined prior attempt(s)", ErrQuarantinedExecution, taskID, blockedAttempts)
+		}
+		var unresolvedProvisioning int
+		err = tx.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM pair_provisioning_operations
+WHERE pair_id = ? AND stage IN ('PROVISION_REQUESTED', 'PROVISION_FAILED')
+`, pairID).Scan(&unresolvedProvisioning)
+		if err != nil {
+			return domain.TaskAttempt{}, fmt.Errorf("store: verify unresolved pair provisioning: %w", err)
+		}
+		if unresolvedProvisioning != 0 {
+			return domain.TaskAttempt{}, fmt.Errorf("%w: pair %q has unresolved provisioning", ErrQuarantinedExecution, pairID)
+		}
+		insertAttemptQuery = `
+INSERT INTO task_attempts (
+    attempt_id, attempt_number, task_id, contract_id, expected_report_path, started_at,
+    session_id, terminal_generation
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`
+		insertArgs = append(insertArgs, binding.SessionID, binding.TerminalGeneration)
+	}
 
-	_, err = tx.ExecContext(ctx, insertAttemptQuery,
-		attemptID,
-		allocatedAttemptNumber,
-		taskID,
-		contractID,
-		expectedReportPath,
-		formatTime(now),
-	)
+	_, err = tx.ExecContext(ctx, insertAttemptQuery, insertArgs...)
 	if err != nil {
 		var sqliteErr *sqlite.Error
 		if errors.As(err, &sqliteErr) {
@@ -225,17 +320,56 @@ INSERT INTO task_attempts (
 		return domain.TaskAttempt{}, fmt.Errorf("store: failed to insert task attempt: %w", err)
 	}
 
+	if binding != nil {
+		_, err = tx.ExecContext(ctx, `
+INSERT INTO dispatch_operations (
+    operation_id, attempt_id, pair_id, task_id, session_id, terminal_generation,
+    stage, requested_at
+) VALUES (?, ?, ?, ?, ?, ?, 'DISPATCH_BOUND', ?)
+`, binding.OperationID, attemptID, pairID, taskID, binding.SessionID, binding.TerminalGeneration, formatTime(now))
+		if err != nil {
+			return domain.TaskAttempt{}, mapLifecycleWriteError(err, "bound dispatch operation")
+		}
+		eventID, err := newAuditEventID()
+		if err != nil {
+			return domain.TaskAttempt{}, err
+		}
+		_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{
+			EventID:    eventID,
+			EventType:  domain.AuditTaskDispatchBound,
+			Timestamp:  now,
+			PairID:     pairID,
+			TaskID:     taskID,
+			ContractID: contractID,
+			AttemptID:  attemptID,
+			Actor:      "supervisor",
+			Details: map[string]any{
+				"session_id":          binding.SessionID,
+				"terminal_generation": binding.TerminalGeneration,
+			},
+		})
+		if err != nil {
+			return domain.TaskAttempt{}, err
+		}
+	}
+
 	// 7. Commit
 	if err := tx.Commit(); err != nil {
 		return domain.TaskAttempt{}, fmt.Errorf("store: failed to commit dispatch transaction: %w", err)
 	}
 
-	return domain.TaskAttempt{
+	attempt := domain.TaskAttempt{
 		AttemptID:          attemptID,
 		AttemptNumber:      allocatedAttemptNumber,
 		TaskID:             taskID,
 		ContractID:         contractID,
 		ExpectedReportPath: expectedReportPath,
 		StartedAt:          now,
-	}, nil
+		QuarantineState:    domain.QuarantineClean,
+	}
+	if binding != nil {
+		attempt.SessionID = &binding.SessionID
+		attempt.TerminalGeneration = &binding.TerminalGeneration
+	}
+	return attempt, nil
 }
