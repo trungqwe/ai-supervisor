@@ -157,7 +157,7 @@ func TestRestoreAdmissionRejectsOpenOrUnresolvedLineageAndAllowsCleanHistory(t *
 				if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
 					t.Fatal(err)
 				}
-				if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, time.Now()); err != nil {
+				if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
 					t.Fatal(err)
 				}
 			}

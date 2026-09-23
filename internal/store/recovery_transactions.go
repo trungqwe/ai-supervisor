@@ -124,6 +124,26 @@ func (s *Store) ListRecoverySnapshot(ctx context.Context) (out RecoverySnapshot,
 	return out, tx.Commit()
 }
 
+// ListOpenConfirmedWithoutBudget identifies legacy executions that cannot be
+// served under the immutable execution-budget policy until trusted maintenance
+// binds historical evidence or resolves the exact open attempt.
+func (s *Store) ListOpenConfirmedWithoutBudget(ctx context.Context) ([]RecoveryExecution, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT d.operation_id,d.pair_id,d.task_id,a.contract_id,d.attempt_id,d.session_id,d.terminal_generation,t.state,d.stage,a.recovery_disposition FROM dispatch_operations d JOIN task_attempts a ON a.attempt_id=d.attempt_id JOIN tasks t ON t.task_id=a.task_id AND t.current_attempt=a.attempt_number LEFT JOIN attempt_execution_budgets b ON b.attempt_id=a.attempt_id WHERE a.ended_at IS NULL AND d.stage='SEND_CONFIRMED' AND t.state IN ('DISPATCHED','RUNNING') AND b.attempt_id IS NULL ORDER BY d.operation_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RecoveryExecution
+	for rows.Next() {
+		var x RecoveryExecution
+		if err = rows.Scan(&x.OperationID, &x.PairID, &x.TaskID, &x.ContractID, &x.AttemptID, &x.SessionID, &x.Generation, &x.TaskState, &x.DispatchStage, &x.Disposition); err != nil {
+			return nil, err
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) RecordRecoverySweepEvent(ctx context.Context, invocationID, actor, event string, at time.Time) error {
 	if invocationID == "" || actor == "" || (event != "STARTUP_RECOVERY_SWEEP_STARTED" && event != "STARTUP_RECOVERY_SWEEP_COMPLETED") {
 		return ErrStateConflict

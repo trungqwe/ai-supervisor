@@ -10,6 +10,7 @@ import (
 
 	"github.com/trungqwe/ai-supervisor/internal/ao"
 	"github.com/trungqwe/ai-supervisor/internal/domain"
+	"github.com/trungqwe/ai-supervisor/internal/stop"
 	"github.com/trungqwe/ai-supervisor/internal/store"
 )
 
@@ -20,6 +21,15 @@ type HostQuiescence interface {
 	Acquire(context.Context) (ExclusiveScope, error)
 }
 type ExclusiveScope interface{ Release() error }
+
+// LegacyMaintenanceHost is supplied by the same trusted host as Run.Acquire.
+// It closes normal admission, excludes Run and drains/join effect callers.
+type LegacyMaintenanceHost interface {
+	AcquireMaintenance(context.Context, string, string) (ExclusiveScope, error)
+}
+type LegacyOperatorBoundary interface {
+	VerifiedRestorePrincipal(context.Context, string, string, string, string) (string, bool, error)
+}
 type Observer interface {
 	GetWorkerStatus(context.Context, string) (*ao.WorkerStatus, error)
 }
@@ -34,6 +44,7 @@ type Runner struct {
 	Store                *store.Store
 	AO                   Observer
 	Host                 HostQuiescence
+	Operator             LegacyOperatorBoundary
 	Handoff              HandoffAvailability
 	ActivityPollInterval time.Duration
 	ExecutionDeadline    time.Duration
@@ -45,6 +56,102 @@ type Runner struct {
 	running              bool
 	ready                bool
 	activePoller         *Poller
+}
+
+func (r *Runner) withLegacyMaintenance(ctx context.Context, pairID, purpose string, fn func(context.Context) error) (err error) {
+	if r == nil || r.Store == nil || r.Host == nil || r.Operator == nil || pairID == "" {
+		return errors.New("recovery: trusted maintenance host and operator boundary required")
+	}
+	host, ok := r.Host.(LegacyMaintenanceHost)
+	if !ok {
+		return errors.New("recovery: trusted maintenance scope unavailable")
+	}
+	r.invalidate() // normal admission/serve remains closed through and after maintenance.
+	r.pollAccess.Lock()
+	defer r.pollAccess.Unlock()
+	r.gateMu.Lock()
+	running := r.running
+	r.gateMu.Unlock()
+	if running {
+		return errors.New("recovery: Run owns classification; maintenance excluded")
+	}
+	scope, e := host.AcquireMaintenance(ctx, pairID, purpose)
+	if e != nil {
+		return e
+	}
+	if scope == nil {
+		return errors.New("recovery: maintenance scope missing")
+	}
+	defer func() { err = errors.Join(err, scope.Release()) }()
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	return fn(ctx)
+}
+
+// BindLegacyBudget is a trusted maintenance path, not a current-policy backfill.
+func (r *Runner) BindLegacyBudget(ctx context.Context, attemptID, evidenceRef string, policy domain.ExecutionBudgetPolicy) error {
+	if r == nil || r.Store == nil {
+		return errors.New("recovery: Store required")
+	}
+	attempt, e := r.Store.GetTaskAttempt(ctx, attemptID)
+	if e != nil {
+		return e
+	}
+	task, e := r.Store.GetTask(ctx, attempt.TaskID)
+	if e != nil {
+		return e
+	}
+	if attempt.SessionID == nil || attempt.TerminalGeneration == nil || attempt.EndedAt != nil {
+		return store.ErrAttemptLineageMismatch
+	}
+	return r.withLegacyMaintenance(ctx, task.PairID, "LEGACY_BUDGET_BINDING", func(ctx context.Context) error {
+		const scope = "LEGACY_EXECUTION_BUDGET_RECONCILIATION"
+		principal, verified, e := r.Operator.VerifiedRestorePrincipal(ctx, task.PairID, *attempt.SessionID, *attempt.TerminalGeneration, scope)
+		if e != nil {
+			return e
+		}
+		if !verified || principal == "" {
+			return errors.New("recovery: verified historical-policy principal required")
+		}
+		return r.Store.BindLegacyExecutionBudget(ctx, attemptID, principal, scope, evidenceRef, policy, r.now())
+	})
+}
+
+// StopLegacyWithoutBudget uses the existing 3C one-use reservation/effect path
+// only for an exact open RUNNING attempt; DISPATCHED stays fail-closed.
+func (r *Runner) StopLegacyWithoutBudget(ctx context.Context, coordinator *stop.Coordinator, op domain.StopOperation) error {
+	if r == nil || r.Store == nil || coordinator == nil || coordinator.Store != r.Store || op.TaskID == nil || op.AttemptID == nil || op.ContractID == nil || op.Purpose != domain.RunningAttemptStop {
+		return errors.New("recovery: exact manual live stop required")
+	}
+	return r.withLegacyMaintenance(ctx, op.PairID, "MANUAL_STOP_RECONCILIATION", func(ctx context.Context) error {
+		task, e := r.Store.GetTask(ctx, *op.TaskID)
+		if e != nil {
+			return e
+		}
+		attempt, e := r.Store.GetTaskAttempt(ctx, *op.AttemptID)
+		if e != nil {
+			return e
+		}
+		if task.State != domain.StateRunning || task.PairID != op.PairID || task.CurrentAttempt != attempt.AttemptNumber || attempt.EndedAt != nil || attempt.ContractID != *op.ContractID || attempt.SessionID == nil || attempt.TerminalGeneration == nil || *attempt.SessionID != op.SessionID || *attempt.TerminalGeneration != op.TerminalGeneration {
+			return store.ErrAttemptLineageMismatch
+		}
+		if _, e = r.Store.GetExecutionBudget(ctx, *op.AttemptID); e == nil {
+			return store.ErrStateConflict
+		} else if !errors.Is(e, store.ErrOperationNotFound) {
+			return e
+		}
+		const scope = "MANUAL_STOP_RECONCILIATION"
+		principal, verified, e := r.Operator.VerifiedRestorePrincipal(ctx, op.PairID, op.SessionID, op.TerminalGeneration, scope)
+		if e != nil {
+			return e
+		}
+		if !verified || principal == "" {
+			return errors.New("recovery: verified manual-stop principal required")
+		}
+		op.Actor = principal
+		return coordinator.Start(ctx, op)
+	})
 }
 
 func (r *Runner) now() time.Time {
@@ -245,6 +352,13 @@ func (r *Runner) Run(ctx context.Context) (report Report, err error) {
 	}
 	if err = ctx.Err(); err != nil {
 		return report, err
+	}
+	legacy, e := r.Store.ListOpenConfirmedWithoutBudget(ctx)
+	if e != nil {
+		return report, e
+	}
+	if len(legacy) > 0 {
+		return report, fmt.Errorf("recovery: %d open SEND_CONFIRMED attempts lack immutable execution budget; trusted maintenance required", len(legacy))
 	}
 	if err = r.Store.RecordRecoverySweepEvent(ctx, id, r.Actor, "STARTUP_RECOVERY_SWEEP_COMPLETED", r.now()); err != nil {
 		return report, err

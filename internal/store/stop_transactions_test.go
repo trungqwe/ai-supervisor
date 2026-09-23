@@ -27,6 +27,76 @@ func runningStopFixture(t *testing.T) (*Store, domain.StopOperation) {
 	return s, stop
 }
 
+func TestTimeoutReservationBoundaryAndAtomicCause(t *testing.T) {
+	ctx := context.Background()
+	s, _ := createTestStore(t)
+	defer s.Close()
+	_, attempt := setupBoundAttempt(t, s, "task-timeout", "contract-timeout", "attempt-timeout")
+	opID := "dispatch-attempt-timeout"
+	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	origin := time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC)
+	deadline := origin.Add(time.Hour)
+	if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, origin, domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TransitionTask(ctx, attempt.TaskID, domain.StateDispatched, domain.StateRunning); err != nil {
+		t.Fatal(err)
+	}
+	task, contract, id, cause := attempt.TaskID, attempt.ContractID, attempt.AttemptID, "TIMEOUT"
+	// Pair is read from the persisted task, never guessed from a session ID.
+	persistedTask, err := s.GetTask(ctx, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	makeStop := func(op string, at time.Time) domain.StopOperation {
+		return domain.StopOperation{OperationID: op, Purpose: domain.RunningAttemptStop, PairID: persistedTask.PairID, TaskID: &task, ContractID: &contract, AttemptID: &id, SessionID: *attempt.SessionID, TerminalGeneration: *attempt.TerminalGeneration, Actor: "supervisor", RequestedAt: at, InitiatingFailureReason: &cause}
+	}
+	if err := s.ReserveStopOperation(ctx, makeStop("early", deadline.Add(-time.Nanosecond))); err == nil {
+		t.Fatal("early timeout intent")
+	}
+	if _, err := s.GetStopOperation(ctx, "early"); err == nil {
+		t.Fatal("early stop row")
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_timeout_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='STOP_OPERATION_REQUESTED' BEGIN SELECT RAISE(ABORT,'injected timeout audit failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReserveStopOperation(ctx, makeStop("audit-fail", deadline)); err == nil || !strings.Contains(err.Error(), "injected timeout audit failure") {
+		t.Fatalf("audit fail=%v", err)
+	}
+	if _, err := s.GetStopOperation(ctx, "audit-fail"); err == nil {
+		t.Fatal("partial timeout stop")
+	}
+	if _, err := s.db.ExecContext(ctx, `DROP TRIGGER reject_timeout_audit`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReserveStopOperation(ctx, makeStop("on-time", deadline)); err != nil {
+		t.Fatal(err)
+	}
+	stop, err := s.GetStopOperation(ctx, "on-time")
+	if err != nil || stop.InitiatingFailureReason == nil || *stop.InitiatingFailureReason != "TIMEOUT" {
+		t.Fatalf("durable cause=%+v err=%v", stop, err)
+	}
+	if err := s.ReserveStopOperation(ctx, makeStop("duplicate", deadline.Add(time.Nanosecond))); err == nil {
+		t.Fatal("second timeout stop")
+	}
+	if err := s.ValidateTimeoutEffectOwner(ctx, "on-time"); err != nil {
+		t.Fatalf("own quarantine rejected: %v", err)
+	}
+	call := deadline.Add(time.Second)
+	if err := s.CommitStopCallAccepted(ctx, "on-time", call, call.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CommitStopOutcome(ctx, "on-time", StopTerminalOutcome{ExpectedStage: domain.StopCallSucceeded, Stage: domain.StopTerminationConfirmed, Resolution: domain.StopResolutionTerminationConfirmed, At: call.Add(time.Nanosecond), ObservedSessionID: stop.SessionID, ObservedGeneration: stop.TerminalGeneration, ObservedIsTerminated: true}); err != nil {
+		t.Fatal(err)
+	}
+	var auditCount int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM audit_events WHERE event_type='TASK_STATE_TRANSITION' AND attempt_id=? AND json_extract(details_json,'$.failure_reason')='TIMEOUT' AND json_extract(details_json,'$.recovery_disposition')='WORKER_STOPPED'`, attempt.AttemptID).Scan(&auditCount); err != nil || auditCount != 1 {
+		t.Fatalf("timeout closure audit=%d err=%v", auditCount, err)
+	}
+}
+
 func TestLiveStopTerminalOutcomeAtomicAndAudited(t *testing.T) {
 	ctx := context.Background()
 	s, stop := runningStopFixture(t)

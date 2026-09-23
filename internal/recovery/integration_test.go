@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 	"time"
+	"github.com/trungqwe/ai-supervisor/internal/domain"
 )
 
 // This harness tests a library call contract only. It does not prove daemon
@@ -33,7 +34,7 @@ func TestSimulatedHostServeContract(t *testing.T) {
 		if err := s.RecordSendRequested(context.Background(), "dispatch-pendingserve", session, generation, "idle", false, "fixture", time.Now()); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.RecordSendConfirmed(context.Background(), "dispatch-pendingserve", "fixture", true, time.Now()); err != nil {
+		if err := s.RecordSendConfirmed(context.Background(), "dispatch-pendingserve", "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
 			t.Fatal(err)
 		}
 		served := 0

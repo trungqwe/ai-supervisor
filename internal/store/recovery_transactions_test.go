@@ -143,7 +143,7 @@ func TestPostSendOutageAndFreshRecoveryCAS(t *testing.T) {
 	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, time.Now()); err != nil {
+	if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
 		t.Fatal(err)
 	}
 	snap, err := s.ListRecoverySnapshot(ctx)
@@ -223,7 +223,7 @@ func TestMissedActiveWindowAvailableHandoffAuditRollback(t *testing.T) {
 	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, time.Now()); err != nil {
+	if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
 		t.Fatal(err)
 	}
 	snap, err := s.ListRecoverySnapshot(ctx)
@@ -265,7 +265,7 @@ func TestGenericPostSendObservationCannotCloseStopOwnedAttempt(t *testing.T) {
 	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, time.Now()); err != nil {
+	if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.TransitionTask(ctx, attempt.TaskID, domain.StateDispatched, domain.StateRunning); err != nil {
@@ -389,7 +389,7 @@ func TestPostSendLifecycleMatrixAndHoldPrecedence(t *testing.T) {
 			if err := s.RecordSendRequested(ctx, op, *a.SessionID, *a.TerminalGeneration, "idle", false, "fixture", time.Now()); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.RecordSendConfirmed(ctx, op, "fixture", true, time.Now()); err != nil {
+			if err := s.RecordSendConfirmed(ctx, op, "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
 				t.Fatal(err)
 			}
 			if tc.state == domain.StateRunning {
@@ -437,7 +437,7 @@ func TestPostSendStrongerHoldRejectsOutageAndTerminalRecoveryRollback(t *testing
 	if err := s.RecordSendRequested(ctx, op, *a.SessionID, *a.TerminalGeneration, "idle", false, "fixture", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordSendConfirmed(ctx, op, "fixture", true, time.Now()); err != nil {
+	if err := s.RecordSendConfirmed(ctx, op, "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
 		t.Fatal(err)
 	}
 	snap, _ := s.ListRecoverySnapshot(ctx)
@@ -476,7 +476,7 @@ func TestPostSendStrongerHoldRejectsOutageAndTerminalRecoveryRollback(t *testing
 	if err := s2.RecordSendRequested(ctx, op2, *b.SessionID, *b.TerminalGeneration, "idle", false, "fixture", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := s2.RecordSendConfirmed(ctx, op2, "fixture", true, time.Now()); err != nil {
+	if err := s2.RecordSendConfirmed(ctx, op2, "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
 		t.Fatal(err)
 	}
 	snap, _ = s2.ListRecoverySnapshot(ctx)
@@ -540,7 +540,7 @@ func TestPostSendGenerationChangedQuarantinesCurrentRuntimeAndOldAttempt(t *test
 	if err := s.RecordSendRequested(ctx, op, *a.SessionID, *a.TerminalGeneration, "idle", false, "fixture", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordSendConfirmed(ctx, op, "fixture", true, time.Now()); err != nil {
+	if err := s.RecordSendConfirmed(ctx, op, "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
 		t.Fatal(err)
 	}
 	snap, _ := s.ListRecoverySnapshot(ctx)

@@ -23,16 +23,68 @@ type OperatorBoundary interface {
 	VerifiedRestorePrincipal(context.Context, string, string, string, string) (string, bool, error)
 }
 
+// TimeoutAdmission is the same trusted host admission boundary drained by
+// startup quiescence. A fake implementation proves only library ordering.
+type TimeoutAdmission interface {
+	AcquireEffect(context.Context, string, string) (TimeoutPermit, error)
+}
+type TimeoutPermit interface{ Release() error }
+
+var ErrTimeoutPreflightUnavailable = errors.New("stop: timeout preflight unavailable")
+var ErrTimeoutPreflightInadmissible = errors.New("stop: timeout preflight not admissible")
+
 type Coordinator struct {
 	Store       *store.Store
 	AO          AO
 	Operator    OperatorBoundary
 	KillTimeout time.Duration // injected SUPERVISOR_KILL_STOP_TIMEOUT; no default
+	TimeoutHost TimeoutAdmission
+	Now         func() time.Time // trusted timeout monitor clock; never request-supplied
 }
 
 // Start owns the one-use effect opportunity for an unambiguously committed
 // new intent. A pre-existing STOP_REQUESTED is never an execution permit.
 func (c *Coordinator) Start(ctx context.Context, stop domain.StopOperation) error {
+	if stop.InitiatingFailureReason != nil {
+		return errors.New("stop: timeout cause requires guarded StartTimeout")
+	}
+	return c.start(ctx, stop, false)
+}
+
+// StartTimeout owns a fresh one-use effect opportunity. It never reconstructs
+// a permit from a persisted STOP_REQUESTED row after crash or ambiguity.
+func (c *Coordinator) StartTimeout(ctx context.Context, stop domain.StopOperation) (err error) {
+	if c == nil || c.TimeoutHost == nil || c.AO == nil || c.Store == nil || stop.Purpose != domain.RunningAttemptStop || stop.AttemptID == nil {
+		return errors.New("stop: trusted timeout admission and exact live attempt required")
+	}
+	permit, err := c.TimeoutHost.AcquireEffect(ctx, stop.PairID, "TIMEOUT_MONITOR")
+	if err != nil {
+		return err
+	}
+	if permit == nil {
+		return errors.New("stop: timeout permit missing")
+	}
+	defer func() { err = errors.Join(err, permit.Release()) }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	pre, err := c.AO.GetWorkerStatus(ctx, stop.SessionID)
+	if err != nil {
+		return fmt.Errorf("%w; no intent: %w", ErrTimeoutPreflightUnavailable, err)
+	}
+	if pre == nil || pre.ID != stop.SessionID || pre.TerminalGeneration != stop.TerminalGeneration || pre.IsTerminated || (pre.Activity.State != ao.ActivityStateActive && pre.Activity.State != ao.ActivityStateWaitingInput) {
+		return ErrTimeoutPreflightInadmissible
+	}
+	cause := "TIMEOUT"
+	stop.InitiatingFailureReason = &cause
+	stop.RequestedAt = time.Now().UTC()
+	if c.Now != nil {
+		stop.RequestedAt = c.Now().UTC()
+	}
+	return c.start(ctx, stop, true)
+}
+
+func (c *Coordinator) start(ctx context.Context, stop domain.StopOperation, timeout bool) error {
 	if c.Store == nil || c.AO == nil || c.KillTimeout <= 0 {
 		return errors.New("stop: store, AO and injected kill timeout are required")
 	}
@@ -108,6 +160,14 @@ func (c *Coordinator) Start(ctx context.Context, stop domain.StopOperation) erro
 	}
 	if status.IsTerminated {
 		return c.commitOutcome(ctx, stop.OperationID, domain.StopRequested, domain.StopRequested, domain.StopResolutionEffectUnprovenAlreadyTerminated, status)
+	}
+	if timeout {
+		if status.Activity.State != ao.ActivityStateActive && status.Activity.State != ao.ActivityStateWaitingInput {
+			return errors.New("stop: timeout pre-effect activity changed; intent retained for exclusive recovery")
+		}
+		if err := c.Store.ValidateTimeoutEffectOwner(ctx, stop.OperationID); err != nil {
+			return fmt.Errorf("stop: timeout pre-effect ownership changed; intent retained: %w", err)
+		}
 	}
 	result, callErr := c.AO.StopWorker(ctx, stop.SessionID)
 	commitCtx := context.WithoutCancel(ctx)

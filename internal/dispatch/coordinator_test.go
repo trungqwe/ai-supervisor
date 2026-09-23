@@ -311,7 +311,7 @@ func TestProvisioningPersistsBeforeOneAOCallAndRejectsDuplicate(t *testing.T) {
 		t.Fatal(err)
 	}
 	upstream := &fakeAO{createResult: &ao.CreateWorkerSessionResult{Session: ao.WorkerStatus{ID: "session-coordinator", TerminalGeneration: "generation-1", Activity: ao.ActivitySnapshot{State: ao.ActivityStateIdle}}}}
-	c := Coordinator{Store: s, AO: upstream}
+	c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}}
 	op := domain.PairProvisioningOperation{OperationID: "provision-coordinator", PairID: "pair-coordinator", ClientToken: "token-1"}
 	if err := c.Provision(ctx, op, "project-coordinator", "agy_tui", "supervisor"); err != nil {
 		t.Fatal(err)
@@ -361,7 +361,7 @@ func TestProvisioningAmbiguousCreateIsFailedAndNeverRespawned(t *testing.T) {
 		t.Fatal(err)
 	}
 	upstream := &fakeAO{createErr: errors.New("transport outcome unknown")}
-	c := Coordinator{Store: s, AO: upstream}
+	c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}}
 	op := domain.PairProvisioningOperation{OperationID: "provision-ambiguous", PairID: "pair-ambiguous", ClientToken: "token-ambiguous"}
 	if err := c.Provision(ctx, op, "project-ambiguous", "agy_tui", "supervisor"); err == nil {
 		t.Fatal("ambiguous AO create unexpectedly succeeded")
@@ -421,7 +421,7 @@ func TestDispatchAmbiguousSendIsPersistedAndNeverRepeated(t *testing.T) {
 		t.Fatal(err)
 	}
 	upstream := &fakeAO{statusResult: &ao.WorkerStatus{ID: "session-send", TerminalGeneration: "generation-send", Activity: ao.ActivitySnapshot{State: ao.ActivityStateIdle}}, dispatchErr: errors.New("connection lost after send")}
-	c := Coordinator{Store: s, AO: upstream}
+	c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}}
 	report, err := store.CanonicalExpectedReportPath("task-send", "attempt-send")
 	if err != nil {
 		t.Fatal(err)
@@ -478,7 +478,7 @@ func TestDispatchHTTP200ConfirmsAcceptanceWithoutRunningTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	upstream := &fakeAO{statusResult: &ao.WorkerStatus{ID: "session-send-confirmed", TerminalGeneration: "generation-send-confirmed", Activity: ao.ActivitySnapshot{State: ao.ActivityStateWaitingInput}}, dispatchResult: &ao.DispatchTaskResult{SessionID: "session-send-confirmed"}}
-	c := Coordinator{Store: s, AO: upstream}
+	c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}}
 	report, err := store.CanonicalExpectedReportPath("task-send-confirmed", "attempt-send-confirmed")
 	if err != nil {
 		t.Fatal(err)
@@ -515,7 +515,7 @@ func TestHTTP200ConfirmationRollbackRunsFreshD5ContainmentWithoutResend(t *testi
 	defer s.Close()
 	prepareDispatchCoordinatorFixture(t, s, "confirm-rollback")
 	upstream := &fakeAO{statusResult: &ao.WorkerStatus{ID: "session-confirm-rollback", TerminalGeneration: "generation-confirm-rollback", Activity: ao.ActivitySnapshot{State: ao.ActivityStateIdle}}, dispatchResult: &ao.DispatchTaskResult{SessionID: "session-confirm-rollback"}}
-	c := Coordinator{Store: s, AO: upstream}
+	c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}}
 	raw, err := sql.Open("sqlite", cfg.DSN())
 	if err != nil {
 		t.Fatal(err)
@@ -552,7 +552,7 @@ func TestInvalidSendResponseWithD5AuditFailureLeavesIntentAndNeverResends(t *tes
 	defer s.Close()
 	prepareDispatchCoordinatorFixture(t, s, "invalid-d5-failure")
 	upstream := &fakeAO{statusResult: &ao.WorkerStatus{ID: "session-invalid-d5-failure", TerminalGeneration: "generation-invalid-d5-failure", Activity: ao.ActivitySnapshot{State: ao.ActivityStateIdle}}, dispatchResult: &ao.DispatchTaskResult{SessionID: "different-session"}}
-	c := Coordinator{Store: s, AO: upstream}
+	c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}}
 	raw, err := sql.Open("sqlite", cfg.DSN())
 	if err != nil {
 		t.Fatal(err)
@@ -679,7 +679,7 @@ func TestPreSendObservationMatrixKeepsOrClosesExactAttempt(t *testing.T) {
 				t.Fatal(err)
 			}
 			upstream := &fakeAO{statusResult: tc.status, statusErr: tc.statusErr}
-			c := Coordinator{Store: s, AO: upstream}
+			c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}}
 			report, err := store.CanonicalExpectedReportPath("task-pre-send", "attempt-pre-send")
 			if err != nil {
 				t.Fatal(err)

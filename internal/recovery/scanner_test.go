@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -278,7 +279,7 @@ func TestRunnerPostSendOutageAndRecoveryOnDispatchedAndRunning(t *testing.T) {
 	if err := s.RecordSendRequested(ctx, "dispatch-observed", session, generation, "idle", false, "fixture", time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordSendConfirmed(ctx, "dispatch-observed", "fixture", true, time.Now().UTC()); err != nil {
+	if err := s.RecordSendConfirmed(ctx, "dispatch-observed", "fixture", true, time.Now().UTC(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
 		t.Fatal(err)
 	}
 	o := &testObserver{err: errors.New("AO unavailable")}
@@ -346,7 +347,7 @@ func TestMissedActiveWindowHandoffAvailability(t *testing.T) {
 			if err := s.RecordSendRequested(ctx, "dispatch-handoff", session, generation, "idle", false, "fixture", time.Now()); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.RecordSendConfirmed(ctx, "dispatch-handoff", "fixture", true, time.Now()); err != nil {
+			if err := s.RecordSendConfirmed(ctx, "dispatch-handoff", "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
 				t.Fatal(err)
 			}
 			o := &testObserver{result: &ao.WorkerStatus{ID: session, TerminalGeneration: generation, Activity: ao.ActivitySnapshot{State: ao.ActivityStateIdle}}}
@@ -381,7 +382,7 @@ func seedLiveStopIntent(t *testing.T, s *store.Store, taskID string) (domain.Sto
 	if err := s.RecordSendRequested(ctx, "dispatch-"+taskID, session, generation, "idle", false, "fixture", time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordSendConfirmed(ctx, "dispatch-"+taskID, "fixture", true, time.Now().UTC()); err != nil {
+	if err := s.RecordSendConfirmed(ctx, "dispatch-"+taskID, "fixture", true, time.Now().UTC(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.TransitionTask(ctx, taskID, domain.StateDispatched, domain.StateRunning); err != nil {
@@ -672,7 +673,7 @@ func TestRunnerBlockedOpenAttemptClosesWithoutAOEffect(t *testing.T) {
 	if err := s.RecordSendRequested(ctx, "dispatch-blocked", session, generation, "idle", false, "fixture", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordSendConfirmed(ctx, "dispatch-blocked", "fixture", true, time.Now()); err != nil {
+	if err := s.RecordSendConfirmed(ctx, "dispatch-blocked", "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.TransitionTask(ctx, "blocked", domain.StateDispatched, domain.StateRunning); err != nil {
@@ -861,5 +862,126 @@ func TestRestoreClassificationPrecedesProvisioningSweep(t *testing.T) {
 	provision, _ = s.GetPairProvisioningOperation(ctx, "intent")
 	if restore.ResolutionState != domain.RestoreOutcomeUnknown || provision.Stage != domain.ProvisionFailed {
 		t.Fatalf("recovery ordering: %+v %+v", restore, provision)
+	}
+}
+
+type legacyHost struct {
+	mu                             sync.Mutex
+	acquire, maintenance, releases int
+	entered, drain                 chan struct{}
+}
+type legacyScope struct {
+	host *legacyHost
+	once sync.Once
+}
+
+func (s *legacyScope) Release() error {
+	s.once.Do(func() { s.host.mu.Lock(); s.host.releases++; s.host.mu.Unlock() })
+	return nil
+}
+func (h *legacyHost) Acquire(context.Context) (ExclusiveScope, error) {
+	h.mu.Lock()
+	h.acquire++
+	h.mu.Unlock()
+	return &legacyScope{host: h}, nil
+}
+func (h *legacyHost) AcquireMaintenance(ctx context.Context, _, _ string) (ExclusiveScope, error) {
+	h.mu.Lock()
+	h.maintenance++
+	h.mu.Unlock()
+	if h.entered != nil {
+		close(h.entered)
+	}
+	if h.drain != nil {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-h.drain:
+		}
+	}
+	return &legacyScope{host: h}, nil
+}
+
+type legacyOperator struct {
+	principal string
+	allowed   bool
+}
+
+func (o legacyOperator) VerifiedRestorePrincipal(_ context.Context, _, _, _, scope string) (string, bool, error) {
+	return o.principal, o.allowed && scope == "LEGACY_EXECUTION_BUDGET_RECONCILIATION", nil
+}
+
+func TestLegacyMaintenanceKeepsAdmissionClosedUntilCompleteRun(t *testing.T) {
+	ctx := context.Background()
+	s, path := newRecoveryStoreAt(t)
+	session, generation, attempt := seedBoundExecution(t, s, "legacy-maintenance")
+	if err := s.RecordSendRequested(ctx, "dispatch-legacy-maintenance", session, generation, "idle", false, "fixture", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	cfg := store.Config{DBPath: path, BusyTimeoutMs: 5000}
+	raw, err := sql.Open("sqlite", cfg.DSN())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if _, err = raw.Exec(`DROP TRIGGER trg_dispatch_requires_execution_budget`); err != nil {
+		t.Fatal(err)
+	}
+	origin := time.Date(2026, 1, 2, 3, 4, 5, 123456789, time.UTC)
+	if _, err = raw.Exec(`UPDATE dispatch_operations SET stage='SEND_CONFIRMED',confirmed_at=? WHERE operation_id='dispatch-legacy-maintenance'`, origin.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	h := &legacyHost{entered: make(chan struct{}), drain: make(chan struct{})}
+	o := &testObserver{result: &ao.WorkerStatus{ID: session, TerminalGeneration: generation, Activity: ao.ActivitySnapshot{State: ao.ActivityStateActive}}}
+	r := &Runner{Store: s, AO: o, Host: h, ActivityPollInterval: time.Second, ExecutionDeadline: time.Hour, Actor: "fixture", Operator: legacyOperator{principal: "operator", allowed: true}}
+	result, err := r.Run(ctx)
+	if err == nil || result.Complete || !strings.Contains(err.Error(), "immutable execution budget") {
+		t.Fatalf("legacy Run=%+v err=%v", result, err)
+	}
+	if r.ready {
+		t.Fatal("incomplete Run opened readiness")
+	}
+	finished := make(chan error, 1)
+	go func() {
+		finished <- r.BindLegacyBudget(ctx, attempt, "historical-policy-record", domain.ExecutionBudgetPolicy{Duration: 2 * time.Hour, PolicyRef: "historical-p1"})
+	}()
+	<-h.entered
+	select {
+	case e := <-finished:
+		t.Fatalf("maintenance skipped drain: %v", e)
+	default:
+	}
+	if r.ready {
+		t.Fatal("maintenance opened normal readiness")
+	}
+	close(h.drain)
+	if err = <-finished; err != nil {
+		t.Fatal(err)
+	}
+	if r.ready {
+		t.Fatal("maintenance release opened readiness")
+	}
+	b, err := s.GetExecutionBudget(ctx, attempt)
+	if err != nil || !b.OriginAt.Equal(origin) || !b.DeadlineAt.Equal(origin.Add(2*time.Hour)) {
+		t.Fatalf("budget=%+v err=%v", b, err)
+	}
+	result, err = r.Run(ctx)
+	if err != nil || !result.Complete || !r.ready {
+		t.Fatalf("subsequent Run=%+v err=%v ready=%v", result, err, r.ready)
+	}
+	h.mu.Lock()
+	acquire, maintenance, releases := h.acquire, h.maintenance, h.releases
+	h.mu.Unlock()
+	if acquire != 2 || maintenance != 1 || releases != 3 {
+		t.Fatalf("scopes acquire=%d maintenance=%d releases=%d", acquire, maintenance, releases)
+	}
+}
+
+func TestLegacyMaintenanceMissingTrustedBoundaryFailsClosed(t *testing.T) {
+	s := newRecoveryStore(t)
+	_, _, attempt := seedBoundExecution(t, s, "no-maintenance-host")
+	r := &Runner{Store: s, Host: &testHost{}, Operator: legacyOperator{principal: "operator", allowed: true}}
+	if err := r.BindLegacyBudget(context.Background(), attempt, "evidence", domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "p"}); err == nil || !strings.Contains(err.Error(), "maintenance scope unavailable") {
+		t.Fatalf("missing trusted host=%v", err)
 	}
 }

@@ -112,7 +112,7 @@ func TestCompetingPollerObservationsProduceOneTransition(t *testing.T) {
 	if err := s.RecordSendRequested(ctx, "dispatch-pollrace", session, generation, "idle", false, "fixture", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordSendConfirmed(ctx, "dispatch-pollrace", "fixture", true, time.Now()); err != nil {
+	if err := s.RecordSendConfirmed(ctx, "dispatch-pollrace", "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
 		t.Fatal(err)
 	}
 	o := &barrierObserver{entered: make(chan struct{}), release: make(chan struct{}), status: &ao.WorkerStatus{ID: session, TerminalGeneration: generation, Activity: ao.ActivitySnapshot{State: ao.ActivityStateActive}}}
@@ -155,7 +155,7 @@ func TestPollerShutdownJoinsBlockedObservation(t *testing.T) {
 	if err := s.RecordSendRequested(ctx, "dispatch-shutdown", session, generation, "idle", false, "fixture", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordSendConfirmed(ctx, "dispatch-shutdown", "fixture", true, time.Now()); err != nil {
+	if err := s.RecordSendConfirmed(ctx, "dispatch-shutdown", "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
 		t.Fatal(err)
 	}
 	owner := &Runner{Store: s, AO: &testObserver{result: &ao.WorkerStatus{ID: session, TerminalGeneration: generation, Activity: ao.ActivitySnapshot{State: ao.ActivityStateActive}}}, Host: &testHost{}, ActivityPollInterval: time.Second, ExecutionDeadline: time.Minute, Actor: "supervisor"}
@@ -186,7 +186,7 @@ func TestDirectPollOnceOwnershipAndRepeatedRunBarrier(t *testing.T) {
 	if err := s.RecordSendRequested(ctx, "dispatch-direct-barrier", session, generation, "idle", false, "fixture", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordSendConfirmed(ctx, "dispatch-direct-barrier", "fixture", true, time.Now()); err != nil {
+	if err := s.RecordSendConfirmed(ctx, "dispatch-direct-barrier", "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
 		t.Fatal(err)
 	}
 	o := &barrierObserver{entered: make(chan struct{}), release: make(chan struct{}), status: &ao.WorkerStatus{ID: session, TerminalGeneration: generation, Activity: ao.ActivitySnapshot{State: ao.ActivityStateActive}}}
@@ -346,7 +346,7 @@ func TestStopDrainsPublicTickAndCancellation(t *testing.T) {
 	if err := s.RecordSendRequested(ctx, "dispatch-public-stop", session, generation, "idle", false, "fixture", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordSendConfirmed(ctx, "dispatch-public-stop", "fixture", true, time.Now()); err != nil {
+	if err := s.RecordSendConfirmed(ctx, "dispatch-public-stop", "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
 		t.Fatal(err)
 	}
 	o := &barrierObserver{entered: make(chan struct{}), release: make(chan struct{}), status: &ao.WorkerStatus{ID: session, TerminalGeneration: generation, Activity: ao.ActivitySnapshot{State: ao.ActivityStateActive}}}
