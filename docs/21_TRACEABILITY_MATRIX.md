@@ -53,3 +53,13 @@
 | DELIVERY_OUTCOME_UNKNOWN terminal, stale 200 | docs/06 §3; docs/14 §1.2.3 Step 2 | AC-3B-10, AC-3B-11 |
 | Provenance and ownership | docs/22 §4; docs/phases/P03 §4 | AC-3B-10 |
 | Migration v4 current-version assertion, audit chain và historical rollback | docs/05 §3; docs/tasks/CANDIDATE_TASK_CONTRACT_P03_003B.md §3 | AC-3B-04, AC-3B-13 |
+
+## TASK-P03-003C administrative stop clarification coverage
+
+| Decision | Canonical section | Planned acceptance |
+|---|---|---|
+| Class B 404 retains absence; scoped verified acceptance is separate audit | docs/05 Section 3; docs/14 Section 1.2.2 Class B | AC-3C Class B evidence, replay/CAS and audit assertions |
+| Class C preserves wire provenance; stop resolution and acceptance audit commit atomically | docs/05 Section 3; docs/14 Section 1.2.2 Class C | AC-3C Class C CAS, principal/scope/lineage and rollback assertions |
+| Linked stop reconciliation -> Tx D -> lineage complete D6 | docs/14 Section 1.2.2 Class B/C | AC-3C mixed basis and D6 rollback assertions |
+
+Authority: `docs/adr/ADR-016-CLARIFICATION-administrative-stop-risk-acceptance.md`. These are design mappings, not implementation PASS claims.

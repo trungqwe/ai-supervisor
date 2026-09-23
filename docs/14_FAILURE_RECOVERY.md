@@ -103,16 +103,13 @@ Quarantine may be cleared ONLY in a single atomic SQLite transaction verifying t
      - Clean-worktree inspection is NOT a condition for physical execution clearance.
 
 2. **Class B (`ADMINISTRATIVE_RISK_RESOLUTION` / HTTP 404 Session Absence)**:
-   - **Preconditions**: Upstream returns HTTP 404 (Not Found) during status observation.
-   - **Governance Truth**: HTTP 404 proves public session absence, NOT physical process termination (`SESSION_ABSENCE_IS_NOT_PHYSICAL_TERMINATION`). Session absence alone or session replacement NEVER clears quarantine.
-   - **Resolution Action**: Both quarantine gates remain ACTIVE until an authorized operator explicitly executes administrative risk resolution, recording absence evidence, risk acknowledgement, and setting `task_attempts.recovery_disposition = 'QUARANTINE_RESOLVED_ADMINISTRATIVE'`. Emits audit event `QUARANTINE_RESOLVED_ADMINISTRATIVE`.
-   - If the stop is linked to restore, 404/absence remains evidence only. Tx D records administrative resolution with verified operator risk acceptance for each unresolved lineage; the separate D6 transaction performs any clearance afterward. No missing session or new generation clears an old attempt.
+   - HTTP 404 is absence evidence only. `STOP_TARGET_ABSENT` remains the stop stage/resolution; it is never physical proof.
+   - A verified operator accepts residual risk for each exact lineage in a separate atomic, replay guarded `ADMINISTRATIVE_RISK_ACCEPTED` audit transaction. Quarantine remains active. For linked restore, stop reconciliation precedes Tx D with administrative basis, and D6 clearance follows Tx D. Only D6 emits `QUARANTINE_RESOLVED_ADMINISTRATIVE` when it actually clears a lineage.
 
 3. **Class C (`ADMINISTRATIVE_RISK_RESOLUTION` / Human Risk Acceptance)**:
-   - **Preconditions**: Target worker execution cannot be contacted, verified, or proven stopped (e.g. persistent transport partition, daemon crash).
-   - **Resolution Action**: An authorized human operator explicitly accepts residual duplicate-execution risk. Persists `stop_operations.resolution_state = 'ADMINISTRATIVE_RISK_ACCEPTED'`; sets `task_attempts.quarantine_state = 'CLEAN'`; sets `worker_sessions.quarantine_state = 'CLEAN'`; records `recovery_disposition = 'QUARANTINE_RESOLVED_ADMINISTRATIVE'`; emits audit event `QUARANTINE_RESOLVED_ADMINISTRATIVE`.
-   - **Constraint**: This is administrative risk assumption, NOT physical termination. It is strictly PROHIBITED to record `WORKER_STOPPED` or `TERMINATION_CONFIRMED`.
-   - For a linked restore stop, administrative risk acceptance is scoped separately to current WorkerSession generation and every affected old attempt; Tx D must finish before D6 clearance. A fake attempt is never allocated for a no-attempt `PAIR_MAINTENANCE` stop.
+   - When termination cannot be proven, a verified operator with independent recovery scope may accept residual risk for exact session/attempt lineages. CAS changes `stop_operations.resolution_state` to `ADMINISTRATIVE_RISK_ACCEPTED` and records `resolved_at` plus separate `ADMINISTRATIVE_RISK_ACCEPTED` audit events atomically. Wire stage, timestamps and deadline are retained; quarantine remains active and no physical proof is created.
+   - A linked stop checks restore claim/owner. Audited stop reconciliation precedes Tx D; Tx D uses administrative basis when any lineage has only accepted risk; lineage complete D6 clearance is a separate transaction. D6 alone emits `QUARANTINE_RESOLVED_ADMINISTRATIVE`. New generation evidence never clears old attempt risk; no fake attempt is allocated for `PAIR_MAINTENANCE`. Replay is read-only on an exact committed decision; competing/stale decisions fail.
+   - See `docs/adr/ADR-016-CLARIFICATION-administrative-stop-risk-acceptance.md`; verified host principal remains a fail-closed runtime dependency.
 
 #### 1.2.3 Synchronous Startup Recovery Sweep (ADR-016 §19)
 
