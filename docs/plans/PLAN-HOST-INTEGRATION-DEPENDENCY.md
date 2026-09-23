@@ -3,7 +3,7 @@
 > **Authority**: External Supervisor Governance Directive
 > **Active Gate**: `TASK_P03_003D_HANDOFF_VERIFICATION`
 > **Phạm vi tài liệu**: Kế hoạch kiến trúc và quản trị cho các dependency runtime còn thiếu sau khi merge TASK-P03-003D
-> **Status**: REVISED_FOR_SUPERVISOR_REVIEW
+> **Status**: REVISED_FOR_SUPERVISOR_REVIEW (Revision 2)
 
 ---
 
@@ -14,28 +14,28 @@ Qua các subtask 3A, 3B, 3C, 3D của Task TASK-P03-003, toàn bộ phần code 
 Tuy nhiên, đối chiếu với `docs/17_ROADMAP.md` và `docs/22_MODULE_PROVENANCE.md`:
 1. **Ranh giới Phase P03**: Task contract 3D chỉ giới hạn phạm vi code trong thư viện. Nhưng mục tiêu tổng thể của Phase P03 trên Roadmap (`docs/17_ROADMAP.md`) có Exit Gate: *"Automated session creation, dispatch, observation reconciliation, raw workspace file read, and teardown pass without P04 EvidenceCollector dependencies"*. Do đó, **chưa tuyên bố toàn bộ Phase P03 hoàn tất**. Subtasks 3A–3D đã hoàn thành phạm vi thư viện, nhưng việc nối với runtime thật để đạt exit gate P03 vẫn còn phụ thuộc vào Host Integration.
 2. **Ranh giới Phase P04**: P04 sở hữu độc quyền Evidence & Review Engine (`EvidenceCollector`, `ReviewBundleBuilder`, policy validator, kiểm chứng Git diff). **P04 hoàn toàn không sở hữu daemon bootstrap, server entrypoint, hay host quiescence**.
-3. **Đối chiếu Hai Hướng Tiếp cận Quyền Sở hữu (Ownership & Roadmap)**:
-   - **Lựa chọn 1 (Host Task độc lập thuộc P03)**: Lập subtask `TASK-P03-004 Host Quiescence & Bootstrap Integration` để xây dựng daemon entrypoint, thỏa mãn exit gate P03 trước khi mở P04.
-   - **Lựa chọn 2 (Kết hợp Host Integration vào P05)**: Giữ nguyên P03 ở mức thư viện hoàn tất, triển khai P04 (Evidence/Review) trong thư viện, sau đó thực hiện Host Integration kết hợp với P05 Local HTTP/MCP Relay & Server Entrypoint.
-   - **Nguyên tắc Quản trị Thay đổi (Change Governance)**: Nếu lựa chọn phương án làm thay đổi roadmap hoặc quyền sở hữu module giữa các phase, phải lập proposal (`docs/proposals/`) và draft ADR (`docs/adr/`) để External Supervisor phê duyệt trước khi ban hành Task Contract. **Không tự ý sửa roadmap hoặc accepted ADR trong tài liệu này**.
+3. **Phân bổ Subtask `TASK-P03-004` Thuộc Phase P03**:
+   - Theo định hướng chỉ đạo của External Supervisor, dự án chọn phương án phân bổ subtask `TASK-P03-004 Host Quiescence & Daemon Bootstrap Integration` nằm trong Phase P03 để hoàn tất exit gate của P03 trước khi bước sang P04.
+   - Hồ sơ Change Governance gồm Proposal `docs/proposals/PROPOSAL-P03-005-host-quiescence-and-daemon-bootstrap-integration.md` và Draft ADR `docs/adr/DRAFT-ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md` đã được khởi tạo để External Supervisor phê duyệt trước khi ban hành Task Contract.
+   - **Quy tắc bất biến**: Không tự ý chỉnh sửa `docs/17_ROADMAP.md` hoặc các accepted ADR khi chưa có quyết định phê duyệt chính thức.
 
 ---
 
 ## 2. Căn chỉnh Kế hoạch theo API Code Thực tế Đã Tồn Tại
 
-Kế hoạch host integration phải tuân thủ nghiêm ngặt các interface và phương thức đã hiện thực trong codebase:
+Kế hoạch host integration tuân thủ nghiêm ngặt các interface và phương thức đã hiện thực trong codebase:
 
 ### 2.1. `Runner.Run(ctx)` và Cơ chế Tự Acquire Quiescence
 - **Chữ ký hàm hiện có**: `func (r *Runner) Run(ctx context.Context) (report Report, err error)` (tại `internal/recovery/scanner.go`).
-- **Cơ chế hoạt động**: `Runner.Run` **tự động gọi** `r.Host.Acquire(ctx)` để nhận `ExclusiveScope`, và dùng `defer scope.Release()`.
+- **Cơ chế hoạt động**: `Runner.Run` **tự động gọi** `r.Host.Acquire(ctx)` để nhận `ExclusiveScope`, và giải phóng qua `defer scope.Release()`.
 - **Nguyên tắc tích hợp**: Host entrypoint chỉ đóng vai trò inject provider struct vào `Runner.Host`. **Host entrypoint tuyệt đối không gọi `Host.Acquire()` lần hai** trước khi gọi `Run(ctx)`.
 - **Phạm vi Quiescence**: Interface `HostQuiescence.Acquire(context.Context) (ExclusiveScope, error)` có phạm vi là **toàn bộ database và shared effect admission chung**, không chỉ giới hạn ở một Pair cụ thể.
 
 ### 2.2. Nhất thể hóa Ba Interface vào Cùng Một Trusted Host Authority
 Cùng một trusted host boundary phải đồng thời hiện thực và đảm bảo tính nhất quán giữa 3 interface:
-1. `recovery.HostQuiescence`: `Acquire(context.Context) (ExclusiveScope, error)` — đóng admission chung, drain/join toàn bộ callers trước đó trên toàn bộ DB, cấp exclusive scope cho startup scan.
-2. `recovery.LegacyMaintenanceHost`: `AcquireMaintenance(ctx context.Context, pairID, purpose string) (ExclusiveScope, error)` — cấp quyền maintenance độc quyền cho historical budget binding hoặc manual live stop.
-3. `stop.TimeoutAdmission`: `AcquireEffect(ctx context.Context, pairID, attemptID string) (TimeoutPermit, error)` — cấp quyền effect một lần duy nhất cho timeout stop coordinator.
+1. `recovery.HostQuiescence`: `Acquire(ctx context.Context) (ExclusiveScope, error)` — đóng admission chung, drain/join toàn bộ callers trước đó trên toàn bộ DB, cấp exclusive scope cho startup scan.
+2. `recovery.LegacyMaintenanceHost`: `AcquireMaintenance(ctx context.Context, pairID string, purpose string) (ExclusiveScope, error)` — cấp quyền maintenance độc quyền cho historical budget binding hoặc manual live stop.
+3. `stop.TimeoutAdmission`: `AcquireEffect(ctx context.Context, pairID string, purpose string) (TimeoutPermit, error)` — tham số thứ ba là `purpose string` (ví dụ `"TIMEOUT_MONITOR"` như được gọi tại `internal/stop/coordinator.go:60`).
 - **Yêu cầu bắt buộc**: Việc đóng admission, drain/join, cấp exclusive ownership và release permit của cả 3 interface trên phải tuân thủ **cùng một authority** duy nhất tại trusted host boundary.
 
 ### 2.3. Hiện trạng API của `TimeoutMonitor` và Kế hoạch Scheduling
@@ -49,39 +49,43 @@ Cùng một trusted host boundary phải đồng thời hiện thực và đảm
 
 ---
 
-## 3. So sánh các Phương án Exclusivity Liên Tiến Trình (Multi-Process Exclusivity)
+## 3. Thiết kế Exclusivity Phù hợp Windows & Xử lý Wire Effect Mơ hồ
 
-### 3.1. Phân tích Vấn đề: Tại sao các Giải pháp Thông thường Không Đủ?
-Bất kỳ phương án exclusivity nào cũng phải **chứng minh được các caller cũ đã thực sự kết thúc trước khi scanner phân loại intent**.
-1. **DB Lease Expiry / TTL không đủ bằng chứng**: Nếu tiến trình cũ bị network partition, GC pause, hoặc CPU starvation, lease trên database có thể hết hạn. Khi đó tiến trình mới chiếm lease và scanner bắt đầu phân loại intent. Nhưng đúng lúc đó, tiến trình cũ tỉnh lại và hoàn tất HTTP wire call (`/send`, `/kill`, hoặc `/restore`) tới AO. Điều này phá vỡ tính nguyên tử của intent classification.
-2. **Timestamp / Clock Comparison không đủ**: Đồng hồ hệ thống giữa các máy/tiến trình có thể bị lệch; timestamp không phải bằng chứng vật lý chứng minh socket mạng đã đóng.
-3. **Row Reread / Database CAS không đủ**: Reread DB chỉ thấy dữ liệu trong database, không thấy được các request đang bay lơ lửng trên đường truyền mạng (in-flight network packets).
-4. **Process Mutex (`sync.Mutex`) không đủ**: Hoàn toàn vô hiệu giữa các OS process độc lập.
-5. **AO `/kill` và `/send` không có Fencing Token**: REST API của Untrivial AO không hỗ trợ epoch fencing token để từ chối các request xuất phát từ tiến trình mang thế hệ cũ.
+### 3.1. Phân biệt Wire Effect Mới vs. Outcome Đã phát Chưa biết
+Cần phân biệt rõ ràng hai khái niệm trực giao:
+1. **"Caller cũ không thể phát effect MỚI sau khi quiescence được xác nhận"**:
+   - Được bảo đảm chắc chắn khi tiến trình mới đã kiểm soát exclusivity, thu hồi permit và xác nhận tiến trình cũ đã thoát ở mức OS kernel. Sau mốc này, không có thêm bất kỳ request nào được gửi tới AO từ caller cũ.
+2. **"Effect ĐÃ PHÁT có outcome chưa biết (In-flight Ambiguous Outcome)"**:
+   - Các HTTP request (`/kill`, `/send`, `/restore`) đã được gửi ra dây mạng trước thời điểm quiescence có thể đã đến AO, đang xử lý trên AO, hoặc thất lạc trên mạng.
+   - **Việc terminate process hoặc đóng local socket hoàn toàn KHÔNG chứng minh AO chưa nhận effect**.
+   - **Nguyên tắc Xử lý**: Mọi intent mơ hồ (`STOP_REQUESTED`, `SEND_REQUESTED`, `RESTORE_REQUESTED`) phải được duy trì **fail-closed**, không bao giờ được replay mù quáng. Scanner và poller phải đối soát (reconcile) qua fresh GET / observation, hoặc nếu target đã terminated / generation mismatch thì ghi nhận governed logical resolution audit (`STOP_OPERATION_RESOLVED`), hoặc giữ nguyên quarantine và escalate cho human reconciliation.
 
-### 3.2. So sánh các Phương án Khả thi
+### 3.2. Thiết kế Exclusivity Phù hợp Nền tảng Windows
+1. **Không dùng POSIX Primitives & Khóa Trực tiếp SQLite**:
+   - Trên Windows, không có POSIX `flock` hay `SIGKILL`.
+   - Không đặt khóa file trực tiếp trên database file của SQLite (`.db`), vì tính chất mandatory locking của Windows sẽ gây xung đột trực tiếp với internal pager locking của SQLite (`SQLITE_BUSY` hoặc access denied).
+2. **Cơ chế Khóa Sidecar & Windows Named Mutex**:
+   - Exclusivity trên mỗi database được định danh bằng canonical path của file database.
+   - Sử dụng sidecar lock file (ví dụ `<db_path>.supervisor.lock`) mở với quyền truy cập độc quyền không chia sẻ (`syscall.FILE_SHARE_READ = 0` hoặc `LockFileEx`), kết hợp với Windows Named Mutex theo định dạng `Global\AISupervisor_<SHA256(canonical_db_path)>`.
+3. **Vòng đời Owner & Cạnh tranh Hai Process**:
+   - Khi Process B khởi động: Mở mutex/sidecar lock. Nếu Process A đang nắm giữ, Process B gửi yêu cầu bàn giao qua local IPC (Named Pipe hoặc tín hiệu sidecar).
+   - Process A nhận yêu cầu: Đóng admission, drain/join toàn bộ in-flight effect callers, giải phóng lock và thoát.
+   - Xử lý tiến trình cũ không hợp tác: Nếu quá thời hạn chờ an toàn, Process B mở handle Process A qua `OpenProcess(PROCESS_TERMINATE, ...)` và gọi `TerminateProcess`.
+   - **Bằng chứng đã thoát**: Process B dùng `WaitForSingleObject` trên process handle để xác nhận kernel Windows đã hoàn tất việc giải phóng Process A và đóng toàn bộ network socket descriptors.
+   - **Ràng buộc Fail-Closed**: Nếu chưa chứng minh được Process A đã thoát hoàn toàn và lock chưa được acquire độc quyền -> **TUYỆT ĐỐI KHÔNG CẤP `ExclusiveScope`**. `Runner.Run(ctx)` phải dừng ngay và không mở cổng phục vụ.
 
-| Tiêu chí | Phương án 1 (Khuyến nghị): Single Active Host + OS-level Exclusive Lock & Pre-Scan Hard Drain | Phương án 2: Outbound Proxy Gateway với Ephemeral Epoch Fencing | Phương án 3: Dual-Phase DB Lease kết hợp Host Connection Severing |
-|---|---|---|---|
-| **Cơ chế thực thi** | Một daemon active duy nhất trên node/DB. Sử dụng OS exclusive file lock (hoặc flock trên DB file). Tiến trình mới khi khởi động phải kích hoạt graceful takeover: yêu cầu tiến trình cũ drain và đóng socket. Nếu quá hạn, buộc tiến trình cũ terminate (SIGKILL) và OS kernel đóng toàn bộ TCP sockets trước khi trả về `ExclusiveScope`. | Dựng một local proxy trung gian kiểm soát toàn bộ outbound traffic tới AO. Proxy lưu `current_epoch`. Mọi wire call mang epoch cũ bị drop ngay tại tầng proxy. | Sử dụng bảng `host_leases` trong database, nhưng bổ sung cơ chế ép ngắt kết nối mạng (TCP RST / close socket descriptor) trước khi scanner chạy. |
-| **Bằng chứng caller cũ đã dừng** | **Rất mạnh**: OS kernel giải phóng socket và process terminate là bằng chứng vật lý chắc chắn rằng không còn wire call nào có thể được gửi đi. | **Mạnh**: Được enforce tại proxy gateway. | **Trung bình**: Phụ thuộc vào việc quản lý file descriptor mạng của host. |
-| **Độ phức tạp kiến trúc** | **Thấp / Tối giản**: Phù hợp hoàn hảo với kiến trúc single-daemon hiện tại của dự án; không thêm component mới. | **Cao**: Phải phát triển và vận hành thêm proxy service; chưa có trong ADR-016. | **Cao**: Đòi hỏi quyền can thiệp sâu vào tầng network socket của hệ điều hành. |
-| **Hỗ trợ Multi-Active** | Chỉ Active-Passive (Failover). | Có thể hỗ trợ Multi-node. | Hỗ trợ Multi-process. |
-
-### 3.3. Phương án Khuyến nghị & Phép thử Bác bỏ Giả định (Falsification Test)
-- **Khuyến nghị**: Chọn **Phương án 1 (Single Active Host with OS-level Exclusive Lock & Pre-Scan Hard Drain)**.
-- **Phép thử Bác bỏ Giả định (Falsification Test)**:
-  - *Giả định cần kiểm chứng*: "Khi tiến trình mới nhận `ExclusiveScope` từ `Host.Acquire(ctx)`, tuyệt đối không còn bất kỳ wire call nào từ tiến trình cũ đến được AO".
-  - *Thiết kế phép thử*:
-    1. Chạy Tiến trình 1, thực hiện một thao tác gửi `/kill` hoặc `/send` nhưng inject độ trễ mạng giả lập 3–5 giây.
-    2. Khởi động Tiến trình 2 trỏ vào cùng DB và gọi `Runner.Run(ctx)`.
-    3. *Điều kiện Bác bỏ*: Nếu Tiến trình 2 hoàn tất `Acquire` và phân loại intent trong khi Mock AO vẫn nhận được request `/kill` từ Tiến trình 1 -> **GIẢ ĐỊNH BỊ BÁC BỎ (TEST FAILED)**.
-    4. *Tiêu chí Chấp thuận*: Tiến trình 2 bắt buộc phải block chờ Tiến trình 1 drain xong, hoặc Tiến trình 1 bị terminate và connection bị ngắt hoàn toàn trước khi `Acquire` trả về thành công.
+### 3.3. Phép thử Bác bỏ Giả định (Falsification Test)
+- *Giả định cần kiểm chứng*: "Khi tiến trình mới nhận `ExclusiveScope` từ `Host.Acquire(ctx)`, tuyệt đối không còn bất kỳ caller cũ nào có thể phát effect mới tới AO".
+- *Thiết kế phép thử*:
+  1. Chạy Tiến trình 1, cố gắng thực hiện một thao tác gửi `/kill` nhưng bị hoãn (pause/stall) trước khi dispatch.
+  2. Khởi động Tiến trình 2 trỏ vào cùng DB và yêu cầu acquire quiescence.
+  3. *Điều kiện Bác bỏ*: Nếu Tiến trình 2 hoàn tất `Acquire` và phân loại intent trong khi Tiến trình 1 vẫn có thể tiếp tục và emit thành công effect mới tới Mock AO -> **GIẢ ĐỊNH BỊ BÁC BỎ (TEST FAILED)**.
+  4. *Tiêu chí Chấp thuận*: Tiến trình 2 bắt buộc phải block chờ Tiến trình 1 drain xong, hoặc Tiến trình 1 bị terminate và kernel đóng toàn bộ handles trước khi `Acquire` trả về thành công.
 
 ### 3.4. Xử lý Failure, Cancellation, Restart và Giới hạn Rollback
 1. **Failure / Cancellation trong lúc Acquire**: Nếu việc acquire quiescence bị lỗi hoặc context bị hủy, trả lỗi ngay lập tức, `Runner.Run` hủy bỏ, admission tiếp tục đóng fail-closed.
 2. **Crash trong lúc `Run()`**: Bất kỳ crash nào trong `Run()` sẽ khiến transaction Store chưa commit tự động rollback; `STARTUP_RECOVERY_SWEEP_STARTED` đã ghi sẽ đánh dấu sweep chưa hoàn thành; lần restart tiếp theo sẽ quét lại snapshot.
-3. **Giới hạn Rollback**: Rollback của database không thể thu hồi wire call đã phát ra ngoài AO (vì AO không hỗ trợ 2-Phase Commit). Vì vậy, ranh giới giữa `STOP_REQUESTED` (chưa proven effect) và `STOP_CALL_SUCCEEDED` (đã proven wire call) như quy định tại ADR-016 là chốt chặn bất biến cuối cùng.
+3. **Giới hạn Rollback**: Rollback của database không thể thu hồi wire call đã phát ra ngoài AO (vì AO không hỗ trợ 2-Phase Commit). Vì vậy, sự phân định `STOP_CALL_SUCCEEDED` (đã proven wire call) vs `STOP_REQUESTED` (chưa proven effect) phải được bảo vệ nghiêm ngặt.
 
 ---
 
@@ -94,12 +98,12 @@ sequenceDiagram
     participant Runner as recovery.Runner
     participant HQ as HostQuiescence Provider
     participant Poller as recovery.Poller
-    participant TM as TimeoutMonitor (Tick Scheduler)
+    participant TM as TimeoutMonitor Scheduler
     participant Listener as External API Listener
 
     rect rgb(255, 240, 240)
     Note over Host,Listener: BƯỚC 1: Khởi động ở trạng thái Fail-Closed
-    Host->>Host: Đóng toàn bộ Admission tiếp nhận request
+    Host->>Host: Đóng toàn bộ Listener Admission tiếp nhận request
     end
 
     rect rgb(240, 255, 240)
@@ -114,25 +118,21 @@ sequenceDiagram
 
     rect rgb(255, 255, 240)
     Note over Host,Listener: BƯỚC 3: Xử lý Kết quả Scan & Cấp Admission theo Pair Guards
-    alt report.Complete == true && err == nil
-        Host->>Host: Runner.ready = true
+    alt report.Complete == true && err == nil (Gồm cả report.PendingAO)
+        Note over Runner: Runner tự động đánh dấu r.ready = true
         Host->>Host: Kiểm tra Pair Guards (Quarantine CLEAN, no pending provisioning/restore)
-        Host->>Poller: Start(ctx) (Kích hoạt vòng lặp quan sát)
+        Host->>Poller: Start(ctx) (Kích hoạt vòng lặp quan sát nền)
         Host->>TM: Khởi động Ticker định kỳ gọi TimeoutMonitor.Tick(ctx)
-        Host->>Listener: Mở cổng tiếp nhận request (Admission OPEN)
-    else report.PendingAO == true
-        Host->>Host: Runner.ready = false (Chờ quan sát ngoài AO)
-        Host->>Poller: Start(ctx) (Chỉ quan sát, không mở Admission)
-        Note over Host,Listener: Admission tiếp tục ĐÓNG
+        Host->>Listener: Mở cổng tiếp nhận request (Listener Admission OPEN cho các Pair sạch)
     else Incomplete (Complete == false hoặc err != nil)
-        Host->>Host: Runner.ready = false (Gặp lỗi, cancel hoặc thiếu budget)
-        Note over Host,Listener: FAIL-CLOSED: Admission ĐÓNG, Daemon dừng phục vụ
+        Note over Runner: Runner giữ r.ready = false
+        Note over Host,Listener: FAIL-CLOSED: Listener Admission ĐÓNG, Daemon dừng phục vụ
     end
     end
 
     rect rgb(240, 240, 255)
-    Note over Host,Listener: BƯỚC 4: Graceful Shutdown khi nhận OS Signal (SIGINT/SIGTERM)
-    Host->>Listener: Đóng cổng tiếp nhận (Admission CLOSED)
+    Note over Host,Listener: BƯỚC 4: Graceful Shutdown khi nhận OS Signal
+    Host->>Listener: Đóng cổng tiếp nhận (Listener Admission CLOSED)
     Host->>Poller: Stop() (Đợi in-flight ticks drain xong)
     Host->>TM: Dừng Ticker, đợi các caller giữ TimeoutPermit kết thúc
     Host->>HQ: DrainAndJoin() (Đảm bảo mọi effect caller đã kết thúc)
@@ -142,18 +142,16 @@ sequenceDiagram
 
 ---
 
-## 5. Dự kiến Phạm vi File & Tiêu chí Fail-Closed
+## 5. Định nghĩa Bằng chứng Runtime & Tiêu chuẩn Phê duyệt
 
-### 5.1. Dự kiến File Scope
-- `cmd/supervisor/main.go`: Entrypoint duy nhất của tiến trình Supervisor daemon.
-- `internal/host/quiescence.go`: Hiện thực `HostQuiescence`, `LegacyMaintenanceHost`, và `TimeoutAdmission` trên cùng một provider.
-- `internal/host/scheduler.go`: Bộ lập lịch định kỳ gọi `TimeoutMonitor.Tick(ctx)`.
-- `internal/host/lifecycle.go`: Bộ điều phối lifecycle (khởi động `Run` -> kiểm tra Report -> kích hoạt Poller -> mở Listener -> xử lý OS signal drain).
-- `internal/host/bootstrap_test.go`: Bộ test suite kiểm chứng toàn bộ kịch bản startup-before-serve, falsification test, và graceful drain.
+### 5.1. Định nghĩa Bằng chứng Runtime Thực tế
+Bằng chứng runtime phải được thu thập từ binary daemon thực thi (`cmd/supervisor`), không chấp nhận fake integration harness:
+1. **Startup-before-serve Proof**: Log thực tế chứng minh `Runner.Run(ctx)` được gọi trước lệnh bind socket của API listener, và socket chỉ mở khi `report.Complete == true`. Nếu scan lỗi, tiến trình thoát non-zero và socket không bao giờ được mở.
+2. **Shutdown Drain Proof**: Log thực tế chứng minh khi nhận signal, listener đóng trước, poller drain xong, timeout permit được release đầy đủ trước khi kết nối DB đóng.
+3. **Verified Operator Principal Proof**: Bằng chứng danh tính operator được xác thực từ trusted boundary thật (OS user identity, mTLS client cert, hoặc secure auth token). Chuỗi tĩnh `"test-operator"` trong harness không được chấp nhận.
+4. **P03 Exit Gate Proof**: Vòng đời session dispatch -> observation reconciliation -> teardown chạy thành công tự động trên binary daemon mà không cần P04.
 
-### 5.2. Tiêu chí Chấp thuận Fail-Closed (Fail-Closed Acceptance Criteria)
-1. **Không mở cổng nếu scan chưa Complete**: Nếu `Runner.Run` trả về lỗi, bị hủy, `PendingAO == true`, hoặc `Complete == false`, listener tuyệt đối không được mở cổng.
-2. **Không phân loại intent khi chưa có exclusive scope**: `Runner.Run` chỉ chạy khi `Host.Acquire(ctx)` thành công và trả về non-nil `ExclusiveScope`.
-3. **Một authority duy nhất**: Mọi hành động cấp quyền effect hoặc maintenance đều phải đi qua cùng một host admission boundary.
-4. **Drain trước khi đóng Store**: Khi shutdown, database connection chỉ được đóng sau khi tất cả goroutine effect caller đã hoàn tất và release permit.
-5. **Invariants bất biến**: `AUTOMATIC_RESTORE=DISABLED`, không gọi AO thật, không tự ý cấp quyền code P04.
+### 5.2. Invariants Bất biến
+- `AUTOMATIC_RESTORE = DISABLED`: Giữ nguyên disable fail-closed.
+- 8 Operational policies tiếp tục giữ nguyên ở trạng thái **`UNSET`**, không tự ý đặt giá trị mặc định.
+- Tuyệt đối không gọi AO thật trong test tự động.
