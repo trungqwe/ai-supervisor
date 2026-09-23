@@ -136,3 +136,5 @@ This document establishes immutable operational directives for all AI coding age
    - `TASK_P03_003B = RELEASED`; `TASK_P03_003B_IMPLEMENTATION = IN_PROGRESS`; `AUTOMATIC_RESTORE = DISABLED`
    - `P03_CODE = AUTHORIZED_3B_ONLY`; `ACTIVE_GATE = TASK_P03_003B_IMPLEMENTATION`
    - Host/bootstrap integration owns verified operator principal evidence; until verified, runtime restore and linked stop remain disabled.
+
+> **Current remediation gate (2026-09-23)**: External Supervisor audited implementation `4b45c55d47a9bc7ede4c778e21355a476e198169`: original suite PASS, five audit probes FAIL; findings `3B-R1-001..005` OPEN; verdict `REVISION_REQUIRED` (`docs/audits/P03_TASK_003B_EXTERNAL_AUDIT_001.md`). `TASK_P03_003B_IMPLEMENTATION = REVISION_REQUIRED`; `P03_CODE = AUTHORIZED_3B_ONLY`; `ACTIVE_GATE = TASK_P03_003B_REMEDIATION`. Preserve `AUTOMATIC_RESTORE = DISABLED`, 3C/3D `NOT_RELEASED`, host-principal dependency, and `DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED`.
