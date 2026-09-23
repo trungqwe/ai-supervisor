@@ -605,3 +605,105 @@ func TestLogicalStopResolutionAuditAtomicForEveryPurpose(t *testing.T) {
 		}
 	}
 }
+
+
+func strPtr(s string) *string { return &s }
+
+func TestLiveStopTimeoutWaitingInputDispositionAndGuards(t *testing.T) {
+	ctx := context.Background()
+	s, _ := createTestStore(t)
+	defer s.Close()
+
+	for _, tc := range []struct {
+		name             string
+		disposition      *string
+		wantReserveOk    bool
+		wantPreEffectOk  bool
+	}{
+		{"waiting_input", strPtr("AO_WAITING_INPUT_OBSERVED"), true, true},
+		{"clean_null", nil, true, true},
+		{"recovery_pending", strPtr("RECOVERY_PENDING"), false, false},
+		{"blocked_decision", strPtr("AO_BLOCKED_DECISION"), false, false},
+		{"missed_window", strPtr("MISSED_ACTIVE_WINDOW"), false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			taskID := "task-guard-" + tc.name
+			contractID := "contract-guard-" + tc.name
+			attemptID := "attempt-guard-" + tc.name
+			opID := "dispatch-" + attemptID
+			stopOpID := "stop-guard-" + tc.name
+			origin := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+			deadline := origin.Add(time.Hour)
+
+			pair, attempt := setupBoundAttempt(t, s, taskID, contractID, attemptID)
+			if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", origin); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, origin, domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "policy-guard"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.TransitionTask(ctx, taskID, domain.StateDispatched, domain.StateRunning); err != nil {
+				t.Fatal(err)
+			}
+			if tc.disposition != nil {
+				if _, err := s.db.ExecContext(ctx, `UPDATE task_attempts SET recovery_disposition=? WHERE attempt_id=?`, *tc.disposition, attemptID); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			cause := "TIMEOUT"
+			stopOp := domain.StopOperation{
+				OperationID:             stopOpID,
+				Purpose:                 domain.RunningAttemptStop,
+				PairID:                  pair,
+				TaskID:                  &taskID,
+				ContractID:              &contractID,
+				AttemptID:               &attemptID,
+				SessionID:               *attempt.SessionID,
+				TerminalGeneration:      *attempt.TerminalGeneration,
+				Actor:                   "supervisor",
+				RequestedAt:             deadline,
+				InitiatingFailureReason: &cause,
+			}
+
+			err := s.ReserveStopOperation(ctx, stopOp)
+			if tc.wantReserveOk && err != nil {
+				t.Fatalf("ReserveStopOperation unexpectedly failed: %v", err)
+			}
+			if !tc.wantReserveOk && err == nil {
+				t.Fatal("ReserveStopOperation unexpectedly succeeded for non-eligible disposition")
+			}
+
+			if tc.wantReserveOk {
+				preErr := s.ValidateTimeoutEffectOwner(ctx, stopOpID)
+				if tc.wantPreEffectOk && preErr != nil {
+					t.Fatalf("ValidateTimeoutEffectOwner failed: %v", preErr)
+				}
+				if !tc.wantPreEffectOk && preErr == nil {
+					t.Fatal("ValidateTimeoutEffectOwner unexpectedly succeeded")
+				}
+
+				call := deadline.Add(time.Second)
+				if err := s.CommitStopCallAccepted(ctx, stopOpID, call, call.Add(time.Minute)); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.CommitStopOutcome(ctx, stopOpID, StopTerminalOutcome{
+					ExpectedStage:        domain.StopCallSucceeded,
+					Stage:                domain.StopTerminationConfirmed,
+					Resolution:           domain.StopResolutionTerminationConfirmed,
+					At:                   call.Add(time.Nanosecond),
+					ObservedSessionID:    stopOp.SessionID,
+					ObservedGeneration:   stopOp.TerminalGeneration,
+					ObservedIsTerminated: true,
+				}); err != nil {
+					t.Fatal(err)
+				}
+
+				var auditCount int
+				if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM audit_events WHERE event_type='TASK_STATE_TRANSITION' AND attempt_id=? AND json_extract(details_json,'$.failure_reason')='TIMEOUT' AND json_extract(details_json,'$.recovery_disposition')='WORKER_STOPPED'`, attemptID).Scan(&auditCount); err != nil || auditCount != 1 {
+					t.Fatalf("closure audit=%d err=%v, want 1", auditCount, err)
+				}
+			}
+		})
+	}
+}

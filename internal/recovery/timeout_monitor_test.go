@@ -9,6 +9,7 @@ import (
 	"github.com/trungqwe/ai-supervisor/internal/ao"
 	"github.com/trungqwe/ai-supervisor/internal/domain"
 	"github.com/trungqwe/ai-supervisor/internal/stop"
+	"github.com/trungqwe/ai-supervisor/internal/store"
 )
 
 type timeoutTestHost struct {
@@ -37,6 +38,7 @@ type timeoutTestAO struct {
 	mu                  sync.Mutex
 	session, generation string
 	gets, kills         int
+	initialState        ao.ActivityState
 	secondState         ao.ActivityState
 	terminated          bool
 	preflightEntered    chan struct{}
@@ -51,6 +53,9 @@ func (a *timeoutTestAO) GetWorkerStatus(context.Context, string) (*ao.WorkerStat
 		close(a.preflightEntered)
 	}
 	state := ao.ActivityStateActive
+	if a.initialState != "" {
+		state = a.initialState
+	}
 	if a.gets >= 2 && a.secondState != "" {
 		state = a.secondState
 	}
@@ -85,11 +90,22 @@ func TestTimeoutMonitorBeforeEqualAfterAndNoReplay(t *testing.T) {
 			if err := s.RecordSendConfirmed(ctx, "dispatch-budget-"+tc.name, "fixture", true, origin, domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "historical-policy"}); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.TransitionTask(ctx, "budget-"+tc.name, domain.StateDispatched, domain.StateRunning); err != nil {
+			snap, err := s.ListRecoverySnapshot(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var targetExec store.RecoveryExecution
+			for _, ex := range snap.Executions {
+				if ex.AttemptID == attempt {
+					targetExec = ex
+					break
+				}
+			}
+			if err := s.ObservePostSend(ctx, targetExec, store.PostSendObservation{SessionID: session, Generation: generation, Activity: "waiting_input"}, "fixture", "obs-"+tc.name, origin); err != nil {
 				t.Fatal(err)
 			}
 			h := &timeoutTestHost{}
-			a := &timeoutTestAO{session: session, generation: generation}
+			a := &timeoutTestAO{session: session, generation: generation, initialState: ao.ActivityStateWaitingInput}
 			r := &Runner{Store: s, Host: h, ready: true}
 			c := &stop.Coordinator{Store: s, AO: a, KillTimeout: time.Minute}
 			m := &TimeoutMonitor{Owner: r, Stop: c, Interval: time.Second, Actor: "fixture", Now: func() time.Time { return origin.Add(time.Hour).Add(tc.offset) }}
@@ -263,5 +279,146 @@ func TestTimeoutMonitorPreflightTerminationUsesLifecycleWithoutStop(t *testing.T
 	att, err := s.GetTaskAttempt(ctx, attempt)
 	if err != nil || att.EndedAt == nil {
 		t.Fatalf("attempt=%+v err=%v", att, err)
+	}
+}
+
+
+func TestTimeoutMonitorWaitingInputFullLifecycleAndRollback(t *testing.T) {
+	ctx := context.Background()
+	s := newRecoveryStore(t)
+	taskID := "waiting-input-lifecycle"
+	session, generation, attempt := seedBoundExecution(t, s, taskID)
+	origin := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	duration := time.Hour
+	deadline := origin.Add(duration)
+
+	if err := s.RecordSendRequested(ctx, "dispatch-"+taskID, session, generation, "idle", false, "fixture", origin); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordSendConfirmed(ctx, "dispatch-"+taskID, "fixture", true, origin, domain.ExecutionBudgetPolicy{Duration: duration, PolicyRef: "historical-policy"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Genuine lifecycle: SEND_CONFIRMED -> ObservePostSend(waiting_input)
+	snap, err := s.ListRecoverySnapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exec store.RecoveryExecution
+	for _, ex := range snap.Executions {
+		if ex.AttemptID == attempt {
+			exec = ex
+			break
+		}
+	}
+	if exec.AttemptID == "" {
+		t.Fatal("execution attempt not found in snapshot")
+	}
+	if err := s.ObservePostSend(ctx, exec, store.PostSendObservation{SessionID: session, Generation: generation, Activity: "waiting_input"}, "fixture", "obs-waiting", origin); err != nil {
+		t.Fatal(err)
+	}
+
+	task, err := s.GetTask(ctx, taskID)
+	if err != nil || task.State != domain.StateRunning {
+		t.Fatalf("task state=%+v err=%v, want RUNNING", task, err)
+	}
+	att, err := s.GetTaskAttempt(ctx, attempt)
+	if err != nil || att.RecoveryDisposition == nil || *att.RecoveryDisposition != "AO_WAITING_INPUT_OBSERVED" {
+		t.Fatalf("attempt disposition=%+v err=%v, want AO_WAITING_INPUT_OBSERVED", att, err)
+	}
+
+	// 2. Budget is preserved across restart while attempt is open
+	budget, err := s.GetExecutionBudget(ctx, attempt)
+	if err != nil {
+		t.Fatalf("GetExecutionBudget err=%v", err)
+	}
+	if !budget.OriginAt.Equal(origin) || !budget.DeadlineAt.Equal(deadline) || budget.Duration != duration || budget.PolicyRef != "historical-policy" {
+		t.Fatalf("budget mismatch on restart: %+v", budget)
+	}
+
+	h := &timeoutTestHost{}
+	a := &timeoutTestAO{session: session, generation: generation, initialState: ao.ActivityStateWaitingInput}
+	r := &Runner{Store: s, Host: h, ready: true}
+	c := &stop.Coordinator{Store: s, AO: a, KillTimeout: time.Minute}
+	m := &TimeoutMonitor{Owner: r, Stop: c, Interval: time.Second, Actor: "fixture", Now: func() time.Time { return deadline.Add(-10 * time.Second) }}
+
+	// 2. Before deadline: monitor tick does NOT kill
+	if err := m.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	a.mu.Lock()
+	kills := a.kills
+	a.mu.Unlock()
+	if kills != 0 {
+		t.Fatalf("early tick killed worker: %d kills", kills)
+	}
+
+	// 3. At deadline: monitor tick issues exactly one kill
+	m.Now = func() time.Time { return deadline }
+	if err := m.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	a.mu.Lock()
+	kills = a.kills
+	a.mu.Unlock()
+	if kills != 1 {
+		t.Fatalf("on-time tick kills=%d, want 1", kills)
+	}
+
+	// 4. After deadline: repeated tick emits zero replay effects
+	m.Now = func() time.Time { return deadline.Add(10 * time.Second) }
+	if err := m.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	a.mu.Lock()
+	kills = a.kills
+	a.mu.Unlock()
+	if kills != 1 {
+		t.Fatalf("replay tick kills=%d, want 1", kills)
+	}
+
+	// 5. Check D11 outcome
+	task, err = s.GetTask(ctx, taskID)
+	if err != nil || task.State != domain.StateFailed {
+		t.Fatalf("task state=%+v err=%v, want FAILED", task, err)
+	}
+	att, err = s.GetTaskAttempt(ctx, attempt)
+	if err != nil || att.EndedAt == nil || att.QuarantineState != domain.QuarantineClean || att.RecoveryDisposition == nil || *att.RecoveryDisposition != "WORKER_STOPPED" {
+		t.Fatalf("attempt closure state=%+v err=%v", att, err)
+	}
+
+	// 6. Check D11 audit: failure_reason=TIMEOUT and recovery_disposition=WORKER_STOPPED
+	events, err := s.ListAuditEvents(ctx, 0, 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var foundClosureAudit bool
+	var stopOpID string
+	for _, ev := range events {
+		if ev.Event.AttemptID == attempt && ev.Event.EventType == domain.AuditTaskStateTransition {
+			if ev.Event.Details["failure_reason"] == "TIMEOUT" && ev.Event.Details["recovery_disposition"] == "WORKER_STOPPED" {
+				foundClosureAudit = true
+				if id, ok := ev.Event.Details["stop_operation_id"].(string); ok {
+					stopOpID = id
+				}
+			}
+		}
+	}
+	if !foundClosureAudit {
+		t.Fatal("D11 closure audit with failure_reason=TIMEOUT not found")
+	}
+	if stopOpID == "" {
+		t.Fatal("stop_operation_id missing from transition audit")
+	}
+
+	// 7. Check durable timeout cause on stop operation
+	stopOp, err := s.GetStopOperation(ctx, stopOpID)
+	if err != nil || stopOp.InitiatingFailureReason == nil || *stopOp.InitiatingFailureReason != "TIMEOUT" {
+		t.Fatalf("stop operation initiating_failure_reason=%+v err=%v, want TIMEOUT", stopOp, err)
+	}
+
+	// 8. Stale writer is rejected; task cannot transition backwards from terminal state
+	if err := s.TransitionTask(ctx, taskID, domain.StateRunning, domain.StateFailed); err == nil {
+		t.Fatal("stale task transition accepted")
 	}
 }

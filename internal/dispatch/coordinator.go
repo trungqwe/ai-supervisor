@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/trungqwe/ai-supervisor/internal/ao"
@@ -228,7 +229,12 @@ func (c *Coordinator) Dispatch(ctx context.Context, taskID, contractID, attemptI
 		return errors.New("dispatch: coordinator dependencies are not configured")
 	}
 	policy := c.ExecutionPolicy
-	if policy.Duration <= 0 || policy.PolicyRef == "" {
+	if policy.Duration <= 0 || strings.TrimSpace(policy.PolicyRef) == "" {
+		return errors.New("dispatch: injected execution budget policy required before send")
+	}
+	now := time.Now().UTC()
+	deadline := now.Add(policy.Duration)
+	if !deadline.After(now) || now.Year() < 1 || deadline.Year() > 9999 {
 		return errors.New("dispatch: injected execution budget policy required before send")
 	}
 	task, err := c.Store.GetTask(ctx, taskID)

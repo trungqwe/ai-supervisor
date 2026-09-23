@@ -69,7 +69,8 @@ func (m *TimeoutMonitor) Tick(ctx context.Context) error {
 		if err = ctx.Err(); err != nil {
 			return err
 		}
-		if x.TaskState != "RUNNING" || x.DispatchStage != "SEND_CONFIRMED" || owned[x.AttemptID] || x.Disposition.Valid {
+		hasEligibleDisposition := !x.Disposition.Valid || x.Disposition.String == "AO_WAITING_INPUT_OBSERVED"
+		if x.TaskState != "RUNNING" || x.DispatchStage != "SEND_CONFIRMED" || owned[x.AttemptID] || !hasEligibleDisposition {
 			continue
 		}
 		budget, e := m.Owner.Store.GetExecutionBudget(ctx, x.AttemptID)

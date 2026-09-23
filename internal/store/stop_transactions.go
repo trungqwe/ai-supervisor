@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/trungqwe/ai-supervisor/internal/domain"
@@ -70,7 +71,7 @@ func (s *Store) ReserveStopOperation(ctx context.Context, stop domain.StopOperat
 			var origin, deadline, dispatchSession, dispatchGeneration, stage, policyRef string
 			var duration int64
 			var guard int
-			err = tx.QueryRowContext(ctx, `SELECT b.origin_at,b.deadline_at,b.duration_ns,b.policy_ref,d.session_id,d.terminal_generation,d.stage, (a.quarantine_state='CLEAN' AND w.quarantine_state='CLEAN' AND a.recovery_disposition IS NULL AND w.session_id=? AND w.terminal_generation=?) FROM attempt_execution_budgets b JOIN dispatch_operations d ON d.operation_id=b.dispatch_operation_id AND d.attempt_id=b.attempt_id JOIN task_attempts a ON a.attempt_id=b.attempt_id JOIN worker_sessions w ON w.pair_id=d.pair_id WHERE b.attempt_id=? AND d.pair_id=? AND d.task_id=?`, stop.SessionID, stop.TerminalGeneration, *stop.AttemptID, stop.PairID, *stop.TaskID).Scan(&origin, &deadline, &duration, &policyRef, &dispatchSession, &dispatchGeneration, &stage, &guard)
+			err = tx.QueryRowContext(ctx, `SELECT b.origin_at,b.deadline_at,b.duration_ns,b.policy_ref,d.session_id,d.terminal_generation,d.stage, (a.quarantine_state='CLEAN' AND w.quarantine_state='CLEAN' AND (a.recovery_disposition IS NULL OR a.recovery_disposition='AO_WAITING_INPUT_OBSERVED') AND w.session_id=? AND w.terminal_generation=?) FROM attempt_execution_budgets b JOIN dispatch_operations d ON d.operation_id=b.dispatch_operation_id AND d.attempt_id=b.attempt_id JOIN task_attempts a ON a.attempt_id=b.attempt_id JOIN worker_sessions w ON w.pair_id=d.pair_id WHERE b.attempt_id=? AND d.pair_id=? AND d.task_id=?`, stop.SessionID, stop.TerminalGeneration, *stop.AttemptID, stop.PairID, *stop.TaskID).Scan(&origin, &deadline, &duration, &policyRef, &dispatchSession, &dispatchGeneration, &stage, &guard)
 			if err != nil {
 				return fmt.Errorf("%w: immutable timeout budget absent: %v", ErrStateConflict, err)
 			}
@@ -82,7 +83,7 @@ func (s *Store) ReserveStopOperation(ctx context.Context, stop domain.StopOperat
 			if e != nil {
 				return e
 			}
-			if duration <= 0 || policyRef == "" || !originAt.Add(time.Duration(duration)).Equal(deadlineAt) || stage != string(domain.SendConfirmed) || guard != 1 || dispatchSession != stop.SessionID || dispatchGeneration != stop.TerminalGeneration || stop.RequestedAt.Before(deadlineAt) {
+			if duration <= 0 || strings.TrimSpace(policyRef) == "" || !originAt.Add(time.Duration(duration)).Equal(deadlineAt) || stage != string(domain.SendConfirmed) || guard != 1 || dispatchSession != stop.SessionID || dispatchGeneration != stop.TerminalGeneration || stop.RequestedAt.Before(deadlineAt) {
 				return ErrStateConflict
 			}
 		}
@@ -141,7 +142,7 @@ func (s *Store) ValidateTimeoutEffectOwner(ctx context.Context, operationID stri
  JOIN worker_sessions w ON w.pair_id=t.pair_id
  JOIN dispatch_operations d ON d.attempt_id=a.attempt_id
  WHERE t.pair_id=? AND t.task_id=? AND t.state='RUNNING' AND a.attempt_id=? AND a.contract_id=?
- AND a.ended_at IS NULL AND a.recovery_disposition IS NULL AND a.quarantine_state='QUARANTINED'
+ AND a.ended_at IS NULL AND (a.recovery_disposition IS NULL OR a.recovery_disposition='AO_WAITING_INPUT_OBSERVED') AND a.quarantine_state='QUARANTINED'
  AND a.session_id=? AND a.terminal_generation=? AND w.session_id=? AND w.terminal_generation=?
  AND w.quarantine_state='QUARANTINED' AND d.stage='SEND_CONFIRMED' AND d.resolution_state IS NULL)
  AND NOT EXISTS(SELECT 1 FROM stop_operations WHERE pair_id=? AND operation_id<>? AND resolution_state IN ('IN_FLIGHT','STOP_CALL_OUTCOME_UNKNOWN','STOP_CONFIRMATION_TIMEOUT','STOP_REISSUE_REQUIRES_HUMAN'))

@@ -721,3 +721,121 @@ func TestPreSendObservationMatrixKeepsOrClosesExactAttempt(t *testing.T) {
 		})
 	}
 }
+
+
+func TestDispatchExecutionPolicyValidationBeforeSendAndContainment(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		policy      domain.ExecutionBudgetPolicy
+		wantValid   bool
+	}{
+		{"empty_policy_ref", domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: ""}, false},
+		{"whitespace_policy_ref", domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "   "}, false},
+		{"tabs_newlines_policy_ref", domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "\t\r\n"}, false},
+		{"zero_duration", domain.ExecutionBudgetPolicy{Duration: 0, PolicyRef: "valid-ref"}, false},
+		{"negative_duration", domain.ExecutionBudgetPolicy{Duration: -time.Minute, PolicyRef: "valid-ref"}, false},
+		{"valid_positive_control", domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "valid-policy"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			s, err := store.Open(ctx, store.Config{DBPath: filepath.Join(t.TempDir(), "policy-val.db")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+
+			taskID := "task-policy-" + tc.name
+			contractID := "contract-policy-" + tc.name
+			attemptID := "attempt-policy-" + tc.name
+			opID := "dispatch-policy-" + tc.name
+			pairID := "pair-policy-" + tc.name
+			sessionID := "session-policy-" + tc.name
+			generation := "gen-policy-" + tc.name
+
+			if err := s.CreateProject(ctx, domain.Project{ProjectID: "proj-policy", Name: "p", RootPath: "/p"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.CreatePair(ctx, domain.Pair{PairID: pairID, ProjectID: "proj-policy", CurrentPhaseID: "P03", State: "ACTIVE"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.CreateTask(ctx, domain.Task{TaskID: taskID, PhaseID: "P03", PairID: pairID, State: domain.StateDraft}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.InsertTaskContract(ctx, domain.TaskContract{ContractID: contractID, TaskID: taskID, RevisionNumber: 1, BaseSHA: "583e700eb125a08cc6bd7d63b6b27a6f3d4cc527", AllowedScope: []string{"internal/domain/**"}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.TransitionTask(ctx, taskID, domain.StateDraft, domain.StateReady); err != nil {
+				t.Fatal(err)
+			}
+			provision := domain.PairProvisioningOperation{OperationID: "prov-" + tc.name, PairID: pairID, ClientToken: "tok-" + tc.name}
+			if err := s.ReservePairProvisioning(ctx, provision, "supervisor"); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.ConfirmPairProvisioning(ctx, provision.OperationID, domain.WorkerSession{PairID: pairID, SessionID: sessionID, RuntimeType: "agy_tui", WorkerAgentID: "agy", Status: domain.WorkerSessionIdle, TerminalGeneration: generation, QuarantineState: domain.QuarantineClean}, "supervisor", time.Now().UTC()); err != nil {
+				t.Fatal(err)
+			}
+
+			upstream := &fakeAO{
+				statusResult:   &ao.WorkerStatus{ID: sessionID, TerminalGeneration: generation, Activity: ao.ActivitySnapshot{State: ao.ActivityStateIdle}},
+				dispatchResult: &ao.DispatchTaskResult{SessionID: sessionID},
+			}
+			c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: tc.policy}
+			report, err := store.CanonicalExpectedReportPath(taskID, attemptID)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			dispatchErr := c.Dispatch(ctx, taskID, contractID, attemptID, opID, sessionID, generation, report, "contract text", "supervisor")
+
+			if !tc.wantValid {
+				if dispatchErr == nil {
+					t.Fatal("invalid policy was unexpectedly dispatched")
+				}
+				if upstream.sends != 0 {
+					t.Fatalf("invalid policy called upstream send %d times, want 0", upstream.sends)
+				}
+				// Ensure NO SEND_REQUESTED was recorded
+				if _, err := s.GetDispatchOperation(ctx, opID); !errors.Is(err, store.ErrOperationNotFound) {
+					t.Fatalf("dispatch operation unexpectedly exists: %v", err)
+				}
+				// Ensure NO budget was recorded
+				if _, err := s.GetExecutionBudget(ctx, attemptID); err == nil {
+					t.Fatal("budget unexpectedly recorded for invalid policy")
+				}
+				// Ensure NO D5 containment occurred
+				events, err := s.ListAuditEvents(ctx, 0, 500)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, ev := range events {
+					if ev.Event.TaskID == taskID && ev.Event.Details["resolution_state"] == "DELIVERY_OUTCOME_UNKNOWN" {
+						t.Fatal("D5 containment audit event unexpectedly found")
+					}
+				}
+				// Task state remains READY
+				task, err := s.GetTask(ctx, taskID)
+				if err != nil || task.State != domain.StateReady {
+					t.Fatalf("task state=%+v err=%v, want READY", task, err)
+				}
+			} else {
+				if dispatchErr != nil {
+					t.Fatalf("positive control dispatch failed: %v", dispatchErr)
+				}
+				if upstream.sends != 1 {
+					t.Fatalf("positive control sends=%d, want 1", upstream.sends)
+				}
+				dop, err := s.GetDispatchOperation(ctx, opID)
+				if err != nil || dop.Stage != domain.SendConfirmed {
+					t.Fatalf("dispatch op=%+v err=%v, want SEND_CONFIRMED", dop, err)
+				}
+				budget, err := s.GetExecutionBudget(ctx, attemptID)
+				if err != nil || budget.PolicyRef != tc.policy.PolicyRef {
+					t.Fatalf("budget=%+v err=%v, want policy %s", budget, err, tc.policy.PolicyRef)
+				}
+				if dop.ResolutionState != nil {
+					t.Fatalf("positive control has resolution_state: %v", dop.ResolutionState)
+				}
+			}
+		})
+	}
+}
