@@ -78,7 +78,7 @@ Authority: `docs/adr/ADR-016-CLARIFICATION-administrative-stop-risk-acceptance.m
 | Restart stop alive dùng `STOP_OPERATION_RESOLVED` | docs/05 §3; docs/14 §1.2.3 Step 3; clarification §2 | AC-3D-04/05/11: no reissue, exact lineage/deadline/ownership, CAS/audit rollback |
 | Exclusive host quiescence trước startup intent classification | docs/14 §1.2 exclusive host quiescence; `docs/adr/ADR-016-ADDENDUM-exclusive-host-quiescence-for-startup-recovery.md`; `CONTRACT-TASK-P03-003D-02` | AC-3D-10/12/13/14: barrier A/B/C, drain/join, competing Run, cancellation, fail-closed admission |
 
-## Execution budget addendum coverage — candidate revision 3, chưa implementation PASS
+## Execution budget addendum coverage — Contract revision 3 RELEASED, implementation EXTERNAL_AUDIT_APPROVED
 
 | Quyết định Supervisor tại `3babaa2` | Canonical section / authority | AC dự kiến / file whitelist |
 | --- | --- | --- |
@@ -87,4 +87,4 @@ Authority: `docs/adr/ADR-016-CLARIFICATION-administrative-stop-risk-acceptance.m
 | EXEC-R1-002 Tx R dùng 3C atomic double quarantine, own-intent guard, second GET, one-use effect; bỏ quyền giữ IN_FLIGHT | ADR §§4–5.1; docs/05 §4; docs/06 §4; docs/14 REC-004 | AC-3D-17/19; `internal/store/stop_transactions.go`, `internal/stop/coordinator.go`, `internal/recovery/timeout_monitor.go` và tests |
 | EXEC-R1-003 migrate-to-current assertion, không sửa fixture v4/rollback | ADR §3; docs/22 §5 | AC-3D-15; `internal/store/migrations_v4_test.go` và `migrations_v5_test.go` |
 
-Đây là coverage thiết kế, không là kết quả test; candidate revision 3 `NOT_RELEASED`, `3D-R1-005=OPEN`. Host principal, `HOST_QUIESCENCE_INTEGRATION` và startup wiring vẫn là dependency runtime.
+Contract revision 3 đã RELEASED; implementation 3D EXTERNAL_AUDIT_APPROVED tại `7513f1b9f39fa459be15e0abc836c6258a610d8b`; `3D-R1-001..005` và `3D-R2-001..002` đã CLOSED ở library scope; code đã MERGED tại `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea`. Host principal, `HOST_QUIESCENCE_INTEGRATION=OPEN` và startup wiring (`DESIGN_BLOCKER_3D_STARTUP_WIRING=PRESERVED`) tiếp tục là dependency runtime.
