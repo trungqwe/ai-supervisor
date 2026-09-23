@@ -256,8 +256,8 @@ classDiagram
      - Each `TaskAttempt` binds to exactly one `TaskContract` revision (`contract_id`).
      - Core Attributes: `attempt_id` (unique opaque immutable attempt identity), `attempt_number` (monotonically increasing integer within the task), `task_id`, `contract_id`, `expected_report_path`, `started_at`, `ended_at`, `worker_report_raw`.
      - Candidate Snapshot Extensions (ADR-016 §27):
-       - `session_id TEXT`: Immutable snapshot of the bound worker session identity for historical auditability.
-       - `terminal_generation TEXT`: Opaque generation string captured upon attempt conclusion.
+       - `session_id TEXT`: Immutable snapshot of the bound worker session identity, populated at `DISPATCH_BOUND` and permanently immutable once written.
+       - `terminal_generation TEXT`: Opaque generation string launch fence, populated at `DISPATCH_BOUND` and permanently immutable once written (never deferred to attempt conclusion).
        - `recovery_disposition TEXT`: Diagnostic classification of execution outcome (e.g. `UNCERTAIN_DELIVERY_CRASH`, `MISSED_ACTIVE_WINDOW`, `AO_BLOCKED_DECISION`, `AO_BLOCKED_ESCALATED`, `WORKER_STOPPED`).
        - `quarantine_state TEXT NOT NULL DEFAULT 'CLEAN' CHECK (quarantine_state IN ('CLEAN', 'QUARANTINED'))`: Independent safety gate at attempt scope.
      - *Invariants*:

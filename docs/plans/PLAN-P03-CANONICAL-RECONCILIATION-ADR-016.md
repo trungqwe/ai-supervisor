@@ -378,8 +378,8 @@ Reconciliation execution will be considered complete and ready for External Supe
 - **Status**: **`CLOSED WITH PINNED AO EVIDENCE`** (Approved by External Supervisor at commit `906d5969347773bd7cf5bbe273b34fd4f549efce`).
 - **Pinned AO Verification (Commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`)**:
   - `backend/internal/httpd/apispec/openapi.yaml:5245-5283`: Defines path `POST /api/v1/sessions/{sessionId}/restore`, `operationId: restoreSession`, summary `"Restore a terminated session"`, responses: HTTP 200 (`RestoreSessionResponse`), 404, 409, 500.
-  - `backend/internal/httpd/controllers/sessions.go:201`: Registers `r.Post("/sessions/{sessionId}/restore", c.restore)`.
-  - `backend/internal/httpd/controllers/sessions.go:1333-1344`: Handler `c.restore` invokes `c.Svc.Restore(r.Context(), sessionID(r))` and writes HTTP 200 JSON `RestoreSessionResponse{OK: true, SessionID: sessionID(r), RestoreMode: out.Mode, Session: sessionView(out.Session)}`.
+  - `backend/internal/httpd/controllers/sessions.go:195`: Registers `r.Post("/sessions/{sessionId}/restore", c.restore)`.
+  - `backend/internal/httpd/controllers/sessions.go:1250-1261`: Handler `c.restore` invokes `c.Svc.Restore(r.Context(), sessionID(r))` and writes HTTP 200 JSON `RestoreSessionResponse{OK: true, SessionID: sessionID(r), RestoreMode: out.Mode, Session: sessionView(out.Session)}`.
   - `backend/internal/service/session/service.go:579-589`: Service implementation:
     ```go
     // Restore relaunches a terminated session and returns the API-facing read model.
@@ -387,7 +387,7 @@ Reconciliation execution will be considered complete and ready for External Supe
     ```
 - **Distinction Between `/restore` and `/resume-agent`**:
   - `POST /api/v1/sessions/{sessionId}/restore` (`operationId: restoreSession`): Restores a **terminated** session, relaunching it and recreating or preserving workspace. This is the exact capability that ADR-016 designates as `ResumeWorker` (ADR-016 §7 items 4-5, §9 item 1, §13 item 2).
-  - `POST /api/v1/sessions/{sessionId}/resume-agent` (`operationId: resumeAgent`, `openapi.yaml:5284-5324`, `controllers/sessions.go:202, 1346-1357`, `service.go:608-618`): Resumes an exited agent process within an active session without restoring a terminated session or recreating its workspace.
+  - `POST /api/v1/sessions/{sessionId}/resume-agent` (`operationId: resumeAgent`, `openapi.yaml:5284-5324`, `controllers/sessions.go:197, 1289-1304`, `service.go:608-618`): Resumes an exited agent process within an active session without restoring a terminated session or recreating its workspace.
 - **Resolution & Authorization**:
   - The approved wire route implementing ADR-016 `ResumeWorker` is formally verified as `POST /api/v1/sessions/{sessionId}/restore`.
   - Zero ADR-016 modification is required; the ADR's architectural decision and ubiquitous terminology (`ResumeWorker`) remain intact and are directly satisfied by pinned AO's `restoreSession` API.
