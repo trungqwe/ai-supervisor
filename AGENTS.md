@@ -84,7 +84,7 @@ This document establishes immutable operational directives for all AI coding age
 > Architecture classification established: `P03_ARCHITECTURE_CHANGE = YES`, `P03_ADR_REQUIRED = YES`.
 > Parent `TASK-P03-003` is released for 3A, 3B, 3C and 3D; only the 3D contract authorizes current implementation.
 > External Supervisor approved `TASK_P03_003B_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED` at `442e87e075e1540738ceeae00fdfa045d440cea8` (`docs/audits/P03_TASK_003B_EXTERNAL_REAUDIT_003.md`). The approved implementation was merged without code changes at `246f74eabd09bbc2ea66624ee217035167824a86`; post-merge race/full-suite checks passed.
-> External Supervisor released `CONTRACT-TASK-P03-003C-01` from candidate `a8f8edc7a64f3d1aa66acf5519397fe46d8f6177`, blob `7a689f16f04b35acecb7952dc43873ece6f7df6f`; findings `3C-C1-001..003=CLOSED` at design level. Historical `BLOCKER-3C-001` closed at design level. Historical audit of `90a168daa2fcd114e1fcbba3c15319897c257b42` required remediation (`docs/audits/P03_TASK_003C_EXTERNAL_AUDIT_001.md`). External Supervisor approved implementation `3d223e47eb4ba05809b196fc77caca61f94421eb`, closed `3C-R1-001..003`, and merged the audited code at `583e700eb125a08cc6bd7d63b6b27a6f3d4cc527` (`docs/audits/P03_TASK_003C_EXTERNAL_REAUDIT_001.md`). `TASK_P03_003C_IMPLEMENTATION=EXTERNAL_AUDIT_APPROVED`; `TASK_P03_003D=RELEASED`; `TASK_P03_003D_IMPLEMENTATION=IN_PROGRESS`; `P03_CODE=AUTHORIZED_3D_ONLY`; `ACTIVE_GATE=TASK_P03_003D_IMPLEMENTATION`.
+> External Supervisor released `CONTRACT-TASK-P03-003C-01` from candidate `a8f8edc7a64f3d1aa66acf5519397fe46d8f6177`, blob `7a689f16f04b35acecb7952dc43873ece6f7df6f`; findings `3C-C1-001..003=CLOSED` at design level. Historical `BLOCKER-3C-001` closed at design level. Historical audit of `90a168daa2fcd114e1fcbba3c15319897c257b42` required remediation (`docs/audits/P03_TASK_003C_EXTERNAL_AUDIT_001.md`). External Supervisor approved implementation `3d223e47eb4ba05809b196fc77caca61f94421eb`, closed `3C-R1-001..003`, and merged the audited code at `583e700eb125a08cc6bd7d63b6b27a6f3d4cc527` (`docs/audits/P03_TASK_003C_EXTERNAL_REAUDIT_001.md`). `TASK_P03_003C_IMPLEMENTATION=EXTERNAL_AUDIT_APPROVED`; `TASK_P03_003D=RELEASED`; `TASK_P03_003D_IMPLEMENTATION=BLOCKED` (BLOCKER-3D-001/002; see `docs/audits/P03_TASK_003D_IMPLEMENTATION_BLOCKER_001.md`); `P03_CODE=AUTHORIZED_3D_ONLY`; `ACTIVE_GATE=TASK_P03_003D_IMPLEMENTATION`.
 
 > External Supervisor approved ADR-016 addendum design at audited SHA 3807343f06f99c0e11460c74522a2efb3be19491; ADD-R1-001..003 CLOSED. DESIGN_BLOCKER_3B_RESTORE_PROTOCOL=CLOSED_BY_APPROVED_ADDENDUM. Canonical reconciliation per addendum is EXTERNAL_AUDIT_APPROVED.
 > Host/bootstrap integration owns verified operator principal evidence at the trusted boundary. Library fake-principal tests do not enable runtime restore or linked stop. AUTOMATIC_RESTORE=DISABLED. 3D is RELEASED for implementation; DESIGN_BLOCKER_3D_STARTUP_WIRING preserved.
@@ -129,7 +129,7 @@ This document establishes immutable operational directives for all AI coding age
    - `TASK_P03_003C = RELEASED`
    - `TASK_P03_003C_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED`
    - `TASK_P03_003D = RELEASED`
-   - `TASK_P03_003D_IMPLEMENTATION = IN_PROGRESS`
+   - `TASK_P03_003D_IMPLEMENTATION = BLOCKED`
    - `P03_CODE = AUTHORIZED_3D_ONLY`
    - `ACTIVE_GATE = TASK_P03_003D_IMPLEMENTATION`
    - `DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED`
