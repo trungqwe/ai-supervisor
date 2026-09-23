@@ -12,6 +12,7 @@ import (
 
 	"github.com/trungqwe/ai-supervisor/internal/ao"
 	"github.com/trungqwe/ai-supervisor/internal/domain"
+	"github.com/trungqwe/ai-supervisor/internal/stop"
 	"github.com/trungqwe/ai-supervisor/internal/store"
 )
 
@@ -983,5 +984,69 @@ func TestLegacyMaintenanceMissingTrustedBoundaryFailsClosed(t *testing.T) {
 	r := &Runner{Store: s, Host: &testHost{}, Operator: legacyOperator{principal: "operator", allowed: true}}
 	if err := r.BindLegacyBudget(context.Background(), attempt, "evidence", domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "p"}); err == nil || !strings.Contains(err.Error(), "maintenance scope unavailable") {
 		t.Fatalf("missing trusted host=%v", err)
+	}
+}
+
+type manualLegacyOperator struct{}
+
+func (manualLegacyOperator) VerifiedRestorePrincipal(_ context.Context, _, _, _, scope string) (string, bool, error) {
+	return "verified-operator", scope == "MANUAL_STOP_RECONCILIATION", nil
+}
+
+func TestLegacyManualStopExactRunningWithoutBudget(t *testing.T) {
+	ctx := context.Background()
+	s, path := newRecoveryStoreAt(t)
+	session, generation, attemptID := seedBoundExecution(t, s, "legacy-manual-stop")
+	if err := s.RecordSendRequested(ctx, "dispatch-legacy-manual-stop", session, generation, "idle", false, "fixture", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	cfg := store.Config{DBPath: path, BusyTimeoutMs: 5000}
+	raw, err := sql.Open("sqlite", cfg.DSN())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if _, err := raw.Exec(`DROP TRIGGER trg_dispatch_requires_execution_budget`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`UPDATE dispatch_operations SET stage='SEND_CONFIRMED',confirmed_at=? WHERE operation_id='dispatch-legacy-manual-stop'`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TransitionTask(ctx, "legacy-manual-stop", domain.StateDispatched, domain.StateRunning); err != nil {
+		t.Fatal(err)
+	}
+	aoFake := &timeoutTestAO{session: session, generation: generation}
+	r := &Runner{Store: s, Host: &legacyHost{}, Operator: manualLegacyOperator{}, ready: true}
+	c := &stop.Coordinator{Store: s, AO: aoFake, KillTimeout: time.Minute}
+	taskID, contractID := "legacy-manual-stop", "contract-legacy-manual-stop"
+	op := domain.StopOperation{OperationID: "legacy-manual-stop-op", Purpose: domain.RunningAttemptStop, PairID: "pair-legacy-manual-stop", TaskID: &taskID, ContractID: &contractID, AttemptID: &attemptID, SessionID: session, TerminalGeneration: generation, Actor: "fixture"}
+	if err := r.StopLegacyWithoutBudget(ctx, c, op); err != nil {
+		t.Fatal(err)
+	}
+	aoFake.mu.Lock()
+	kills := aoFake.kills
+	aoFake.mu.Unlock()
+	if kills != 1 {
+		t.Fatalf("manual stop effect calls=%d", kills)
+	}
+	if r.ready {
+		t.Fatal("maintenance opened normal admission")
+	}
+	got, err := s.GetTask(ctx, taskID)
+	if err != nil || got.State != domain.StateFailed {
+		t.Fatalf("task=%+v err=%v", got, err)
+	}
+	closed, err := s.GetTaskAttempt(ctx, attemptID)
+	if err != nil || closed.EndedAt == nil {
+		t.Fatalf("attempt=%+v err=%v", closed, err)
+	}
+	if err := r.StopLegacyWithoutBudget(ctx, c, op); err == nil {
+		t.Fatal("manual stop replay emitted no conflict")
+	}
+	aoFake.mu.Lock()
+	replayKills := aoFake.kills
+	aoFake.mu.Unlock()
+	if replayKills != 1 {
+		t.Fatalf("manual stop replay effect calls=%d", replayKills)
 	}
 }
