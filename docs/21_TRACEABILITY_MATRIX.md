@@ -63,3 +63,9 @@
 | Linked stop reconciliation -> Tx D -> lineage complete D6 | docs/14 Section 1.2.2 Class B/C | AC-3C mixed basis and D6 rollback assertions |
 
 Authority: `docs/adr/ADR-016-CLARIFICATION-administrative-stop-risk-acceptance.md`. These are design mappings, not implementation PASS claims.
+
+## TASK-P03-003C audit resolution clarification
+
+| Quyết định | Canonical section | Acceptance liên quan |
+|---|---|---|
+| 3C-R1-003: logical stop resolution audit `STOP_OPERATION_RESOLVED` cho mismatch/already terminated | docs/05 §3; docs/14 §1.2.3 Step 3; `docs/adr/ADR-016-CLARIFICATION-stop-operation-resolved-audit.md` | AC-3C-04/06/07: actual `event_type`, CAS/audit rollback cho live/cleanup/maintenance |

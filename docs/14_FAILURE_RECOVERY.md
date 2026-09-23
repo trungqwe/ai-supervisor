@@ -138,6 +138,7 @@ Upon Supervisor daemon restart, prior to accepting incoming client API requests,
      - If alive with matching generation: automatic `/kill` reissue is strictly PROHIBITED (`PINNED_KILL_GENERATION_ATOMIC_FENCE = ABSENT`). Record `resolution_state = 'STOP_REISSUE_REQUIRES_HUMAN'`. Retain active quarantine; require human intervention (`STOP_REISSUE_REQUIRES_HUMAN`).
      - If `isTerminated == true`: kill call was never confirmed transmitted/accepted. Retain `stage = 'STOP_REQUESTED'`, set `resolution_state = 'STOP_EFFECT_UNPROVEN_TARGET_ALREADY_TERMINATED'`. If `purpose == 'RUNNING_ATTEMPT_STOP'` and task is `RUNNING`: transition task `RUNNING -> FAILED` (reason: `WORKER_TERMINATION_UNKNOWN`). Retain quarantine; do NOT record `WORKER_STOPPED`.
      - If generation mismatch: retain `stage = 'STOP_REQUESTED'`, set `resolution_state = 'STOP_GENERATION_MISMATCH'`. Transition `RUNNING -> FAILED` (disposition: `STOP_GENERATION_MISMATCH`).
+     - Hai kết quả `STOP_GENERATION_MISMATCH` và `STOP_EFFECT_UNPROVEN_TARGET_ALREADY_TERMINATED` phát `STOP_OPERATION_RESOLVED` trong cùng transaction với stop resolution và D12 closure của live stop. Event chỉ ghi logical resolution, không phải physical proof hoặc clearance (clarification TASK-P03-003C).
      - If HTTP 404: set `stage = 'STOP_TARGET_ABSENT'`, `resolution_state = 'STOP_TARGET_ABSENT'`. Transition `RUNNING -> FAILED` (reason: `SESSION_ABSENT`).
    - For `STOP_CALL_SUCCEEDED`:
      - Kill signal was already accepted upstream. Reissuing `/kill` is redundant and prohibited.
