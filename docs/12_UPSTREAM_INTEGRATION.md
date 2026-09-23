@@ -128,3 +128,8 @@ If an unexpected operational issue prevents Agent Orchestrator from running a sp
 6. **Plugin Skills Layer**:
    - **Role**: `OPTIONAL PACKAGING/WORKFLOW LAYER`.
    - **Policy**: Non-core in V1. Evaluated for workflow instructions but prohibited from duplicating or bypassing server-side `TaskContractManager` and `PolicyEngine` invariants.
+
+
+## 3. ADR-016 addendum: AO restore wire và trusted boundary
+
+Pinned AO /restore chỉ nhận sessionId; không có client operation/idempotency key. HTTP 200 valid là call provenance, GET generation mới không là causal proof. Supervisor Tx A commit durable intent trước effect, Tx B xác nhận WorkerSession + operation/audit atomic; ambiguous outcome không retry. AUTOMATIC_RESTORE=DISABLED. Host/bootstrap integration phải đưa authenticated operator principal tới trusted boundary trước khi enable restore hoặc linked stop; fake test principal không đủ. /kill wire chỉ sessionId, purpose/generation/deadline là Supervisor metadata, không là AO generation fence. Pre-send chỉ idle/waiting_input với exact bound identity/generation; HTTP 200 /send không tự chứng minh RUNNING.

@@ -286,3 +286,8 @@ classDiagram
 7. **ReviewBundle & ReviewDecision**:
    - `ReviewBundle` is attempt-scoped (`attempt_id`) and compiles the immutable contract revision, worker claims, independent Git/test evidence, policy findings, and recommended review focus.
    - `ReviewDecision` is explicitly bound to both `task_id` and `attempt_id`, preventing review decisions from becoming ambiguous across revision cycles.
+
+
+## 3. ADR-016 addendum v4 entities và invariants
+
+Schema v4 bổ sung restore_authorizations (one-shot authorization gắn operation_id/Pair/session/expected_generation/risk_scope/verified principal), pair_restore_operations (stage RESTORE_REQUESTED/RESTORE_CONFIRMED; resolution IN_FLIGHT/RESTORE_OUTCOME_UNKNOWN/RESTORE_RECOVERY_CLAIMED/RESTORE_CLEANUP_CLAIMED/RESTORE_RESOLVED; basis RESTORE_HTTP_200_CONFIRMED/PHYSICAL_EXECUTION_RESOLUTION/ADMINISTRATIVE_RISK_RESOLUTION), và nullable stop_operations.restore_operation_id với unique index cho linked stop. Exact CHECK/FK/index/trigger ở addendum §2. DISPATCH_UNRESOLVED xét mọi open attempt, SEND_REQUESTED/NULL kể cả closed và current_attempt inconsistency. Linked PAIR_MAINTENANCE cho new runtime generation không có attempt IDs, có restore link/authority/provenance; QUARANTINE_CLEANUP vẫn khớp immutable snapshot 3A. DELIVERY_OUTCOME_UNKNOWN là dispatch resolution terminal, không clear quarantine. PRE_SEND_PROTOCOL_UNVERIFIED mạnh hơn RECOVERY_PENDING; hold CAS exact lineage/old disposition.

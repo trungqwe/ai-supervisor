@@ -1,6 +1,6 @@
-# DRAFT TASK CONTRACT: TASK-P03-003B
+# CANDIDATE TASK CONTRACT: TASK-P03-003B
 
-> Status: DRAFT_RECONCILED_CANDIDATE_PENDING_EXTERNAL_AUDIT — NOT_RELEASED.
+> Status: CANDIDATE_PENDING_EXTERNAL_AUDIT — NOT_RELEASED.
 > Code base_sha: b8b0c95576d87677e8d48210d9838cc2f599752a; artifact/spec commit giao riêng, không tự tham chiếu.
 > Authority: ADR-016 accepted + approved ADR-016 addendum at audited SHA 3807343f06f99c0e11460c74522a2efb3be19491. Implementation chưa được chứng minh.
 > Verification policy: go-test-p03-003b metadata đã duyệt; policy validation không chứng minh P04 runner.

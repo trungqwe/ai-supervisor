@@ -206,3 +206,8 @@ Detailed HTTP mappings reside in `docs/sources/UPSTREAM_CONTRACT_BASELINE.md` an
 > 3. **AO internal database is NOT an integration API**: We never read or write directly to AO SQLite stores.
 > 4. **Code truth belongs exclusively to Git**: Commit SHAs, diffs, and worktree states are authoritative.
 5. **Trusted Verification Runner Boundary**: ChatGPT is never granted arbitrary shell or command execution primitives. Supervisor independent test verification runs exclusively through a constrained, allowlisted verification runner executing host-owned verification profiles (`verification_requests` per ADR-013) within execution isolation boundaries, capturing exit codes and outputs as independent evidence.
+
+
+## 2.3 ADR-016 addendum: restore và dispatch safety
+
+Pair restore dùng v4 durable authorization/operation. Tx A consume one-shot authorization và commit RESTORE_REQUESTED/audit trước AO effect; không network trong SQLite transaction; chỉ trusted host principal enable restore. Admission chặn mọi open attempt, SEND_REQUESTED/resolution NULL và current_attempt bất nhất; closed historical DISPATCH_BOUND/SEND_CONFIRMED sạch không khóa mãi. Tx B HTTP 200 valid xác nhận cùng WorkerSession; ambiguous outcome giữ Pair lock/quarantine, không retry. Bound snapshot bất biến. Unknown send ghi DELIVERY_OUTCOME_UNKNOWN terminal cho dispatch operation; D6 clearance tách biệt, theo từng lineage. Pre-send protocol hold không bị timeout/GET tự hạ. Xem ADR-016 addendum §§2–8.

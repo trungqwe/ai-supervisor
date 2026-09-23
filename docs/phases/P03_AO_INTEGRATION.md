@@ -23,3 +23,8 @@ Implement `AOAdapter` to connect the Supervisor Control Plane to the Untrivial A
 
 ## 3. Exit Gate
 - Automated integration tests successfully perform preflight health/readiness/agent probes, decoupled session provisioning, durable 3-stage dispatch saga, observation reconciliation across active/idle/waiting_input/blocked states, raw workspace artifact fetch, and purpose-aware termination/quarantine enforcement without P04 EvidenceCollector dependencies.
+
+
+## 4. ADR-016 addendum release boundaries
+
+3B candidate gồm v4 durable restore authorization/operation, Pair guard, provisioning/dispatch saga, pre-send hold và unknown delivery resolution. Trusted interface được test fail-closed; host/bootstrap integration phải chứng minh authenticated operator principal trước khi enable operator restore hoặc linked stop; AUTOMATIC_RESTORE=DISABLED. 3C sở hữu stop coordinator và clearance orchestration cho từng lineage; 3D sở hữu synchronous startup scanner/poller và còn DESIGN_BLOCKER_3D_STARTUP_WIRING. Contract 3B/3C/3D chưa release.

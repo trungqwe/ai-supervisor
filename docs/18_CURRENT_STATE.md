@@ -6,6 +6,9 @@
 > **Phase 1 Current Baseline**: Frozen at tag `phase1-architecture-v2.1` (commit `62d3fe0df4a3a05697da77349ff085430ea452f7`)
 > **Updated**: 2026-09-23 (P02 = COMPLETE; P02_FINAL_AUDIT = EXTERNAL_AUDIT_APPROVED; P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED; P03_ADR_016_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED; ADR_016 = EXTERNAL_APPROVED; ADR_016_ACCEPTANCE = GRANTED; TASK_P03_003A = RELEASED; TASK_P03_003A_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED; TASK_P03_003B/3C/3D = NOT_RELEASED; P03_CODE = HELD_PENDING_TASK_P03_003B_CONTRACT_RELEASE; DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED; Active Gate: TASK_P03_003B_CONTRACT_PLANNING)
 
+> **ADR-016 Addendum Decision**: EXTERNAL_APPROVED at audited SHA 3807343f06f99c0e11460c74522a2efb3be19491; ADD-R1-001..003 CLOSED; DESIGN_BLOCKER_3B_RESTORE_PROTOCOL=CLOSED_BY_APPROVED_ADDENDUM. New canonical reconciliation = READY_FOR_EXTERNAL_AUDIT. Candidate TASK-P03-003B = NOT_RELEASED; 3C/3D = NOT_RELEASED; P03_CODE = HELD_PENDING_TASK_P03_003B_CONTRACT_RELEASE; ACTIVE_GATE = TASK_P03_003B_CONTRACT_PLANNING. AUTOMATIC_RESTORE=DISABLED; DESIGN_BLOCKER_3D_STARTUP_WIRING preserved.
+> **Host principal dependency**: host/bootstrap integration owns authenticated operator principal reaching trusted boundary. Fake principal in library tests is insufficient. Until completion evidence exists, operator restore and linked stop remain disabled even though design blocker is closed.
+
 ## 1. High-Level Summary
 
 | Dimension | Current State |
@@ -15,12 +18,12 @@
 | **Architecture V2 (Historical Freeze)** | **FROZEN** at tag `phase1-architecture-v2` (`HISTORICAL_FREEZE_SNAPSHOT_SUPERSEDED_BY_REAUDIT`). Immutable historical snapshot. |
 | **Architecture V2.1 (Current Baseline)** | **FROZEN** at tag `phase1-architecture-v2.1`. Zero modifications permitted without architecture governance amendment. |
 | **Project Stage** | **P02 COMPLETE / P03 TASK-P03-003B CONTRACT PLANNING**. ADR-016 and canonical reconciliation remain externally approved. Parent `TASK-P03-003` is released only for 3A: `TASK_P03_003A = RELEASED`; `TASK_P03_003A_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED`; 3B/3C/3D remain `NOT_RELEASED`. `P03_CODE = HELD_PENDING_TASK_P03_003B_CONTRACT_RELEASE`. `ACTIVE_GATE = TASK_P03_003B_CONTRACT_PLANNING`. |
-| **Blocked Issues** | V1 ChatGPT transport blocker: **NONE**. P01 upstream-proof blocker: **NONE**. Pre-code verification command gap: **RESOLVED**. `DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED` for unreleased 3D. |
+| **Blocked Issues** | V1 ChatGPT transport blocker: **NONE**. P01 upstream-proof blocker: **NONE**. Pre-code verification command gap: **RESOLVED**. `DESIGN_BLOCKER_3B_RESTORE_PROTOCOL = CLOSED_BY_APPROVED_ADDENDUM`; runtime restore/linked stop remain disabled until verified host principal. `DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED` for unreleased 3D. |
 | **Known Process Deviations** | P00-DEV-001 (`ACCEPTED_AT_PHASE0_FREEZE`); Process Hygiene Deviation recorded; **P01B-DEV-001**; **P01C-DEV-002**; **P01C-DEV-003**; **P01C-DEV-004**. |
 | **Open Implementation Decisions** | **8 UNRESOLVED OPERATIONAL POLICIES (VALUE = UNSET)**: (1) `SUPERVISOR_HTTP_TIMEOUT`, (2) `SUPERVISOR_HEALTH_PROBE_TIMEOUT`, (3) `SUPERVISOR_SPAWN_TIMEOUT`, (4) `SUPERVISOR_SEND_TIMEOUT`, (5) `SUPERVISOR_ACTIVITY_POLL_INTERVAL`, (6) `SUPERVISOR_EXECUTION_DEADLINE`, (7) `SUPERVISOR_KILL_STOP_TIMEOUT`, (8) `SUPERVISOR_WORKSPACE_READ_TIMEOUT`. (Core directions of PROPOSAL-P03-001 are EXTERNAL_APPROVED; `UPSTREAM_AO_REQUEST_TIMEOUT = 60s` is an upstream server fact). |
 | **Documentation Baseline Versions** | AO `v0.13.0` (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`), Agy `1.2.7` (`7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`), `tunnel-client` `v0.0.14`. |
 | **Upstream Runtime Proofs (P01)** | Track P01-A (`EXTERNAL_AUDIT_APPROVED`), Track P01-B (`EXTERNAL_AUDIT_APPROVED`), Track P01-C (`EXTERNAL_AUDIT_APPROVED_WITH_ADR_011`), Track P01-D (`TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). Phase P01 proof activity is **COMPLETE**. |
-| **Next Approved Action** | Draft `TASK-P03-003B` contract against merge SHA `b8b0c95576d87677e8d48210d9838cc2f599752a`; submit for External Supervisor review. No 3B release or implementation. |
+| **Next Approved Action** | External Supervisor audit of addendum canonical reconciliation (`READY_FOR_EXTERNAL_AUDIT`) and candidate 3B against code base SHA `b8b0c95576d87677e8d48210d9838cc2f599752a`. Contract remains `NOT_RELEASED`; no 3B implementation. |
 | **Active Gate** | `TASK_P03_003B_CONTRACT_PLANNING` |
 | **P01 Execution Status** | `COMPLETE` |
 

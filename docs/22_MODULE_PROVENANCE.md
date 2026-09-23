@@ -150,3 +150,8 @@
 
 ### Anti-Reinvention Justification Summary
 These persistent store entities do not duplicate any capability provided by Untrivial Agent Orchestrator. AO is an execution daemon exposing a point-in-time REST API for process/session management. AO does NOT provide distributed saga consistency, crash-resilient transactional intent tracking, double-gated quarantine safety locks, purpose-aware cancellation accounting, or task-to-session execution identity binding. The Supervisor Control Plane must own these entities to satisfy NFR-003 (crash safety) and guarantee deterministic governance over external execution runtimes.
+
+
+# 4. ADR-016 addendum v4 provenance
+
+restore_authorizations và pair_restore_operations thuộc Supervisor Store vì pinned AO không có idempotency key, cross-process Pair ownership, audit transaction hoặc quarantine clearance. v4 migration/Store guard và trusted operator interface thuộc 3B; AOAdapter dùng method đã có, không sửa wire. Linked stop persistence/guard chung phải fail-closed từ 3B; stop coordinator và D6 clearance orchestration thuộc 3C; scanner/poller thuộc 3D. Existing Store mutation APIs (PrepareDispatch, Create/UpdateDispatchOperation, Create/UpdateProvisioningOperation, CreateWorkerSession, UpdateWorkerSessionStatusAndQuarantine, Create/UpdateStopOperation) không được bypass RESTORE_UNRESOLVED: guard trong cùng transaction hoặc đóng đường P03.

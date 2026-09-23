@@ -86,6 +86,9 @@ This document establishes immutable operational directives for all AI coding age
 > Production coding is **`HELD_PENDING_TASK_P03_003B_CONTRACT_RELEASE`**.
 > The active phase gate is **`TASK_P03_003B_CONTRACT_PLANNING`**.
 
+> External Supervisor approved ADR-016 addendum design at audited SHA 3807343f06f99c0e11460c74522a2efb3be19491; ADD-R1-001..003 CLOSED. DESIGN_BLOCKER_3B_RESTORE_PROTOCOL=CLOSED_BY_APPROVED_ADDENDUM. New canonical reconciliation is READY_FOR_EXTERNAL_AUDIT; candidate 3B remains NOT_RELEASED and code HELD.
+> Host/bootstrap integration owns verified operator principal evidence at the trusted boundary. Library fake-principal tests do not enable runtime restore or linked stop. AUTOMATIC_RESTORE=DISABLED. 3C/3D remain NOT_RELEASED; DESIGN_BLOCKER_3D_STARTUP_WIRING preserved.
+
 1. **TASK-P03-003B CONTRACT PLANNING GATE**:
    - Draft the 3B Task Contract from accepted ADR-016, reconciled canonical specifications, source registry, reuse matrix, and merged code API evidence.
    - Pin the draft `base_sha` to the existing 3A merge commit. The draft does not release 3B.
@@ -124,3 +127,8 @@ This document establishes immutable operational directives for all AI coding age
    - `P03_CODE = HELD_PENDING_TASK_P03_003B_CONTRACT_RELEASE`
    - `ACTIVE_GATE = TASK_P03_003B_CONTRACT_PLANNING`
    - `DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED`
+   - `ADR_016_ADDENDUM_DESIGN = EXTERNAL_APPROVED` (audited `3807343f06f99c0e11460c74522a2efb3be19491`)
+   - `DESIGN_BLOCKER_3B_RESTORE_PROTOCOL = CLOSED_BY_APPROVED_ADDENDUM`
+   - `P03_ADDENDUM_CANONICAL_RECONCILIATION = READY_FOR_EXTERNAL_AUDIT`
+   - `TASK_P03_003B_CANDIDATE = NOT_RELEASED`; `AUTOMATIC_RESTORE = DISABLED`
+   - Host/bootstrap integration owns verified operator principal evidence; until verified, runtime restore and linked stop remain disabled.

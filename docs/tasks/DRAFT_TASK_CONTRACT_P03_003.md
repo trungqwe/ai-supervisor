@@ -87,6 +87,9 @@ graph TD
 
 ### 3.2 Sub-Contract 3B: Decoupled Pair Provisioning & 3-Stage Dispatch Saga
 - **Task ID**: `TASK-P03-003B`
+- **Candidate**: CANDIDATE_TASK_CONTRACT_P03_003B.md, NOT_RELEASED, code base_sha=b8b0c95576d87677e8d48210d9838cc2f599752a.
+- **Approved design dependency**: ADR-016 addendum đóng DESIGN_BLOCKER_3B_RESTORE_PROTOCOL; AUTOMATIC_RESTORE=DISABLED. 3B chỉ enable operator restore/linked stop khi host/bootstrap cung cấp verified principal; fake test principal không đủ.
+- **Boundary**: 3B sở hữu v4 schema, trusted interface fail-closed, restore/provisioning/dispatch và guard Store API hiện hữu. 3C sở hữu stop coordinator/clearance orchestration; 3D sở hữu scanner/poller, còn DESIGN_BLOCKER_3D_STARTUP_WIRING.
 - **Objective**: Implement the decoupled Pair provisioning coordinator enforcing `CREATE_NEW_WORKER_SESSION_ALLOWED_IFF` (`COUNT(*) == 0` check, session reuse, pinned route `POST /api/v1/sessions/{sessionId}/restore` for terminated sessions); implement the 3-stage dispatch saga (`DISPATCH_BOUND -> pre-send check -> SEND_REQUESTED -> HTTP 200 -> SEND_CONFIRMED`); implement strict pre-send admissibility check matching bound `session_id` and `terminal_generation` with whitelist `('idle', 'waiting_input')`; implement fail-closed quarantine containment on unknown delivery or timeout.
 - **Dependencies**: `TASK-P03-003A` approved and released baseline; `internal/ao` client from `TASK-P03-001`/`002`.
 - **Projected Exit Gate**: Dispatch saga tests pass; pre-send whitelist rejects `active` and `blocked` statuses; unknown delivery transitions `DISPATCHED -> FAILED` with double-gated quarantine imposed and escalates to `HUMAN_REQUIRED`.

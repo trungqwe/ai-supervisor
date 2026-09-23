@@ -39,3 +39,16 @@
 | **OPS-001** (Single Command) | `docs/17_ROADMAP.md#sec-1` | ADR-001 | Deployment | P06 | CLI startup command verification | Inherent |
 | **OPS-002** (Clean Termination) | `docs/14_FAILURE_RECOVERY.md` | ADR-002, ADR-016 | `SupervisorCore` | P02 / P03 / P05 | StateStore/domain close API (P02); purpose-aware stop lifecycle, restart-stable deadline evaluation, double-gated quarantine cleanup & process signal handling (P03/P05) | Agent Orchestrator |
 | **OPS-003** (Self-Contained Store) | `docs/05_DOMAIN_MODEL.md` | ADR-007, ADR-015 | `StateStore` | P02 | Zero cloud database dependency; SQLite WAL + synchronous=FULL durability | AIWorkHub |
+
+
+## ADR-016 addendum coverage cho TASK-P03-003B candidate
+
+| Quyết định addendum | Canonical section | AC dự kiến |
+|---|---|---|
+| v4 DDL, one-shot authorization, host principal fail-closed | docs/05 §3; docs/12 §3 | AC-3B-04, AC-3B-13 |
+| Pair admission, concurrent restore/provision/dispatch guard | docs/04 §2.3; docs/05 §3 | AC-3B-01, AC-3B-05 |
+| Restore ambiguity, no retry, generation/snapshot | docs/12 §3; docs/14 §1.3 | AC-3B-06, AC-3B-07 |
+| Linked stop old/new generation, mixed clearance | docs/05 §3; docs/14 §1.3 | AC-3B-12 (persistence/interface), 3C clearance AC |
+| Pre-send hold precedence/CAS | docs/06 §3; docs/12 §3 | AC-3B-08, AC-3B-09 |
+| DELIVERY_OUTCOME_UNKNOWN terminal, stale 200 | docs/06 §3; docs/14 §1.3 | AC-3B-10, AC-3B-11 |
+| Provenance and ownership | docs/22 §4; docs/phases/P03 §4 | AC-3B-10 |
