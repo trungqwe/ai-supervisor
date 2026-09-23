@@ -185,11 +185,16 @@ UPDATE tasks SET state = ?, updated_at = ? WHERE task_id = ? AND state = ?
 	if rows != 1 {
 		return fmt.Errorf("%w: task %q is not in expected state %q", ErrStateConflict, taskID, expectedCurrentState)
 	}
-	result, err = tx.ExecContext(ctx, `
+	attemptCloseSQL := `
 UPDATE task_attempts SET ended_at = ?, recovery_disposition = ?
 WHERE attempt_id = ? AND task_id = ? AND ended_at IS NULL
   AND attempt_number = (SELECT current_attempt FROM tasks WHERE task_id = ?)
-`, formatTime(now), disposition, attemptID, taskID, taskID)
+	`
+	requiresDoubleQuarantine := disposition == "PRE_SEND_IDENTITY_MISMATCH" || disposition == "STALE_EXECUTION_GENERATION" || disposition == "SESSION_ABSENT"
+	if requiresDoubleQuarantine {
+		attemptCloseSQL = `UPDATE task_attempts SET ended_at = ?, recovery_disposition = ?, quarantine_state='QUARANTINED' WHERE attempt_id = ? AND task_id = ? AND ended_at IS NULL AND attempt_number = (SELECT current_attempt FROM tasks WHERE task_id = ?)`
+	}
+	result, err = tx.ExecContext(ctx, attemptCloseSQL, formatTime(now), disposition, attemptID, taskID, taskID)
 	if err != nil {
 		return fmt.Errorf("store: close current attempt: %w", err)
 	}
@@ -199,6 +204,19 @@ WHERE attempt_id = ? AND task_id = ? AND ended_at IS NULL
 			return fmt.Errorf("store: current attempt closure rows affected: %w", err)
 		}
 		return fmt.Errorf("%w: attempt %q was not closed", ErrAttemptLineageMismatch, attemptID)
+	}
+	if requiresDoubleQuarantine {
+		result, err = tx.ExecContext(ctx, `UPDATE worker_sessions SET quarantine_state='QUARANTINED',updated_at=? WHERE pair_id=? AND EXISTS(SELECT 1 FROM task_attempts a WHERE a.attempt_id=? AND a.task_id=? AND a.session_id=worker_sessions.session_id AND a.terminal_generation=worker_sessions.terminal_generation)`, formatTime(now), pairID, attemptID, taskID)
+		if err != nil {
+			return fmt.Errorf("store: quarantine failed attempt session: %w", err)
+		}
+		rows, err = result.RowsAffected()
+		if err != nil || rows != 1 {
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("%w: failure session snapshot mismatch", ErrAttemptLineageMismatch)
+		}
 	}
 	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{
 		EventID:    eventID,

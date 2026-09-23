@@ -27,6 +27,25 @@ func createTestStore(t *testing.T) (*Store, string) {
 	return s, dbPath
 }
 
+func seedWorkerSessionForTest(t *testing.T, s *Store, session domain.WorkerSession) {
+	t.Helper()
+	createdAt := session.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = timeNow()
+	}
+	updatedAt := session.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = createdAt
+	}
+	quarantine := session.QuarantineState
+	if quarantine == "" {
+		quarantine = domain.QuarantineClean
+	}
+	if _, err := s.db.ExecContext(context.Background(), `INSERT INTO worker_sessions(pair_id,session_id,runtime_type,worktree_path,worker_agent_id,status,terminal_generation,quarantine_state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, session.PairID, session.SessionID, session.RuntimeType, nullableString(session.WorktreePath), session.WorkerAgentID, string(session.Status), session.TerminalGeneration, string(quarantine), formatTime(createdAt), formatTime(updatedAt)); err != nil {
+		t.Fatalf("seed WorkerSession fixture: %v", err)
+	}
+}
+
 func TestStore_OpenAndPragmas(t *testing.T) {
 	ctx := context.Background()
 	s, _ := createTestStore(t)
@@ -58,8 +77,8 @@ func TestStore_OpenAndPragmas(t *testing.T) {
 	if ep.BusyTimeout != 5000 {
 		t.Errorf("expected busy_timeout 5000, got %d", ep.BusyTimeout)
 	}
-	if ep.UserVersion != 3 {
-		t.Errorf("expected user_version 3, got %d", ep.UserVersion)
+	if ep.UserVersion != CurrentSchemaVersion {
+		t.Errorf("expected current user_version %d, got %d", CurrentSchemaVersion, ep.UserVersion)
 	}
 }
 
@@ -84,8 +103,8 @@ func TestStore_MigrationIdempotentAndFuture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EffectivePragmas failed: %v", err)
 	}
-	if ep.UserVersion != 3 {
-		t.Errorf("expected user_version 3, got %d", ep.UserVersion)
+	if ep.UserVersion != CurrentSchemaVersion {
+		t.Errorf("expected current user_version %d, got %d", CurrentSchemaVersion, ep.UserVersion)
 	}
 	s2.Close()
 
@@ -517,7 +536,7 @@ func TestStore_ContractLineagePersistence(t *testing.T) {
 
 	// Freeze rev 1 via PrepareDispatch
 	repPath, _ := CanonicalExpectedReportPath("task-lin-1", "att-lin-1")
-	_, err = s.PrepareDispatch(ctx, "task-lin-1", "c-lin-1", "att-lin-1", repPath, time.Now())
+	_, err = prepareLegacyDispatchForTest(s, ctx, "task-lin-1", "c-lin-1", "att-lin-1", repPath, time.Now())
 	if err != nil {
 		t.Fatalf("PrepareDispatch on c-lin-1 failed: %v", err)
 	}
@@ -615,7 +634,7 @@ func TestStore_ContractImmutabilityTriggers(t *testing.T) {
 
 	// Freeze via PrepareDispatch
 	repPath, _ := CanonicalExpectedReportPath("task-t1", "att-t1")
-	_, err := s.PrepareDispatch(ctx, "task-t1", "c-imm", "att-t1", repPath, time.Now())
+	_, err := prepareLegacyDispatchForTest(s, ctx, "task-t1", "c-imm", "att-t1", repPath, time.Now())
 	if err != nil {
 		t.Fatalf("PrepareDispatch failed: %v", err)
 	}
@@ -735,7 +754,7 @@ func TestStore_HumanReplanningFlow(t *testing.T) {
 
 	// Dispatch rev 1 (freezes c1 to is_immutable = true)
 	p1, _ := CanonicalExpectedReportPath("task-replan-1", "att-replan-1")
-	_, err := s.PrepareDispatch(ctx, "task-replan-1", "c-replan-1", "att-replan-1", p1, time.Now())
+	_, err := prepareLegacyDispatchForTest(s, ctx, "task-replan-1", "c-replan-1", "att-replan-1", p1, time.Now())
 	if err != nil {
 		t.Fatalf("dispatch failed: %v", err)
 	}
@@ -788,7 +807,7 @@ func TestStore_HumanReplanningFlow(t *testing.T) {
 
 	// Dispatch rev 2 succeeds
 	p2, _ := CanonicalExpectedReportPath("task-replan-1", "att-replan-2")
-	att2, err := s.PrepareDispatch(ctx, "task-replan-1", "c-replan-2", "att-replan-2", p2, time.Now())
+	att2, err := prepareLegacyDispatchForTest(s, ctx, "task-replan-1", "c-replan-2", "att-replan-2", p2, time.Now())
 	if err != nil {
 		t.Fatalf("dispatch rev 2 failed: %v", err)
 	}

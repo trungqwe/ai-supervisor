@@ -16,7 +16,7 @@ import (
 	"github.com/trungqwe/ai-supervisor/internal/domain"
 )
 
-func TestStore_V1ToV3Migration(t *testing.T) {
+func TestStore_V1ToV4Migration(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "migration_v1_v2.db")
@@ -50,8 +50,8 @@ func TestStore_V1ToV3Migration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EffectivePragmas failed: %v", err)
 	}
-	if ep.UserVersion != 3 {
-		t.Fatalf("expected user_version 3 after migration, got %d", ep.UserVersion)
+	if ep.UserVersion != CurrentSchemaVersion {
+		t.Fatalf("expected current user_version %d after migration, got %d", CurrentSchemaVersion, ep.UserVersion)
 	}
 
 	// Verify audit tables and singleton exist
@@ -72,8 +72,8 @@ func TestStore_V1ToV3Migration(t *testing.T) {
 	}
 	defer sReopen.Close()
 	epReopen, _ := sReopen.EffectivePragmas(ctx)
-	if epReopen.UserVersion != 3 {
-		t.Fatalf("expected user_version 3 on reopen, got %d", epReopen.UserVersion)
+	if epReopen.UserVersion != CurrentSchemaVersion {
+		t.Fatalf("expected current user_version %d on reopen, got %d", CurrentSchemaVersion, epReopen.UserVersion)
 	}
 	sReopen.Close()
 
@@ -110,8 +110,8 @@ func TestStore_V1ToV3Migration(t *testing.T) {
 	}
 	rawFailDB.Close()
 
-	t.Logf("SQLITE_SCHEMA_VERSION = 3")
-	t.Logf("V1_TO_V3_MIGRATION = PASS")
+	t.Logf("SQLITE_SCHEMA_VERSION = %d", CurrentSchemaVersion)
+	t.Logf("V1_TO_CURRENT_MIGRATION = PASS")
 }
 
 func TestStore_AuditAppendOnly_Triggers(t *testing.T) {
@@ -481,7 +481,7 @@ func TestStore_AuditLineageValidation(t *testing.T) {
 
 	reportPath, _ := CanonicalExpectedReportPath("task-1", "att-1")
 	_ = s.TransitionTask(ctx, "task-1", domain.StateDraft, domain.StateReady)
-	_, _ = s.PrepareDispatch(ctx, "task-1", "contract-1", "att-1", reportPath, now)
+	_, _ = prepareLegacyDispatchForTest(s, ctx, "task-1", "contract-1", "att-1", reportPath, now)
 
 	// Another task and contract
 	_ = s.CreateProject(ctx, domain.Project{ProjectID: "proj-2", Name: "P2", RootPath: "/r2", RegisteredAt: now})

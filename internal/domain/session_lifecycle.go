@@ -75,11 +75,95 @@ const (
 )
 
 const (
-	RecoveryAOBlockedEscalated  = "AO_BLOCKED_ESCALATED"
-	AuditTaskDispatchBound      = "TASK_DISPATCH_BOUND"
-	AuditTaskStateTransition    = "TASK_STATE_TRANSITION"
-	AuditWorkerBlockedEscalated = "WORKER_BLOCKED_ESCALATED"
+	AuditPairSessionProvisionRequested  = "PAIR_SESSION_PROVISION_REQUESTED"
+	AuditPairSessionProvisioned         = "PAIR_SESSION_PROVISIONED"
+	AuditPairSessionProvisionFailed     = "PAIR_SESSION_PROVISION_FAILED"
+	RecoveryAOBlockedEscalated          = "AO_BLOCKED_ESCALATED"
+	AuditTaskDispatchBound              = "TASK_DISPATCH_BOUND"
+	AuditDispatchSendRequested          = "DISPATCH_SEND_REQUESTED"
+	AuditDispatchSendConfirmed          = "DISPATCH_SEND_CONFIRMED"
+	AuditUncertainDeliveryQuarantine    = "UNCERTAIN_DELIVERY_QUARANTINE_IMPOSED"
+	AuditTaskStateTransition            = "TASK_STATE_TRANSITION"
+	AuditWorkerBlockedEscalated         = "WORKER_BLOCKED_ESCALATED"
+	AuditPairRestoreRiskAccepted        = "PAIR_RESTORE_RISK_ACCEPTED"
+	AuditPairRestoreRequested           = "PAIR_RESTORE_REQUESTED"
+	AuditPairRestoreConfirmed           = "PAIR_RESTORE_CONFIRMED"
+	AuditPairRestoreOutcomeUnknown      = "PAIR_RESTORE_OUTCOME_UNKNOWN"
+	AuditPairRestoreRecoveryClaimed     = "PAIR_RESTORE_RECOVERY_CLAIMED"
+	AuditPairRestoreRecoveryTransferred = "PAIR_RESTORE_RECOVERY_TRANSFERRED"
+	AuditPairRestoreCleanupClaimed      = "PAIR_RESTORE_CLEANUP_CLAIMED"
+	AuditPairRestoreResolved            = "PAIR_RESTORE_RESOLVED"
+	AuditPreSendStatusRecovered         = "PRE_SEND_STATUS_RECOVERED"
+	AuditPreSendAdmissibilityRejected   = "PRE_SEND_ADMISSIBILITY_REJECTED"
+	RecoveryDeliveryOutcomeUnknown      = "DELIVERY_OUTCOME_UNKNOWN"
+	RecoveryUncertainDeliveryCrash      = "UNCERTAIN_DELIVERY_CRASH"
+	AuditStopOperationRequested         = "STOP_OPERATION_REQUESTED"
+	AuditStopOperationConfirmed         = "STOP_OPERATION_CONFIRMED"
 )
+
+type RestoreResolutionState string
+
+const (
+	RestoreInFlight        RestoreResolutionState = "IN_FLIGHT"
+	RestoreOutcomeUnknown  RestoreResolutionState = "RESTORE_OUTCOME_UNKNOWN"
+	RestoreRecoveryClaimed RestoreResolutionState = "RESTORE_RECOVERY_CLAIMED"
+	RestoreCleanupClaimed  RestoreResolutionState = "RESTORE_CLEANUP_CLAIMED"
+	RestoreResolved        RestoreResolutionState = "RESTORE_RESOLVED"
+)
+
+type RestoreResolutionBasis string
+
+const (
+	RestoreHTTP200Confirmed      RestoreResolutionBasis = "RESTORE_HTTP_200_CONFIRMED"
+	PhysicalExecutionResolution  RestoreResolutionBasis = "PHYSICAL_EXECUTION_RESOLUTION"
+	AdministrativeRiskResolution RestoreResolutionBasis = "ADMINISTRATIVE_RISK_RESOLUTION"
+)
+
+type RestoreAuthorization struct {
+	AuthorizationID       string     `json:"authorization_id"`
+	OperationID           string     `json:"operation_id"`
+	PairID                string     `json:"pair_id"`
+	SessionID             string     `json:"session_id"`
+	ExpectedGeneration    string     `json:"expected_generation"`
+	RiskScope             string     `json:"risk_scope"`
+	AuthorizedPrincipal   string     `json:"authorized_principal"`
+	AuthorizationEventID  string     `json:"authorization_event_id"`
+	IssuedAt              time.Time  `json:"issued_at"`
+	ConsumedAt            *time.Time `json:"consumed_at,omitempty"`
+	ConsumedByOperationID *string    `json:"consumed_by_operation_id,omitempty"`
+}
+
+type PairRestoreOperation struct {
+	OperationID        string                  `json:"operation_id"`
+	AuthorizationID    string                  `json:"authorization_id"`
+	PairID             string                  `json:"pair_id"`
+	SessionID          string                  `json:"session_id"`
+	ExpectedGeneration string                  `json:"expected_generation"`
+	ObservedGeneration *string                 `json:"observed_generation,omitempty"`
+	RestoreMode        *string                 `json:"restore_mode,omitempty"`
+	Stage              string                  `json:"stage"`
+	ResolutionState    RestoreResolutionState  `json:"resolution_state"`
+	ResolutionBasis    *RestoreResolutionBasis `json:"resolution_basis,omitempty"`
+	RecoveryPrincipal  *string                 `json:"recovery_principal,omitempty"`
+	RecoveryClaimedAt  *time.Time              `json:"recovery_claimed_at,omitempty"`
+	RequestedAt        time.Time               `json:"requested_at"`
+	HTTP200At          *time.Time              `json:"http_200_at,omitempty"`
+	ResolvedAt         *time.Time              `json:"resolved_at,omitempty"`
+	ResolutionEventID  *string                 `json:"resolution_event_id,omitempty"`
+	Version            int64                   `json:"version"`
+}
+
+type RestoreReservation struct {
+	AuthorizationID     string
+	OperationID         string
+	PairID              string
+	SessionID           string
+	ExpectedGeneration  string
+	RiskScope           string
+	AuthorizedPrincipal string
+	Actor               string
+	At                  time.Time
+}
 
 // WorkerSession is the current AO session binding for exactly one Pair.
 type WorkerSession struct {
@@ -141,4 +225,6 @@ type StopOperation struct {
 	TerminationConfirmedAt *time.Time          `json:"termination_confirmed_at,omitempty"`
 	ResolvedAt             *time.Time          `json:"resolved_at,omitempty"`
 	ResolutionState        StopResolutionState `json:"resolution_state"`
+	RestoreOperationID     *string             `json:"restore_operation_id,omitempty"`
+	RestorePrincipal       *string             `json:"restore_principal,omitempty"`
 }

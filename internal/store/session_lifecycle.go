@@ -45,6 +45,9 @@ type StopStageUpdate struct {
 	TerminationConfirmedAt  *time.Time
 	ResolvedAt              *time.Time
 	ResolutionState         *domain.StopResolutionState
+	ObservedSessionID       string
+	ObservedGeneration      string
+	ObservedIsTerminated    bool
 }
 
 func nullableString(value *string) any {
@@ -93,29 +96,38 @@ func mapLifecycleWriteError(err error, entity string) error {
 	return fmt.Errorf("store: failed to write %s: %w", entity, err)
 }
 
-// CreateWorkerSession inserts the current WorkerSession binding for a Pair.
-func (s *Store) CreateWorkerSession(ctx context.Context, session domain.WorkerSession) error {
-	if session.QuarantineState == "" {
-		session.QuarantineState = domain.QuarantineClean
+type lifecycleQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func rejectUnresolvedRestore(ctx context.Context, queryer lifecycleQueryer, pairID string) error {
+	var unresolved int
+	if err := queryer.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pair_restore_operations WHERE pair_id=? AND resolution_state<>'RESTORE_RESOLVED')`, pairID).Scan(&unresolved); err != nil {
+		return fmt.Errorf("store: check restore ownership: %w", err)
 	}
-	if session.CreatedAt.IsZero() {
-		session.CreatedAt = timeNow()
-	}
-	if session.UpdatedAt.IsZero() {
-		session.UpdatedAt = session.CreatedAt
-	}
-	_, err := s.db.ExecContext(ctx, `
-INSERT INTO worker_sessions (
-    pair_id, session_id, runtime_type, worktree_path, worker_agent_id,
-    status, terminal_generation, quarantine_state, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, session.PairID, session.SessionID, session.RuntimeType, nullableString(session.WorktreePath),
-		session.WorkerAgentID, string(session.Status), session.TerminalGeneration,
-		string(session.QuarantineState), formatTime(session.CreatedAt), formatTime(session.UpdatedAt))
-	if err != nil {
-		return mapLifecycleWriteError(err, "worker session")
+	if unresolved != 0 {
+		return fmt.Errorf("%w: Pair has unresolved restore ownership", ErrQuarantinedExecution)
 	}
 	return nil
+}
+
+func rejectUnresolvedProvisioning(ctx context.Context, queryer lifecycleQueryer, pairID string) error {
+	var unresolved int
+	if err := queryer.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pair_provisioning_operations WHERE pair_id=? AND stage IN ('PROVISION_REQUESTED','PROVISION_FAILED'))`, pairID).Scan(&unresolved); err != nil {
+		return fmt.Errorf("store: check provisioning ownership: %w", err)
+	}
+	if unresolved != 0 {
+		return fmt.Errorf("%w: Pair has unresolved provisioning", ErrQuarantinedExecution)
+	}
+	return nil
+}
+
+// CreateWorkerSession is closed for P03. Production WorkerSession creation must
+// share the provisioning intent, Pair guard, and audit transaction.
+func (s *Store) CreateWorkerSession(ctx context.Context, session domain.WorkerSession) error {
+	_ = ctx
+	_ = session
+	return fmt.Errorf("%w: use ConfirmPairProvisioning so WorkerSession and provisioning evidence commit atomically", ErrAtomicDispatchRequired)
 }
 
 func scanWorkerSession(scanner interface{ Scan(...any) error }) (domain.WorkerSession, error) {
@@ -167,11 +179,25 @@ func (s *Store) GetWorkerSessionByID(ctx context.Context, sessionID string) (dom
 
 // UpdateWorkerSessionStatusAndQuarantine atomically updates runtime and safety state using CAS.
 func (s *Store) UpdateWorkerSessionStatusAndQuarantine(ctx context.Context, pairID string, update WorkerSessionCASUpdate) error {
+	if update.ExpectedQuarantineState != update.QuarantineState || update.TerminalGeneration != nil {
+		return fmt.Errorf("%w: generic WorkerSession CAS cannot change quarantine or generation; use an authorized lifecycle transaction", ErrAtomicDispatchRequired)
+	}
 	updatedAt := update.UpdatedAt
 	if updatedAt.IsZero() {
 		updatedAt = timeNow()
 	}
-	result, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := rejectUnresolvedRestore(ctx, tx, pairID); err != nil {
+		return err
+	}
+	if err := rejectUnresolvedProvisioning(ctx, tx, pairID); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `
 UPDATE worker_sessions
 SET status = ?, quarantine_state = ?,
     terminal_generation = COALESCE(?, terminal_generation), updated_at = ?
@@ -187,33 +213,24 @@ WHERE pair_id = ? AND status = ? AND quarantine_state = ?
 	}
 	if rows == 0 {
 		var exists int
-		if err := s.db.QueryRowContext(ctx, "SELECT 1 FROM worker_sessions WHERE pair_id = ?", pairID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+		if err := tx.QueryRowContext(ctx, "SELECT 1 FROM worker_sessions WHERE pair_id = ?", pairID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
 			return ErrWorkerSessionNotFound
 		} else if err != nil {
 			return fmt.Errorf("store: worker session CAS existence check: %w", err)
 		}
 		return fmt.Errorf("%w: worker session %q status/quarantine precondition failed", ErrStateConflict, pairID)
 	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit WorkerSession CAS: %w", err)
+	}
 	return nil
 }
 
 // CreatePairProvisioningOperation persists provisioning intent or outcome metadata.
 func (s *Store) CreatePairProvisioningOperation(ctx context.Context, operation domain.PairProvisioningOperation) error {
-	if operation.RequestedAt.IsZero() {
-		operation.RequestedAt = timeNow()
-	}
-	_, err := s.db.ExecContext(ctx, `
-INSERT INTO pair_provisioning_operations (
-    operation_id, pair_id, stage, client_token, session_id, requested_at,
-    completed_at, resolved_at, resolved_by, resolution_notes
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, operation.OperationID, operation.PairID, string(operation.Stage), operation.ClientToken,
-		nullableString(operation.SessionID), formatTime(operation.RequestedAt), nullableTime(operation.CompletedAt),
-		nullableTime(operation.ResolvedAt), nullableString(operation.ResolvedBy), nullableString(operation.ResolutionNotes))
-	if err != nil {
-		return mapLifecycleWriteError(err, "pair provisioning operation")
-	}
-	return nil
+	_ = ctx
+	_ = operation
+	return fmt.Errorf("%w: use ReservePairProvisioning so Pair guard and audit commit atomically", ErrAtomicDispatchRequired)
 }
 
 // GetPairProvisioningOperation retrieves a provisioning operation by identity.
@@ -256,62 +273,20 @@ func validProvisioningTransition(from, to domain.PairProvisioningStage) bool {
 
 // UpdatePairProvisioningOperationStage advances a provisioning operation with CAS.
 func (s *Store) UpdatePairProvisioningOperationStage(ctx context.Context, operationID string, expected, next domain.PairProvisioningStage, update PairProvisioningStageUpdate) error {
-	if !validProvisioningTransition(expected, next) {
-		return fmt.Errorf("%w: provisioning %q -> %q", ErrInvalidOperationTransition, expected, next)
-	}
-	result, err := s.db.ExecContext(ctx, `
-UPDATE pair_provisioning_operations
-SET stage = ?, session_id = COALESCE(?, session_id), completed_at = COALESCE(?, completed_at),
-    resolved_at = COALESCE(?, resolved_at), resolved_by = COALESCE(?, resolved_by),
-    resolution_notes = COALESCE(?, resolution_notes)
-WHERE operation_id = ? AND stage = ?
-`, string(next), nullableString(update.SessionID), nullableTime(update.CompletedAt), nullableTime(update.ResolvedAt),
-		nullableString(update.ResolvedBy), nullableString(update.ResolutionNotes), operationID, string(expected))
-	return operationCASResult(result, err, operationID, "pair provisioning")
+	_ = ctx
+	_ = operationID
+	_ = expected
+	_ = next
+	_ = update
+	return fmt.Errorf("%w: use ConfirmPairProvisioning, FailPairProvisioning, or an authorized resolution transaction", ErrAtomicDispatchRequired)
 }
 
-// CreateDispatchOperation persists a dispatch operation after verifying attempt lineage and snapshot identity.
+// CreateDispatchOperation is closed for P03. PrepareBoundDispatch owns the
+// atomic TaskState, attempt, immutable snapshot, operation, and audit binding.
 func (s *Store) CreateDispatchOperation(ctx context.Context, operation domain.DispatchOperation) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("store: begin dispatch operation transaction: %w", err)
-	}
-	defer tx.Rollback()
-	var taskID, pairID string
-	var sessionID, terminalGeneration sql.NullString
-	err = tx.QueryRowContext(ctx, `
-SELECT a.task_id, t.pair_id, a.session_id, a.terminal_generation
-FROM task_attempts a JOIN tasks t ON t.task_id = a.task_id
-WHERE a.attempt_id = ? AND a.attempt_number = t.current_attempt
-`, operation.AttemptID).Scan(&taskID, &pairID, &sessionID, &terminalGeneration)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrAttemptNotFound
-	}
-	if err != nil {
-		return fmt.Errorf("store: dispatch operation lineage query: %w", err)
-	}
-	if taskID != operation.TaskID || pairID != operation.PairID || !sessionID.Valid || !terminalGeneration.Valid ||
-		sessionID.String != operation.SessionID || terminalGeneration.String != operation.TerminalGeneration {
-		return fmt.Errorf("%w: dispatch operation does not match attempt snapshot", ErrAttemptLineageMismatch)
-	}
-	if operation.RequestedAt.IsZero() {
-		operation.RequestedAt = timeNow()
-	}
-	_, err = tx.ExecContext(ctx, `
-INSERT INTO dispatch_operations (
-    operation_id, attempt_id, pair_id, task_id, session_id, terminal_generation,
-    stage, requested_at, confirmed_at, resolution_state
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, operation.OperationID, operation.AttemptID, operation.PairID, operation.TaskID, operation.SessionID,
-		operation.TerminalGeneration, string(operation.Stage), formatTime(operation.RequestedAt),
-		nullableTime(operation.ConfirmedAt), nullableString(operation.ResolutionState))
-	if err != nil {
-		return mapLifecycleWriteError(err, "dispatch operation")
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("store: commit dispatch operation: %w", err)
-	}
-	return nil
+	_ = ctx
+	_ = operation
+	return fmt.Errorf("%w: use PrepareBoundDispatch so Pair guards and immutable binding commit atomically", ErrAtomicDispatchRequired)
 }
 
 // GetDispatchOperation retrieves a dispatch operation by identity.
@@ -348,15 +323,12 @@ func validDispatchTransition(from, to domain.DispatchStage) bool {
 
 // UpdateDispatchOperationStage advances a dispatch operation with CAS.
 func (s *Store) UpdateDispatchOperationStage(ctx context.Context, operationID string, expected, next domain.DispatchStage, update DispatchStageUpdate) error {
-	if !validDispatchTransition(expected, next) {
-		return fmt.Errorf("%w: dispatch %q -> %q", ErrInvalidOperationTransition, expected, next)
-	}
-	result, err := s.db.ExecContext(ctx, `
-UPDATE dispatch_operations
-SET stage = ?, confirmed_at = COALESCE(?, confirmed_at), resolution_state = COALESCE(?, resolution_state)
-WHERE operation_id = ? AND stage = ?
-`, string(next), nullableTime(update.ConfirmedAt), nullableString(update.ResolutionState), operationID, string(expected))
-	return operationCASResult(result, err, operationID, "dispatch")
+	_ = ctx
+	_ = operationID
+	_ = expected
+	_ = next
+	_ = update
+	return fmt.Errorf("%w: use RecordSendRequested/RecordSendConfirmed/RecordUnknownDelivery", ErrAtomicDispatchRequired)
 }
 
 // CreateStopOperation persists a stop intent after validating optional lineage as one coherent tuple.
@@ -367,11 +339,28 @@ func (s *Store) CreateStopOperation(ctx context.Context, operation domain.StopOp
 	if operation.RequestedAt.IsZero() {
 		operation.RequestedAt = timeNow()
 	}
+	if operation.Stage == "" {
+		operation.Stage = domain.StopRequested
+	}
+	if operation.Stage != domain.StopRequested || operation.ResolutionState != domain.StopResolutionInFlight {
+		return fmt.Errorf("store: new stop operation must begin at STOP_REQUESTED/IN_FLIGHT")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin stop operation transaction: %w", err)
 	}
 	defer tx.Rollback()
+	if err := createStopOperationTx(ctx, tx, operation); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit stop operation: %w", err)
+	}
+	return nil
+}
+
+func createStopOperationTx(ctx context.Context, tx *sql.Tx, operation domain.StopOperation, cleanupObservation ...string) error {
+	var err error
 	if operation.Purpose == domain.RunningAttemptStop || operation.Purpose == domain.QuarantineCleanup {
 		if operation.AttemptID == nil {
 			return fmt.Errorf("%w: %s requires attempt lineage", ErrAttemptLineageMismatch, operation.Purpose)
@@ -423,24 +412,68 @@ WHERE c.contract_id = ? AND c.task_id = ? AND t.pair_id = ?
 			return fmt.Errorf("store: stop operation task lineage query: %w", err)
 		}
 	}
+	var restoreID, restoreStage, restoreResolution, restoreSession, restoreExpected, recoveryPrincipal string
+	var restoreObserved sql.NullString
+	restoreErr := tx.QueryRowContext(ctx, `SELECT operation_id,stage,resolution_state,session_id,expected_generation,observed_generation,recovery_principal FROM pair_restore_operations WHERE pair_id=? AND resolution_state<>'RESTORE_RESOLVED'`, operation.PairID).Scan(&restoreID, &restoreStage, &restoreResolution, &restoreSession, &restoreExpected, &restoreObserved, &recoveryPrincipal)
+	if restoreErr != nil && !errors.Is(restoreErr, sql.ErrNoRows) {
+		return restoreErr
+	}
+	if errors.Is(restoreErr, sql.ErrNoRows) {
+		if operation.RestoreOperationID != nil {
+			return fmt.Errorf("%w: restore operation is not unresolved for Pair", ErrAttemptLineageMismatch)
+		}
+		if err := rejectUnresolvedProvisioning(ctx, tx, operation.PairID); err != nil {
+			return err
+		}
+	} else {
+		observedRuntime := len(cleanupObservation) == 1 && cleanupObservation[0] != "" && operation.TerminalGeneration == cleanupObservation[0]
+		validNewGenerationMaintenance := operation.Purpose == domain.PairMaintenance && operation.AttemptID == nil && operation.TaskID == nil && operation.ContractID == nil && restoreResolution == string(domain.RestoreCleanupClaimed) && operation.SessionID == restoreSession && observedRuntime && (!restoreObserved.Valid || operation.TerminalGeneration == restoreObserved.String)
+		validOldGenerationCleanup := operation.Purpose == domain.QuarantineCleanup && operation.AttemptID != nil && restoreResolution == string(domain.RestoreCleanupClaimed) && operation.SessionID == restoreSession && operation.TerminalGeneration == restoreExpected
+		if operation.RestoreOperationID == nil || *operation.RestoreOperationID != restoreID || operation.RestorePrincipal == nil || *operation.RestorePrincipal != recoveryPrincipal || recoveryPrincipal == "" || (!validNewGenerationMaintenance && !validOldGenerationCleanup) {
+			return fmt.Errorf("%w: unresolved restore permits only linked exact-lineage cleanup or observed-generation PAIR_MAINTENANCE", ErrQuarantinedExecution)
+		}
+		if validOldGenerationCleanup {
+			var closedQuarantine int
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_attempts WHERE attempt_id=? AND ended_at IS NOT NULL AND quarantine_state='QUARANTINED')`, *operation.AttemptID).Scan(&closedQuarantine); err != nil {
+				return err
+			}
+			if closedQuarantine != 1 {
+				return fmt.Errorf("%w: QUARANTINE_CLEANUP requires a closed quarantined attempt", ErrAttemptLineageMismatch)
+			}
+		}
+	}
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO stop_operations (
     operation_id, purpose, pair_id, task_id, contract_id, attempt_id, session_id,
     terminal_generation, stage, actor, requested_at, call_completed_at,
-    confirmation_deadline_at, termination_confirmed_at, resolved_at, resolution_state
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    confirmation_deadline_at, termination_confirmed_at, resolved_at, resolution_state, restore_operation_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `, operation.OperationID, string(operation.Purpose), operation.PairID, nullableString(operation.TaskID),
 		nullableString(operation.ContractID), nullableString(operation.AttemptID), operation.SessionID,
 		operation.TerminalGeneration, string(operation.Stage), operation.Actor, formatTime(operation.RequestedAt),
 		nullableTime(operation.CallCompletedAt), nullableTime(operation.ConfirmationDeadlineAt),
-		nullableTime(operation.TerminationConfirmedAt), nullableTime(operation.ResolvedAt), string(operation.ResolutionState))
+		nullableTime(operation.TerminationConfirmedAt), nullableTime(operation.ResolvedAt), string(operation.ResolutionState), nullableString(operation.RestoreOperationID))
 	if err != nil {
 		return mapLifecycleWriteError(err, "stop operation")
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("store: commit stop operation: %w", err)
+	if operation.RestoreOperationID != nil {
+		eventID, auditErr := newAuditEventID()
+		if auditErr != nil {
+			return auditErr
+		}
+		_, auditErr = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditStopOperationRequested, Timestamp: operation.RequestedAt, PairID: operation.PairID, TaskID: valueOrEmpty(operation.TaskID), ContractID: valueOrEmpty(operation.ContractID), AttemptID: valueOrEmpty(operation.AttemptID), Actor: operation.Actor, Details: map[string]any{"stop_operation_id": operation.OperationID, "purpose": string(operation.Purpose), "restore_operation_id": *operation.RestoreOperationID, "principal": valueOrEmpty(operation.RestorePrincipal), "session_id": operation.SessionID, "target_generation": operation.TerminalGeneration}})
+		if auditErr != nil {
+			return auditErr
+		}
 	}
 	return nil
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 // GetStopOperation retrieves a stop operation by identity.
@@ -449,14 +482,15 @@ func (s *Store) GetStopOperation(ctx context.Context, operationID string) (domai
 	var purpose, stage, requestedAt, resolutionState string
 	var taskID, contractID, attemptID sql.NullString
 	var callCompletedAt, deadlineAt, terminationAt, resolvedAt sql.NullString
+	var restoreOperationID sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 SELECT operation_id, purpose, pair_id, task_id, contract_id, attempt_id, session_id,
        terminal_generation, stage, actor, requested_at, call_completed_at,
-       confirmation_deadline_at, termination_confirmed_at, resolved_at, resolution_state
+       confirmation_deadline_at, termination_confirmed_at, resolved_at, resolution_state, restore_operation_id
 FROM stop_operations WHERE operation_id = ?
 `, operationID).Scan(&operation.OperationID, &purpose, &operation.PairID, &taskID, &contractID,
 		&attemptID, &operation.SessionID, &operation.TerminalGeneration, &stage, &operation.Actor,
-		&requestedAt, &callCompletedAt, &deadlineAt, &terminationAt, &resolvedAt, &resolutionState)
+		&requestedAt, &callCompletedAt, &deadlineAt, &terminationAt, &resolvedAt, &resolutionState, &restoreOperationID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.StopOperation{}, ErrOperationNotFound
 	}
@@ -469,6 +503,7 @@ FROM stop_operations WHERE operation_id = ?
 	setNullableString(&operation.TaskID, taskID)
 	setNullableString(&operation.ContractID, contractID)
 	setNullableString(&operation.AttemptID, attemptID)
+	setNullableString(&operation.RestoreOperationID, restoreOperationID)
 	operation.RequestedAt, err = parseTime(requestedAt)
 	if err != nil {
 		return domain.StopOperation{}, err
@@ -513,11 +548,35 @@ func (s *Store) UpdateStopOperationStage(ctx context.Context, operationID string
 		(update.ResolutionState == nil || *update.ResolutionState != domain.StopResolutionTerminationConfirmed) {
 		return fmt.Errorf("%w: stop termination confirmation requires matching resolution", ErrInvalidOperationTransition)
 	}
+	if next == domain.StopTerminationConfirmed && (!update.ObservedIsTerminated || update.ObservedSessionID == "" || update.ObservedGeneration == "") {
+		return fmt.Errorf("%w: D11 confirmation requires positive same-session/generation termination observation", ErrStateConflict)
+	}
 	var resolution any
 	if update.ResolutionState != nil {
 		resolution = string(*update.ResolutionState)
 	}
-	result, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var pairID, purpose, sessionID, generation, stopActor string
+	var taskID, contractID, attemptID, linkedRestore, storedDeadline sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT pair_id,purpose,task_id,contract_id,attempt_id,session_id,terminal_generation,actor,restore_operation_id,confirmation_deadline_at FROM stop_operations WHERE operation_id=?`, operationID).Scan(&pairID, &purpose, &taskID, &contractID, &attemptID, &sessionID, &generation, &stopActor, &linkedRestore, &storedDeadline); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrOperationNotFound
+		}
+		return err
+	}
+	var restoreID, restoreState string
+	restoreErr := tx.QueryRowContext(ctx, `SELECT operation_id,resolution_state FROM pair_restore_operations WHERE pair_id=? AND resolution_state<>'RESTORE_RESOLVED'`, pairID).Scan(&restoreID, &restoreState)
+	if restoreErr != nil && !errors.Is(restoreErr, sql.ErrNoRows) {
+		return restoreErr
+	}
+	if restoreErr == nil && (!linkedRestore.Valid || linkedRestore.String != restoreID || restoreState != string(domain.RestoreCleanupClaimed)) {
+		return fmt.Errorf("%w: stop update lacks exact restore cleanup ownership", ErrQuarantinedExecution)
+	}
+	result, err := tx.ExecContext(ctx, `
 UPDATE stop_operations
 SET stage = ?, call_completed_at = COALESCE(?, call_completed_at),
     confirmation_deadline_at = COALESCE(?, confirmation_deadline_at),
@@ -531,7 +590,38 @@ WHERE operation_id = ? AND stage = ? AND resolution_state = ?
 		operationID, string(expected), string(update.ExpectedResolutionState),
 		nullableTime(update.CallCompletedAt), nullableTime(update.CallCompletedAt),
 		nullableTime(update.ConfirmationDeadlineAt), nullableTime(update.ConfirmationDeadlineAt))
-	return operationCASResult(result, err, operationID, "stop")
+	if err := operationCASResult(result, err, operationID, "stop"); err != nil {
+		return err
+	}
+	if next == domain.StopTerminationConfirmed {
+		deadlineAt := update.ConfirmationDeadlineAt
+		if deadlineAt == nil && storedDeadline.Valid {
+			parsed, parseErr := parseTime(storedDeadline.String)
+			if parseErr != nil {
+				return parseErr
+			}
+			deadlineAt = &parsed
+		}
+		if update.TerminationConfirmedAt == nil || update.ResolvedAt == nil || deadlineAt == nil || !update.TerminationConfirmedAt.Before(*deadlineAt) || update.ObservedSessionID != sessionID || update.ObservedGeneration != generation || !update.ObservedIsTerminated {
+			return fmt.Errorf("store: D11 termination confirmation requires positive in-deadline evidence")
+		}
+		eventID, err := newAuditEventID()
+		if err != nil {
+			return err
+		}
+		_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditStopOperationConfirmed, Timestamp: *update.TerminationConfirmedAt, PairID: pairID, TaskID: taskID.String, ContractID: contractID.String, AttemptID: attemptID.String, Actor: stopActor, Details: map[string]any{"stop_operation_id": operationID, "restore_operation_id": nullableAuditString(linkedRestore), "purpose": purpose, "session_id": sessionID, "target_generation": generation, "confirmation_deadline_at": formatTime(*deadlineAt), "termination_confirmed_at": formatTime(*update.TerminationConfirmedAt), "observed_session_id": update.ObservedSessionID, "observed_generation": update.ObservedGeneration, "is_terminated": update.ObservedIsTerminated}})
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func nullableAuditString(value sql.NullString) any {
+	if !value.Valid {
+		return nil
+	}
+	return value.String
 }
 
 func operationCASResult(result sql.Result, err error, operationID, kind string) error {

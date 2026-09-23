@@ -46,6 +46,12 @@ func setupReadyTask(t *testing.T, s *Store, taskID, contractID string) {
 	}
 }
 
+// prepareLegacyDispatchForTest exercises the frozen P02 allocator internals.
+// Production callers must use PrepareBoundDispatch.
+func prepareLegacyDispatchForTest(s *Store, ctx context.Context, taskID, contractID, attemptID, expectedReportPath string, startedAt time.Time) (domain.TaskAttempt, error) {
+	return s.prepareDispatch(ctx, taskID, contractID, attemptID, expectedReportPath, startedAt, nil)
+}
+
 func TestStore_PrepareDispatch_Success(t *testing.T) {
 	ctx := context.Background()
 	s, _ := createTestStore(t)
@@ -59,7 +65,7 @@ func TestStore_PrepareDispatch_Success(t *testing.T) {
 		t.Fatalf("CanonicalExpectedReportPath failed: %v", err)
 	}
 
-	attempt, err := s.PrepareDispatch(ctx, "task-100", "contract-100", "attempt-1", canonicalPath, now)
+	attempt, err := prepareLegacyDispatchForTest(s, ctx, "task-100", "contract-100", "attempt-1", canonicalPath, now)
 	if err != nil {
 		t.Fatalf("PrepareDispatch failed: %v", err)
 	}
@@ -112,6 +118,16 @@ func TestStore_PrepareDispatch_Success(t *testing.T) {
 	t.Logf("ATOMIC_READY_TO_DISPATCHED = PASS")
 }
 
+func TestStore_LegacyPrepareDispatchIsRejected(t *testing.T) {
+	ctx := context.Background()
+	s, _ := createTestStore(t)
+	defer s.Close()
+	_, err := s.PrepareDispatch(ctx, "task", "contract", "attempt", "report", time.Now().UTC())
+	if !errors.Is(err, ErrBoundDispatchRequired) {
+		t.Fatalf("legacy unbound API error=%v, want ErrBoundDispatchRequired", err)
+	}
+}
+
 func TestStore_PrepareDispatch_CanonicalReportPathEnforcement(t *testing.T) {
 	ctx := context.Background()
 	s, _ := createTestStore(t)
@@ -127,28 +143,28 @@ func TestStore_PrepareDispatch_CanonicalReportPathEnforcement(t *testing.T) {
 
 	// 1. Non-canonical directory path must fail
 	badPath1 := ".supervisor/other/task-path/att-1.json"
-	_, err = s.PrepareDispatch(ctx, "task-path", "contract-path", "att-1", badPath1, time.Now())
+	_, err = prepareLegacyDispatchForTest(s, ctx, "task-path", "contract-path", "att-1", badPath1, time.Now())
 	if err == nil || !errors.Is(err, ErrReportPathMismatch) {
 		t.Fatalf("expected ErrReportPathMismatch for bad path, got: %v", err)
 	}
 
 	// 2. Non-canonical filename must fail
 	badPath2 := ".supervisor/reports/task-path/other.json"
-	_, err = s.PrepareDispatch(ctx, "task-path", "contract-path", "att-1", badPath2, time.Now())
+	_, err = prepareLegacyDispatchForTest(s, ctx, "task-path", "contract-path", "att-1", badPath2, time.Now())
 	if err == nil || !errors.Is(err, ErrReportPathMismatch) {
 		t.Fatalf("expected ErrReportPathMismatch for bad filename, got: %v", err)
 	}
 
 	// 3. Traversal attack in path must fail
 	badPath3 := ".supervisor/reports/task-path/../att-1.json"
-	_, err = s.PrepareDispatch(ctx, "task-path", "contract-path", "att-1", badPath3, time.Now())
+	_, err = prepareLegacyDispatchForTest(s, ctx, "task-path", "contract-path", "att-1", badPath3, time.Now())
 	if err == nil {
 		t.Fatalf("expected error for traversal in expected_report_path, got nil")
 	}
 
 	// 4. Absolute path must fail
 	badPath4 := "D:/.supervisor/reports/task-path/att-1.json"
-	_, err = s.PrepareDispatch(ctx, "task-path", "contract-path", "att-1", badPath4, time.Now())
+	_, err = prepareLegacyDispatchForTest(s, ctx, "task-path", "contract-path", "att-1", badPath4, time.Now())
 	if err == nil {
 		t.Fatalf("expected error for absolute path in expected_report_path, got nil")
 	}
@@ -163,7 +179,7 @@ func TestStore_PrepareDispatch_CanonicalReportPathEnforcement(t *testing.T) {
 	}
 
 	// 5. Exact canonical path must succeed
-	att, err := s.PrepareDispatch(ctx, "task-path", "contract-path", "att-1", canonicalPath, time.Now())
+	att, err := prepareLegacyDispatchForTest(s, ctx, "task-path", "contract-path", "att-1", canonicalPath, time.Now())
 	if err != nil {
 		t.Fatalf("PrepareDispatch with canonical path failed: %v", err)
 	}
@@ -175,7 +191,7 @@ func TestStore_PrepareDispatch_CanonicalReportPathEnforcement(t *testing.T) {
 
 	// 6. Section 21: Unsafe attemptID fails PrepareDispatch before transaction mutation
 	setupReadyTask(t, s, "task-unsafe", "contract-unsafe")
-	_, err = s.PrepareDispatch(ctx, "task-unsafe", "contract-unsafe", "CON", ".supervisor/reports/task-unsafe/CON.json", time.Now())
+	_, err = prepareLegacyDispatchForTest(s, ctx, "task-unsafe", "contract-unsafe", "CON", ".supervisor/reports/task-unsafe/CON.json", time.Now())
 	if err == nil || !errors.Is(err, ErrReportPathMismatch) {
 		t.Fatalf("expected ErrReportPathMismatch for unsafe CON attempt ID, got: %v", err)
 	}
@@ -211,7 +227,7 @@ func TestStore_PrepareDispatch_StaleContractRevisionRejected(t *testing.T) {
 	setupReadyTask(t, s, "task-stale", "contract-rev-1")
 
 	path1, _ := CanonicalExpectedReportPath("task-stale", "att-1")
-	att1, err := s.PrepareDispatch(ctx, "task-stale", "contract-rev-1", "att-1", path1, time.Now())
+	att1, err := prepareLegacyDispatchForTest(s, ctx, "task-stale", "contract-rev-1", "att-1", path1, time.Now())
 	if err != nil {
 		t.Fatalf("initial dispatch failed: %v", err)
 	}
@@ -274,7 +290,7 @@ func TestStore_PrepareDispatch_StaleContractRevisionRejected(t *testing.T) {
 
 	// Attempting to dispatch with stale Rev 1 must fail with ErrStaleContractRevision
 	path2, _ := CanonicalExpectedReportPath("task-stale", "att-2")
-	_, err = s.PrepareDispatch(ctx, "task-stale", "contract-rev-1", "att-2", path2, time.Now())
+	_, err = prepareLegacyDispatchForTest(s, ctx, "task-stale", "contract-rev-1", "att-2", path2, time.Now())
 	if err == nil || !errors.Is(err, ErrStaleContractRevision) {
 		t.Fatalf("expected ErrStaleContractRevision when dispatching superseded revision, got: %v", err)
 	}
@@ -290,7 +306,7 @@ func TestStore_PrepareDispatch_StaleContractRevisionRejected(t *testing.T) {
 	}
 
 	// Dispatching with latest revision (Rev 2) must succeed
-	att2, err := s.PrepareDispatch(ctx, "task-stale", "contract-rev-2", "att-2", path2, time.Now())
+	att2, err := prepareLegacyDispatchForTest(s, ctx, "task-stale", "contract-rev-2", "att-2", path2, time.Now())
 	if err != nil {
 		t.Fatalf("PrepareDispatch with latest revision failed: %v", err)
 	}
@@ -309,7 +325,7 @@ func TestStore_PrepareDispatch_RetryReusesLatestImmutableContract(t *testing.T) 
 
 	// Attempt 1 dispatch freezes c-retry-1
 	p1, _ := CanonicalExpectedReportPath("task-retry-imm", "att-1")
-	att1, err := s.PrepareDispatch(ctx, "task-retry-imm", "c-retry-1", "att-1", p1, time.Now())
+	att1, err := prepareLegacyDispatchForTest(s, ctx, "task-retry-imm", "c-retry-1", "att-1", p1, time.Now())
 	if err != nil {
 		t.Fatalf("attempt 1 failed: %v", err)
 	}
@@ -345,7 +361,7 @@ func TestStore_PrepareDispatch_RetryReusesLatestImmutableContract(t *testing.T) 
 	// Attempt 2 retry: c-retry-1 is already frozen (is_immutable = 1).
 	// Per Section 19, retry MUST succeed by reusing the already-frozen latest revision!
 	p2, _ := CanonicalExpectedReportPath("task-retry-imm", "att-2")
-	att2, err := s.PrepareDispatch(ctx, "task-retry-imm", "c-retry-1", "att-2", p2, time.Now())
+	att2, err := prepareLegacyDispatchForTest(s, ctx, "task-retry-imm", "c-retry-1", "att-2", p2, time.Now())
 	if err != nil {
 		t.Fatalf("retry dispatch failed: %v", err)
 	}
@@ -395,14 +411,14 @@ func TestStore_PairActiveLaneInvariant(t *testing.T) {
 
 	// 1. Dispatch Task A -> Task A enters DISPATCHED (active lane)
 	pA, _ := CanonicalExpectedReportPath("task-A", "att-A1")
-	_, err := s.PrepareDispatch(ctx, "task-A", "cA", "att-A1", pA, time.Now())
+	_, err := prepareLegacyDispatchForTest(s, ctx, "task-A", "cA", "att-A1", pA, time.Now())
 	if err != nil {
 		t.Fatalf("dispatch task A failed: %v", err)
 	}
 
 	// 2. Finding R2-006: Dispatching Task B on same pair while Task A is DISPATCHED must fail with ErrPairBusy
 	pB, _ := CanonicalExpectedReportPath("task-B", "att-B1")
-	_, err = s.PrepareDispatch(ctx, "task-B", "cB", "att-B1", pB, time.Now())
+	_, err = prepareLegacyDispatchForTest(s, ctx, "task-B", "cB", "att-B1", pB, time.Now())
 	if err == nil || !errors.Is(err, ErrPairBusy) {
 		t.Fatalf("expected ErrPairBusy when dispatching second task on same pair, got %v", err)
 	}
@@ -430,7 +446,7 @@ func TestStore_PairActiveLaneInvariant(t *testing.T) {
 	}
 
 	// 4. Now that Task A left active lane, dispatching Task B must succeed
-	_, err = s.PrepareDispatch(ctx, "task-B", "cB", "att-B1", pB, time.Now())
+	_, err = prepareLegacyDispatchForTest(s, ctx, "task-B", "cB", "att-B1", pB, time.Now())
 	if err != nil {
 		t.Fatalf("dispatch task B after task A failed should succeed, got: %v", err)
 	}
@@ -464,7 +480,7 @@ func TestStore_PairActiveLane_ReviewingTransitionBlocked(t *testing.T) {
 
 	// Step 1: Progress Task B canonically to EVIDENCE_READY while Task A is not yet active
 	pB, _ := CanonicalExpectedReportPath("task-B-rev", "att-B1")
-	_, err := s.PrepareDispatch(ctx, "task-B-rev", "cB-rev", "att-B1", pB, time.Now())
+	_, err := prepareLegacyDispatchForTest(s, ctx, "task-B-rev", "cB-rev", "att-B1", pB, time.Now())
 	if err != nil {
 		t.Fatalf("dispatch task B failed: %v", err)
 	}
@@ -475,7 +491,7 @@ func TestStore_PairActiveLane_ReviewingTransitionBlocked(t *testing.T) {
 	// Step 2: Now Task B is in EVIDENCE_READY (not an active lane state).
 	// Task A can now be dispatched to DISPATCHED (entering active lane).
 	pA, _ := CanonicalExpectedReportPath("task-A-rev", "att-A1")
-	_, err = s.PrepareDispatch(ctx, "task-A-rev", "cA-rev", "att-A1", pA, time.Now())
+	_, err = prepareLegacyDispatchForTest(s, ctx, "task-A-rev", "cA-rev", "att-A1", pA, time.Now())
 	if err != nil {
 		t.Fatalf("dispatch task A failed: %v", err)
 	}
@@ -532,7 +548,7 @@ func TestStore_PrepareDispatch_ConcurrentSamePairSingleWinner(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		pA, _ := CanonicalExpectedReportPath("task-pair-A", "att-pair-A1")
-		att, err := s.PrepareDispatch(ctx, "task-pair-A", "c-pair-A", "att-pair-A1", pA, time.Now())
+		att, err := prepareLegacyDispatchForTest(s, ctx, "task-pair-A", "c-pair-A", "att-pair-A1", pA, time.Now())
 		errs[0] = err
 		attempts[0] = att
 	}()
@@ -540,7 +556,7 @@ func TestStore_PrepareDispatch_ConcurrentSamePairSingleWinner(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		pB, _ := CanonicalExpectedReportPath("task-pair-B", "att-pair-B1")
-		att, err := s.PrepareDispatch(ctx, "task-pair-B", "c-pair-B", "att-pair-B1", pB, time.Now())
+		att, err := prepareLegacyDispatchForTest(s, ctx, "task-pair-B", "c-pair-B", "att-pair-B1", pB, time.Now())
 		errs[1] = err
 		attempts[1] = att
 	}()
@@ -637,7 +653,7 @@ func TestStore_PrepareDispatch_ConcurrentSingleWinner(t *testing.T) {
 				attID = "att-race-2"
 			}
 			repPath, _ := CanonicalExpectedReportPath("task-race", attID)
-			att, err := s.PrepareDispatch(ctx, "task-race", "contract-race", attID, repPath, time.Now())
+			att, err := prepareLegacyDispatchForTest(s, ctx, "task-race", "contract-race", attID, repPath, time.Now())
 			results[idx] = err
 			attempts[idx] = att
 		}()
@@ -673,7 +689,7 @@ func TestStore_PrepareDispatch_RollbackOnWrongTaskContract(t *testing.T) {
 	setupReadyTask(t, s, "task-B-wb", "contract-B-wb")
 
 	pathWrong, _ := CanonicalExpectedReportPath("task-A-wb", "attempt-wrong")
-	_, err := s.PrepareDispatch(ctx, "task-A-wb", "contract-B-wb", "attempt-wrong", pathWrong, time.Now())
+	_, err := prepareLegacyDispatchForTest(s, ctx, "task-A-wb", "contract-B-wb", "attempt-wrong", pathWrong, time.Now())
 	if err == nil || !errors.Is(err, ErrContractNotOwned) {
 		t.Fatalf("expected ErrContractNotOwned, got %v", err)
 	}
@@ -698,7 +714,7 @@ func TestStore_PrepareDispatch_RollbackOnDuplicateAttemptID(t *testing.T) {
 	setupReadyTask(t, s, "task-dup-2", "contract-dup-2")
 
 	p1, _ := CanonicalExpectedReportPath("task-dup-1", "att-dup-same")
-	_, err := s.PrepareDispatch(ctx, "task-dup-1", "contract-dup-1", "att-dup-same", p1, time.Now())
+	_, err := prepareLegacyDispatchForTest(s, ctx, "task-dup-1", "contract-dup-1", "att-dup-same", p1, time.Now())
 	if err != nil {
 		t.Fatalf("first dispatch failed: %v", err)
 	}
@@ -707,7 +723,7 @@ func TestStore_PrepareDispatch_RollbackOnDuplicateAttemptID(t *testing.T) {
 	_ = s.TransitionTask(ctx, "task-dup-1", domain.StateDispatched, domain.StateFailed)
 
 	p2, _ := CanonicalExpectedReportPath("task-dup-2", "att-dup-same")
-	_, err = s.PrepareDispatch(ctx, "task-dup-2", "contract-dup-2", "att-dup-same", p2, time.Now())
+	_, err = prepareLegacyDispatchForTest(s, ctx, "task-dup-2", "contract-dup-2", "att-dup-same", p2, time.Now())
 	if err == nil || !errors.Is(err, ErrDuplicateKey) {
 		t.Fatalf("expected ErrDuplicateKey, got %v", err)
 	}

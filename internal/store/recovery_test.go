@@ -22,7 +22,7 @@ func TestStore_RestartRecovery_OpenAttempt(t *testing.T) {
 		t.Fatalf("CanonicalExpectedReportPath failed: %v", err)
 	}
 
-	_, err = s.PrepareDispatch(ctx, "task-rec-open", "contract-rec-open", "att-rec-open", p, time.Now())
+	_, err = prepareLegacyDispatchForTest(s, ctx, "task-rec-open", "contract-rec-open", "att-rec-open", p, time.Now())
 	if err != nil {
 		t.Fatalf("PrepareDispatch failed: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestStore_RestartRecovery_InconsistentEndedAttempt(t *testing.T) {
 	setupReadyTask(t, s, "task-rec-ended", "contract-rec-ended")
 
 	p, _ := CanonicalExpectedReportPath("task-rec-ended", "att-rec-ended")
-	_, err := s.PrepareDispatch(ctx, "task-rec-ended", "contract-rec-ended", "att-rec-ended", p, time.Now())
+	_, err := prepareLegacyDispatchForTest(s, ctx, "task-rec-ended", "contract-rec-ended", "att-rec-ended", p, time.Now())
 	if err != nil {
 		t.Fatalf("PrepareDispatch failed: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestStore_RestartRecovery_InconsistentEmptyEndedAttempt(t *testing.T) {
 	setupReadyTask(t, s, "task-rec-empty", "contract-rec-empty")
 
 	p, _ := CanonicalExpectedReportPath("task-rec-empty", "att-rec-empty")
-	_, err := s.PrepareDispatch(ctx, "task-rec-empty", "contract-rec-empty", "att-rec-empty", p, time.Now())
+	_, err := prepareLegacyDispatchForTest(s, ctx, "task-rec-empty", "contract-rec-empty", "att-rec-empty", p, time.Now())
 	if err != nil {
 		t.Fatalf("PrepareDispatch failed: %v", err)
 	}
