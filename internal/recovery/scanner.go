@@ -24,16 +24,24 @@ type Observer interface {
 	GetWorkerStatus(context.Context, string) (*ao.WorkerStatus, error)
 }
 
+// HandoffAvailability verifies that the downstream P04 handoff can accept
+// this exact attempt. It does not claim a report is ready.
+type HandoffAvailability interface {
+	Available(context.Context, store.RecoveryExecution) (bool, error)
+}
+
 type Runner struct {
 	Store                *store.Store
 	AO                   Observer
 	Host                 HostQuiescence
+	Handoff              HandoffAvailability
 	ActivityPollInterval time.Duration
 	ExecutionDeadline    time.Duration
 	Actor                string
 	InvocationID         func() string
 	Now                  func() time.Time
 	gateMu               sync.Mutex
+	pollAccess           sync.RWMutex
 	running              bool
 	ready                bool
 	activePoller         *Poller
@@ -71,17 +79,21 @@ func (r *Runner) Run(ctx context.Context) (report Report, err error) {
 		r.gateMu.Unlock()
 		return report, errors.New("recovery: Run already active in this host instance")
 	}
-	if r.activePoller != nil {
-		if e := r.activePoller.Stop(); e != nil {
-			r.ready = false
-			r.gateMu.Unlock()
+	r.running = true
+	r.ready = false
+	poller := r.activePoller
+	r.gateMu.Unlock()
+	defer func() { r.gateMu.Lock(); r.running = false; r.ready = err == nil && report.Complete; r.gateMu.Unlock() }()
+	if poller != nil {
+		if e := poller.Stop(); e != nil {
 			return report, e
 		}
 	}
-	r.running = true
-	r.ready = false
-	r.gateMu.Unlock()
-	defer func() { r.gateMu.Lock(); r.running = false; r.ready = err == nil && report.Complete; r.gateMu.Unlock() }()
+	// A direct PollOnce owns a read scope through its entire GET and Store
+	// mutation. Repeated Run waits for every granted tick before it can
+	// acquire host quiescence and classify persisted intents.
+	r.pollAccess.Lock()
+	defer r.pollAccess.Unlock()
 	scope, err := r.Host.Acquire(ctx)
 	if err != nil {
 		return report, err
@@ -111,6 +123,10 @@ func (r *Runner) Run(ctx context.Context) (report Report, err error) {
 	snap, e := r.Store.ListRecoverySnapshot(ctx)
 	if e != nil {
 		return report, e
+	}
+	stopOwned := make(map[string]bool, len(snap.StopOwnedAttemptIDs))
+	for _, id := range snap.StopOwnedAttemptIDs {
+		stopOwned[id] = true
 	}
 	for _, op := range snap.RestoreIDs {
 		if err = ctx.Err(); err != nil {
@@ -145,6 +161,9 @@ func (r *Runner) Run(ctx context.Context) (report Report, err error) {
 		report.Classified++
 	}
 	for _, x := range snap.Executions {
+		if stopOwned[x.AttemptID] {
+			continue
+		}
 		if x.DispatchStage == "SEND_CONFIRMED" {
 			continue
 		}
@@ -203,6 +222,9 @@ func (r *Runner) Run(ctx context.Context) (report Report, err error) {
 		return report, e
 	}
 	for _, x := range latest.Executions {
+		if stopOwned[x.AttemptID] {
+			continue
+		}
 		if x.DispatchStage != "SEND_CONFIRMED" {
 			continue
 		}
@@ -350,7 +372,18 @@ func (r *Runner) classifyExecution(ctx context.Context, x store.RecoveryExecutio
 	if x.DispatchStage == "DISPATCH_BOUND" {
 		return r.classifyPreSend(ctx, x, status)
 	}
-	return r.Store.ObservePostSend(ctx, x, store.PostSendObservation{SessionID: status.ID, Generation: status.TerminalGeneration, Activity: string(status.Activity.State), Terminated: status.IsTerminated}, r.Actor, id, r.now())
+	observation := store.PostSendObservation{SessionID: status.ID, Generation: status.TerminalGeneration, Activity: string(status.Activity.State), Terminated: status.IsTerminated}
+	if x.TaskState == "DISPATCHED" && status.ID == x.SessionID && status.TerminalGeneration == x.Generation && !status.IsTerminated && status.Activity.State == ao.ActivityStateIdle {
+		if r.Handoff == nil {
+			return errors.New("recovery: verified downstream handoff dependency required")
+		}
+		var e error
+		observation.HandoffAvailable, e = r.Handoff.Available(ctx, x)
+		if e != nil {
+			return e
+		}
+	}
+	return r.Store.ObservePostSend(ctx, x, observation, r.Actor, id, r.now())
 }
 
 func (r *Runner) classifyPreSend(ctx context.Context, x store.RecoveryExecution, status *ao.WorkerStatus) error {

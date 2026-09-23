@@ -23,14 +23,31 @@ type Poller struct {
 	cancel   context.CancelFunc
 	done     chan struct{}
 	tickMu   sync.Mutex
+	stopMu   sync.Mutex
+	shutdown bool
+	stopping bool
 }
 
 func (p *Poller) PollOnce(ctx context.Context) error {
-	if p == nil || p.Store == nil || p.AO == nil || p.Interval <= 0 || p.Actor == "" {
+	if p == nil || p.Store == nil || p.AO == nil || p.Owner == nil || p.Interval <= 0 || p.Actor == "" {
 		return errors.New("recovery: poller dependencies and injected cadence required")
 	}
+	if p.Owner.Store != p.Store {
+		return errors.New("recovery: poller Store differs from completed runner")
+	}
+	p.Owner.pollAccess.RLock()
+	defer p.Owner.pollAccess.RUnlock()
 	p.tickMu.Lock()
 	defer p.tickMu.Unlock()
+	p.mu.Lock()
+	shutdown := p.shutdown
+	p.mu.Unlock()
+	p.Owner.gateMu.Lock()
+	ready := p.Owner.ready && !p.Owner.running
+	p.Owner.gateMu.Unlock()
+	if shutdown || !ready {
+		return errors.New("recovery: poll tick has no active ownership boundary")
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -38,12 +55,36 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	r := Runner{Store: p.Store, AO: p.AO, Actor: p.Actor}
-	for _, x := range snap.Executions {
+	r := Runner{Store: p.Store, AO: p.AO, Handoff: p.Owner.Handoff, Actor: p.Actor}
+	stopOwnedAttempts := make(map[string]bool, len(snap.StopOwnedAttemptIDs))
+	for _, id := range snap.StopOwnedAttemptIDs {
+		stopOwnedAttempts[id] = true
+	}
+	for _, x := range snap.StopOperations {
+		if x.Stage != "STOP_CALL_SUCCEEDED" {
+			continue // STOP_REQUESTED has no proved abandoned effect owner.
+		}
 		if err = ctx.Err(); err != nil {
 			return err
 		}
-		if x.DispatchStage != "SEND_CONFIRMED" {
+		var report Report
+		if err = r.classifyStop(ctx, x, "poller", &report); err != nil {
+			if errors.Is(err, store.ErrStateConflict) {
+				err = r.stopWinner(ctx, x, err)
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
+	for _, x := range snap.Executions {
+		if stopOwnedAttempts[x.AttemptID] {
+			continue
+		}
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+		if x.DispatchStage != "SEND_CONFIRMED" && x.DispatchStage != "DISPATCH_BOUND" {
 			continue
 		}
 		var report Report
@@ -82,7 +123,7 @@ func (p *Poller) Start(ctx context.Context) error {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.running {
+	if p.running || p.stopping {
 		return errors.New("recovery: poller already running")
 	}
 	if err := ctx.Err(); err != nil {
@@ -92,6 +133,7 @@ func (p *Poller) Start(ctx context.Context) error {
 	p.cancel = cancel
 	p.done = make(chan struct{})
 	p.running = true
+	p.shutdown = false
 	p.lastErr = nil
 	p.Owner.activePoller = p
 	go func() {
@@ -122,9 +164,18 @@ func (p *Poller) Stop() error {
 	if p == nil {
 		return nil
 	}
+	p.stopMu.Lock()
+	defer p.stopMu.Unlock()
 	p.mu.Lock()
+	p.shutdown = true
+	p.stopping = true
 	if !p.running {
 		err := p.lastErr
+		p.mu.Unlock()
+		p.tickMu.Lock()
+		p.tickMu.Unlock()
+		p.mu.Lock()
+		p.stopping = false
 		p.mu.Unlock()
 		return err
 	}
@@ -135,6 +186,11 @@ func (p *Poller) Stop() error {
 	p.mu.Lock()
 	p.running = false
 	err := p.lastErr
+	p.mu.Unlock()
+	p.tickMu.Lock()
+	p.tickMu.Unlock()
+	p.mu.Lock()
+	p.stopping = false
 	p.mu.Unlock()
 	return err
 }

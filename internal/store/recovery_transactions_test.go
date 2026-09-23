@@ -214,6 +214,110 @@ func TestPostSendOutageAndFreshRecoveryCAS(t *testing.T) {
 	}
 }
 
+func TestMissedActiveWindowAvailableHandoffAuditRollback(t *testing.T) {
+	ctx := context.Background()
+	s, _ := createTestStore(t)
+	defer s.Close()
+	_, attempt := setupBoundAttempt(t, s, "task-handoff-rollback", "contract-handoff-rollback", "attempt-handoff-rollback")
+	opID := "dispatch-attempt-handoff-rollback"
+	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := s.ListRecoverySnapshot(ctx)
+	if err != nil || len(snap.Executions) != 1 {
+		t.Fatalf("snapshot: %+v %v", snap, err)
+	}
+	x := snap.Executions[0]
+	if _, err = s.db.ExecContext(ctx, `CREATE TRIGGER fail_handoff_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='MISSED_ACTIVE_WINDOW_HANDOFF_DOWNSTREAM' BEGIN SELECT RAISE(ABORT,'injected handoff audit failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	observation := PostSendObservation{SessionID: x.SessionID, Generation: x.Generation, Activity: "idle", HandoffAvailable: true}
+	if err := s.ObservePostSend(ctx, x, observation, "supervisor", "poll", time.Now()); err == nil {
+		t.Fatal("handoff audit failure accepted")
+	}
+	task, _ := s.GetTask(ctx, x.TaskID)
+	a, _ := s.GetTaskAttempt(ctx, x.AttemptID)
+	if task.State != domain.StateDispatched || a.RecoveryDisposition != nil || a.EndedAt != nil {
+		t.Fatalf("partial handoff commit: task=%+v attempt=%+v", task, a)
+	}
+	if _, err = s.db.ExecContext(ctx, `DROP TRIGGER fail_handoff_audit`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ObservePostSend(ctx, x, observation, "supervisor", "poll", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	task, _ = s.GetTask(ctx, x.TaskID)
+	a, _ = s.GetTaskAttempt(ctx, x.AttemptID)
+	if task.State != domain.StateRunning || a.RecoveryDisposition == nil || *a.RecoveryDisposition != "MISSED_ACTIVE_WINDOW" || a.EndedAt != nil {
+		t.Fatalf("handoff commit: task=%+v attempt=%+v", task, a)
+	}
+}
+
+func TestGenericPostSendObservationCannotCloseStopOwnedAttempt(t *testing.T) {
+	ctx := context.Background()
+	s, _ := createTestStore(t)
+	defer s.Close()
+	pair, attempt := setupBoundAttempt(t, s, "task-stop-owned", "contract-stop-owned", "attempt-stop-owned")
+	opID := "dispatch-attempt-stop-owned"
+	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TransitionTask(ctx, attempt.TaskID, domain.StateDispatched, domain.StateRunning); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := s.ListRecoverySnapshot(ctx)
+	if err != nil || len(snap.Executions) != 1 {
+		t.Fatalf("snapshot: %+v %v", snap, err)
+	}
+	x := snap.Executions[0]
+	task, contract, id := attempt.TaskID, attempt.ContractID, attempt.AttemptID
+	stop := domain.StopOperation{OperationID: "stop-owned", Purpose: domain.RunningAttemptStop, PairID: pair, TaskID: &task, ContractID: &contract, AttemptID: &id, SessionID: x.SessionID, TerminalGeneration: x.Generation, Actor: "supervisor"}
+	if err := s.ReserveStopOperation(ctx, stop); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ObservePostSend(ctx, x, PostSendObservation{SessionID: x.SessionID, Generation: x.Generation, Activity: "active", Terminated: true}, "supervisor", "stale-poll", time.Now()); !errors.Is(err, ErrStateConflict) {
+		t.Fatalf("generic observation bypassed stop: %v", err)
+	}
+	before, _ := s.GetTask(ctx, x.TaskID)
+	a, _ := s.GetTaskAttempt(ctx, x.AttemptID)
+	if before.State != domain.StateRunning || a.EndedAt != nil {
+		t.Fatalf("generic partial closure: task=%+v attempt=%+v", before, a)
+	}
+	call := time.Now().UTC()
+	if err := s.CommitStopCallAccepted(ctx, stop.OperationID, call, call.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER fail_stop_owned_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='STOP_OPERATION_CONFIRMED' BEGIN SELECT RAISE(ABORT,'injected stop audit failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	outcome := StopTerminalOutcome{ExpectedStage: domain.StopCallSucceeded, Stage: domain.StopTerminationConfirmed, Resolution: domain.StopResolutionTerminationConfirmed, At: call.Add(time.Second), ObservedSessionID: x.SessionID, ObservedGeneration: x.Generation, ObservedIsTerminated: true}
+	if err := s.CommitStopOutcome(ctx, stop.OperationID, outcome); err == nil {
+		t.Fatal("stop audit failure accepted")
+	}
+	st, _ := s.GetStopOperation(ctx, stop.OperationID)
+	a, _ = s.GetTaskAttempt(ctx, x.AttemptID)
+	if st.ResolutionState != domain.StopResolutionInFlight || a.EndedAt != nil {
+		t.Fatalf("partial stop failure: stop=%+v attempt=%+v", st, a)
+	}
+	if _, err := s.db.ExecContext(ctx, `DROP TRIGGER fail_stop_owned_audit`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CommitStopOutcome(ctx, stop.OperationID, outcome); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = s.GetStopOperation(ctx, stop.OperationID)
+	a, _ = s.GetTaskAttempt(ctx, x.AttemptID)
+	if st.ResolutionState != domain.StopResolutionTerminationConfirmed || a.EndedAt == nil || a.RecoveryDisposition == nil || *a.RecoveryDisposition != "WORKER_STOPPED" {
+		t.Fatalf("stop winner lost: stop=%+v attempt=%+v", st, a)
+	}
+}
+
 func TestAbandonedStopAliveResolutionAuditAndRollback(t *testing.T) {
 	ctx := context.Background()
 	s, stop := runningStopFixture(t)

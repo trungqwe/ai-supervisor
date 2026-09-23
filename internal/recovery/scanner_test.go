@@ -63,6 +63,16 @@ type testObserver struct {
 	result *ao.WorkerStatus
 	err    error
 }
+type testHandoff struct {
+	available bool
+	err       error
+	calls     int
+}
+
+func (h *testHandoff) Available(context.Context, store.RecoveryExecution) (bool, error) {
+	h.calls++
+	return h.available, h.err
+}
 
 func (o *testObserver) GetWorkerStatus(context.Context, string) (*ao.WorkerStatus, error) {
 	o.mu.Lock()
@@ -314,6 +324,53 @@ func TestRunnerPostSendOutageAndRecoveryOnDispatchedAndRunning(t *testing.T) {
 	a, _ = s.GetTaskAttempt(ctx, attempt)
 	if task.State != domain.StateRunning || a.RecoveryDisposition == nil || *a.RecoveryDisposition != "AO_WAITING_INPUT_OBSERVED" {
 		t.Fatalf("RUNNING waiting: %+v %+v", task, a)
+	}
+}
+
+func TestMissedActiveWindowHandoffAvailability(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		handoff   *testHandoff
+		wantState domain.TaskState
+		wantErr   bool
+	}{
+		{name: "missing", wantState: domain.StateDispatched, wantErr: true},
+		{name: "unavailable", handoff: &testHandoff{}, wantState: domain.StateFailed},
+		{name: "available", handoff: &testHandoff{available: true}, wantState: domain.StateRunning},
+		{name: "error", handoff: &testHandoff{err: errors.New("handoff unavailable")}, wantState: domain.StateDispatched, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			s := newRecoveryStore(t)
+			session, generation, attempt := seedBoundExecution(t, s, "handoff")
+			if err := s.RecordSendRequested(ctx, "dispatch-handoff", session, generation, "idle", false, "fixture", time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.RecordSendConfirmed(ctx, "dispatch-handoff", "fixture", true, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			o := &testObserver{result: &ao.WorkerStatus{ID: session, TerminalGeneration: generation, Activity: ao.ActivitySnapshot{State: ao.ActivityStateIdle}}}
+			var handoff HandoffAvailability
+			if tc.handoff != nil {
+				handoff = tc.handoff
+			}
+			r := &Runner{Store: s, AO: o, Handoff: handoff, Host: &testHost{}, ActivityPollInterval: time.Second, ExecutionDeadline: time.Minute, Actor: "supervisor"}
+			report, err := r.Run(ctx)
+			if (err != nil) != tc.wantErr || report.Complete == tc.wantErr {
+				t.Fatalf("handoff outcome: %+v %v", report, err)
+			}
+			task, _ := s.GetTask(ctx, "handoff")
+			a, _ := s.GetTaskAttempt(ctx, attempt)
+			if task.State != tc.wantState {
+				t.Fatalf("state=%s want=%s", task.State, tc.wantState)
+			}
+			if !tc.wantErr && (a.RecoveryDisposition == nil || *a.RecoveryDisposition != "MISSED_ACTIVE_WINDOW") {
+				t.Fatalf("missing ambiguity disposition: %+v", a)
+			}
+			if tc.handoff != nil && tc.handoff.calls != 1 {
+				t.Fatalf("handoff checks=%d", tc.handoff.calls)
+			}
+		})
 	}
 }
 

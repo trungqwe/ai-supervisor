@@ -24,6 +24,7 @@ type RecoveryStop struct {
 
 type RecoverySnapshot struct {
 	RestoreIDs, ProvisionIDs []string
+	StopOwnedAttemptIDs      []string
 	Executions               []RecoveryExecution
 	StopOperations           []RecoveryStop
 	Blocked                  []RecoveryExecution
@@ -64,6 +65,9 @@ func (s *Store) ListRecoverySnapshot(ctx context.Context) (out RecoverySnapshot,
 		return out, err
 	}
 	if out.ProvisionIDs, err = collectIDs(`SELECT operation_id FROM pair_provisioning_operations WHERE stage='PROVISION_REQUESTED' ORDER BY operation_id`); err != nil {
+		return out, err
+	}
+	if out.StopOwnedAttemptIDs, err = collectIDs(`SELECT DISTINCT s.attempt_id FROM stop_operations s JOIN task_attempts a ON a.attempt_id=s.attempt_id AND a.ended_at IS NULL WHERE s.purpose='RUNNING_ATTEMPT_STOP' AND s.attempt_id IS NOT NULL ORDER BY s.attempt_id`); err != nil {
 		return out, err
 	}
 	rows, e := tx.QueryContext(ctx, `SELECT d.operation_id,d.pair_id,d.task_id,a.contract_id,d.attempt_id,d.session_id,d.terminal_generation,t.state,d.stage,a.recovery_disposition FROM dispatch_operations d JOIN tasks t ON t.task_id=d.task_id JOIN task_attempts a ON a.attempt_id=d.attempt_id AND a.task_id=t.task_id AND a.attempt_number=t.current_attempt WHERE a.ended_at IS NULL AND ((t.state='DISPATCHED' AND (d.stage='DISPATCH_BOUND' OR (d.stage='SEND_REQUESTED' AND d.resolution_state IS NULL) OR d.stage='SEND_CONFIRMED')) OR (t.state='RUNNING' AND d.stage='SEND_CONFIRMED')) ORDER BY d.operation_id`)
@@ -162,6 +166,9 @@ func (s *Store) RecordPostSendOutage(ctx context.Context, expected RecoveryExecu
 	if !sameRecoveryExecution(current, expected) || current.DispatchStage != "SEND_CONFIRMED" || (current.TaskState != "DISPATCHED" && current.TaskState != "RUNNING") {
 		return ErrStateConflict
 	}
+	if err = guardStopOwnedExecutionTx(ctx, tx, current); err != nil {
+		return err
+	}
 	var runtimeSession, runtimeGeneration string
 	if err = tx.QueryRowContext(ctx, `SELECT session_id,terminal_generation FROM worker_sessions WHERE pair_id=?`, current.PairID).Scan(&runtimeSession, &runtimeGeneration); err != nil {
 		return err
@@ -194,9 +201,23 @@ func sameRecoveryExecution(a, b RecoveryExecution) bool {
 	return a.OperationID == b.OperationID && a.PairID == b.PairID && a.TaskID == b.TaskID && a.ContractID == b.ContractID && a.AttemptID == b.AttemptID && a.SessionID == b.SessionID && a.Generation == b.Generation && a.TaskState == b.TaskState && a.DispatchStage == b.DispatchStage && a.Disposition == b.Disposition
 }
 
+// A live stop owns its attempt's lifecycle. Generic GET observation must not
+// race D11/D12, including when the caller held a stale recovery snapshot.
+func guardStopOwnedExecutionTx(ctx context.Context, tx *sql.Tx, x RecoveryExecution) error {
+	var owned int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM stop_operations WHERE purpose='RUNNING_ATTEMPT_STOP' AND pair_id=? AND task_id=? AND contract_id=? AND attempt_id=? AND session_id=? AND terminal_generation=?)`, x.PairID, x.TaskID, x.ContractID, x.AttemptID, x.SessionID, x.Generation).Scan(&owned); err != nil {
+		return err
+	}
+	if owned != 0 {
+		return ErrStateConflict
+	}
+	return nil
+}
+
 type PostSendObservation struct {
 	SessionID, Generation, Activity string
 	Terminated, Absent              bool
+	HandoffAvailable                bool
 }
 
 // ObservePostSend commits an exact observation, recovery-hold resolution and
@@ -219,6 +240,9 @@ func (s *Store) ObservePostSend(ctx context.Context, expected RecoveryExecution,
 	if !sameRecoveryExecution(current, expected) || (current.TaskState != "DISPATCHED" && current.TaskState != "RUNNING") {
 		return ErrStateConflict
 	}
+	if err = guardStopOwnedExecutionTx(ctx, tx, current); err != nil {
+		return err
+	}
 	var runtimeSession, runtimeGeneration string
 	if err = tx.QueryRowContext(ctx, `SELECT session_id,terminal_generation FROM worker_sessions WHERE pair_id=?`, current.PairID).Scan(&runtimeSession, &runtimeGeneration); err != nil {
 		return err
@@ -233,9 +257,7 @@ func (s *Store) ObservePostSend(ctx context.Context, expected RecoveryExecution,
 		terminalDisposition = "STALE_EXECUTION_GENERATION"
 	} else if observed.Terminated {
 		terminalDisposition = "WORKER_TERMINATION_UNKNOWN"
-	} else if current.TaskState == "DISPATCHED" && observed.Activity == "idle" {
-		// This library has no P04 handoff. The approved matrix therefore takes
-		// its fail-closed branch instead of claiming RUNNING or report readiness.
+	} else if current.TaskState == "DISPATCHED" && observed.Activity == "idle" && !observed.HandoffAvailable {
 		terminalDisposition = "MISSED_ACTIVE_WINDOW"
 	}
 	newState := current.TaskState
@@ -253,8 +275,11 @@ func (s *Store) ObservePostSend(ctx context.Context, expected RecoveryExecution,
 	if current.Disposition.Valid && current.Disposition.String != "RECOVERY_PENDING" && terminalDisposition == "" {
 		return nil
 	}
-	if terminalDisposition == "" && current.TaskState == "DISPATCHED" && (observed.Activity == "active" || observed.Activity == "waiting_input" || observed.Activity == "blocked") {
+	if terminalDisposition == "" && current.TaskState == "DISPATCHED" && (observed.Activity == "active" || observed.Activity == "waiting_input" || observed.Activity == "blocked" || observed.Activity == "idle" && observed.HandoffAvailable) {
 		newState = "RUNNING"
+	}
+	if current.TaskState == "DISPATCHED" && observed.Activity == "idle" && observed.Generation == current.Generation && !observed.Absent && !observed.Terminated {
+		newDisposition = "MISSED_ACTIVE_WINDOW"
 	}
 	if current.Disposition.Valid && current.Disposition.String == "RECOVERY_PENDING" {
 		id, e := newAuditEventID()
@@ -313,12 +338,12 @@ func (s *Store) ObservePostSend(ctx context.Context, expected RecoveryExecution,
 			return e
 		}
 	}
-	if terminalDisposition == "MISSED_ACTIVE_WINDOW" {
+	if current.TaskState == "DISPATCHED" && observed.Activity == "idle" && observed.Generation == current.Generation && !observed.Absent && !observed.Terminated {
 		id, e := newAuditEventID()
 		if e != nil {
 			return e
 		}
-		_, e = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: id, EventType: "MISSED_ACTIVE_WINDOW_HANDOFF_DOWNSTREAM", Timestamp: at, PairID: current.PairID, TaskID: current.TaskID, ContractID: current.ContractID, AttemptID: current.AttemptID, Actor: actor, Details: map[string]any{"dispatch_operation_id": current.OperationID, "handoff_available": false, "recovery_disposition": terminalDisposition}})
+		_, e = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: id, EventType: "MISSED_ACTIVE_WINDOW_HANDOFF_DOWNSTREAM", Timestamp: at, PairID: current.PairID, TaskID: current.TaskID, ContractID: current.ContractID, AttemptID: current.AttemptID, Actor: actor, Details: map[string]any{"dispatch_operation_id": current.OperationID, "handoff_available": observed.HandoffAvailable, "recovery_disposition": "MISSED_ACTIVE_WINDOW"}})
 		if e != nil {
 			return e
 		}
