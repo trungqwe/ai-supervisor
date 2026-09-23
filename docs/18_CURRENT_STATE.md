@@ -1,6 +1,6 @@
 # 18_CURRENT_STATE.md — Operational Tracking & Proof Status
 
-> **Status**: P02 COMPLETE — P03 ADR-016 ADDENDUM CANONICAL RECONCILIATION EXTERNAL_AUDIT_APPROVED — TASK-P03-003A/3B IMPLEMENTATION EXTERNAL_AUDIT_APPROVED — TASK-P03-003C IMPLEMENTATION EXTERNAL_AUDIT_APPROVED / TASK-P03-003D IMPLEMENTATION IN_PROGRESS
+> **Status**: P02 COMPLETE — P03 ADR-016 ADDENDUM CANONICAL RECONCILIATION EXTERNAL_AUDIT_APPROVED — TASK-P03-003A/3B/3C/3D IMPLEMENTATION EXTERNAL_AUDIT_APPROVED
 > **Phase 0 Baseline**: Frozen at tag `phase0-architecture-v1` (commit `6f72eaca30be3fc3ac00f25829dd4283ed98c3f5`)
 > **Phase 1 Historical Freeze**: Tag `phase1-architecture-v2` (commit `883b083023398d95d50e3bb88e90dcfca0171745`; `HISTORICAL_FREEZE_SNAPSHOT_SUPERSEDED_BY_REAUDIT`)
 > **Phase 1 Current Baseline**: Frozen at tag `phase1-architecture-v2.1` (commit `62d3fe0df4a3a05697da77349ff085430ea452f7`)
@@ -21,14 +21,14 @@
 | **Phase 1 (Upstream Proof)** | **COMPLETE** (Track P01-A: `EXTERNAL_AUDIT_APPROVED`; Track P01-B: `EXTERNAL_AUDIT_APPROVED`; Track P01-C: `EXTERNAL_AUDIT_APPROVED_WITH_ADR_011`; Track P01-D: `TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). All proofs verified. |
 | **Architecture V2 (Historical Freeze)** | **FROZEN** at tag `phase1-architecture-v2` (`HISTORICAL_FREEZE_SNAPSHOT_SUPERSEDED_BY_REAUDIT`). Immutable historical snapshot. |
 | **Architecture V2.1 (Current Baseline)** | **FROZEN** at tag `phase1-architecture-v2.1`. Zero modifications permitted without architecture governance amendment. |
-| **Project Stage** | **P02 COMPLETE / P03 TASK-P03-003D IMPLEMENTATION REVISION_REQUIRED**. Parent `TASK-P03-003` released for 3A/3B/3C/3D; 3A–3C implementation `EXTERNAL_AUDIT_APPROVED`. 3D contract revision 2 supersedes immutable release 1, keeps code base/whitelist and adds exclusive host quiescence. BLOCKER-3D-001/002/003 closed at design level; `HOST_QUIESCENCE_INTEGRATION=OPEN`. External audit of `710b27f2d41dcbadd385c6ac07e30bb1765d1cbe` opened `3D-R1-001..005`; remediation is not externally approved. `P03_CODE=AUTHORIZED_3D_ONLY`; `ACTIVE_GATE=TASK_P03_003D_REMEDIATION`. |
+| **Project Stage** | **P02 COMPLETE / P03 TASK-P03-003D IMPLEMENTATION EXTERNAL_AUDIT_APPROVED**. Parent `TASK-P03-003` released for 3A/3B/3C/3D; 3A–3D implementation `EXTERNAL_AUDIT_APPROVED`. Re-audit 001 of `7513f1b9f39fa459be15e0abc836c6258a610d8b` closed `3D-R1-001..005` and `3D-R2-001..002` at library implementation scope. `HOST_QUIESCENCE_INTEGRATION=OPEN`; verified host principal unproven at runtime; `DESIGN_BLOCKER_3D_STARTUP_WIRING=PRESERVED`; `AUTOMATIC_RESTORE=DISABLED`. |
 | **Blocked Issues** | `BLOCKER-3C-001=CLOSED_AT_DESIGN_LEVEL` by approved administrative stop clarification; implementation approved; host-authenticated runtime enablement remains unverified. `DESIGN_BLOCKER_3B_RESTORE_PROTOCOL=CLOSED_BY_APPROVED_ADDENDUM`; runtime restore/linked stop remain disabled until verified host principal. Execution budget DDL, legacy authority, precedence và scope đã được Supervisor chấp thuận ở cấp thiết kế tại `3babaa2`; candidate revision 3 chưa release. `3D-R1-005=OPEN` đến implementation audit. `HOST_QUIESCENCE_INTEGRATION=OPEN`; `DESIGN_BLOCKER_3D_STARTUP_WIRING=PRESERVED`. |
 | **Known Process Deviations** | P00-DEV-001 (`ACCEPTED_AT_PHASE0_FREEZE`); Process Hygiene Deviation recorded; **P01B-DEV-001**; **P01C-DEV-002**; **P01C-DEV-003**; **P01C-DEV-004**. |
 | **Open Implementation Decisions** | **8 UNRESOLVED OPERATIONAL POLICIES (VALUE = UNSET)**: (1) `SUPERVISOR_HTTP_TIMEOUT`, (2) `SUPERVISOR_HEALTH_PROBE_TIMEOUT`, (3) `SUPERVISOR_SPAWN_TIMEOUT`, (4) `SUPERVISOR_SEND_TIMEOUT`, (5) `SUPERVISOR_ACTIVITY_POLL_INTERVAL`, (6) `SUPERVISOR_EXECUTION_DEADLINE`, (7) `SUPERVISOR_KILL_STOP_TIMEOUT`, (8) `SUPERVISOR_WORKSPACE_READ_TIMEOUT`. (Core directions of PROPOSAL-P03-001 are EXTERNAL_APPROVED; `UPSTREAM_AO_REQUEST_TIMEOUT = 60s` is an upstream server fact). |
 | **Documentation Baseline Versions** | AO `v0.13.0` (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`), Agy `1.2.7` (`7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`), `tunnel-client` `v0.0.14`. |
 | **Upstream Runtime Proofs (P01)** | Track P01-A (`EXTERNAL_AUDIT_APPROVED`), Track P01-B (`EXTERNAL_AUDIT_APPROVED`), Track P01-C (`EXTERNAL_AUDIT_APPROVED_WITH_ADR_011`), Track P01-D (`TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). Phase P01 proof activity is **COMPLETE**. |
-| **Next Approved Action** | Implement released `TASK_CONTRACT_P03_003D.md` from base `583e700eb125a08cc6bd7d63b6b27a6f3d4cc527` in a separate worktree; submit implementation for independent audit without merge. |
-| **Active Gate** | `TASK_P03_003D_REMEDIATION` |
+| **Next Approved Action** | Merge audited TASK-P03-003D implementation `7513f1b` into main via clean governance checkout; verify post-merge tree and test integration; document merge evidence and handoff dependencies. |
+| **Active Gate** | `TASK_P03_003D_MERGE_INTEGRATION` |
 | **P01 Execution Status** | `COMPLETE` |
 
 ---
@@ -134,3 +134,4 @@
 | [`P03_TASK_003D_QUIESCENCE_CONTRACT_REVISION_RELEASE.md`](audits/P03_TASK_003D_QUIESCENCE_CONTRACT_REVISION_RELEASE.md) | `BLOCKER-3D-003=CLOSED_BY_APPROVED_ADDENDUM` at design level; 3D contract revision 2 released; implementation `IN_PROGRESS`, `HOST_QUIESCENCE_INTEGRATION=OPEN` | 2026-09-23 |
 | [`P03_TASK_003D_EXTERNAL_AUDIT_001.md`](audits/P03_TASK_003D_EXTERNAL_AUDIT_001.md) | Implementation SHA `710b27f2d41dcbadd385c6ac07e30bb1765d1cbe`: suite gốc PASS, ba Supervisor probe FAIL; R1-004/005 là code review; `3D-R1-001..005=OPEN`, `REVISION_REQUIRED` | 2026-09-24 |
 | [`P03_TASK_003D_EXTERNAL_AUDIT_002.md`](audits/P03_TASK_003D_EXTERNAL_AUDIT_002.md) | Implementation SHA `d9d2fcc57ac95b098ac02f81686a891afa1aab19`: suite gốc race PASS, hai Supervisor probe FAIL (`3D-R2-001`, `3D-R2-002`); `3D-R1-005=OPEN`; `REVISION_REQUIRED`; chưa merge | 2026-09-24 |
+| [`P03_TASK_003D_EXTERNAL_REAUDIT_001.md`](audits/P03_TASK_003D_EXTERNAL_REAUDIT_001.md) | Implementation SHA `7513f1b9f39fa459be15e0abc836c6258a610d8b`: suite gốc race PASS, whitelist 23/32, diff hygiene sạch; `3D-R1-001..005` và `3D-R2-001..002` CLOSED tại library scope; `EXTERNAL_AUDIT_APPROVED` | 2026-09-24 |
