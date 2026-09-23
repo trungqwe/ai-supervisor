@@ -1,7 +1,7 @@
-# RELEASED TASK CONTRACT REVISION 2: TASK-P03-003D
+# TASK-P03-003D — Task Contract revision 2 đã release
 
-> **Status:** `RELEASED`, supersedes `CONTRACT-TASK-P03-003D-01` without modifying its artifact. Implementation still requires external audit.
-> **Authority:** ADR-016 and approved 3D audit/quiescence clarifications delivered in the governance artifact; code baseline remains `583e700eb125a08cc6bd7d63b6b27a6f3d4cc527`.
+> **Trạng thái:** `RELEASED`, supersedes `CONTRACT-TASK-P03-003D-01` mà không sửa artifact lịch sử. Implementation vẫn cần External Supervisor audit.
+> **Căn cứ:** ADR-016 và các clarification/addendum 3D đã duyệt được giao riêng qua governance artifact; code baseline giữ `583e700eb125a08cc6bd7d63b6b27a6f3d4cc527`.
 
 ## JSON TaskContract
 
@@ -167,6 +167,6 @@
 }
 ```
 
-## Ownership and runtime dependency
+## Ownership và dependency runtime
 
-The trusted host closes shared effect admission, drains and joins existing callers, then transfers scoped exclusive ownership to synchronous Run. Release is unconditional and exactly once; admission reopening is a separate host decision allowed only after classification-complete and Pair guards. Poller never classifies persisted effects. HOST_QUIESCENCE_INTEGRATION remains OPEN; library tests with a fake provider do not prove daemon ordering or cross-process exclusion. The historical release artifact and original AC/whitelist remain unchanged.
+Trusted host đóng admission chung cho các effect, drain và join caller hiện hữu, rồi chuyển quyền exclusive theo scope cho `Run` đồng bộ. Release ownership đúng một lần; mở lại admission là quyết định riêng của host sau khi classification-complete và Pair guards cho phép. Poller không phân loại persisted effect intent. `HOST_QUIESCENCE_INTEGRATION=OPEN`; test thư viện dùng fake provider không chứng minh daemon ordering hay cross-process exclusion. Artifact release lịch sử, AC-3D-01..12 và whitelist gốc giữ nguyên.
