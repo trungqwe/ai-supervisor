@@ -1,10 +1,10 @@
-# DRAFT TASK CONTRACT: TASK-P03-003C
+# CANDIDATE TASK CONTRACT: TASK-P03-003C
 
-> **Status:** `DRAFT_PENDING_EXTERNAL_SUPERVISOR_APPROVAL`; `TASK_P03_003C=NOT_RELEASED`. Tài liệu này không cấp quyền sửa production code.
+> **Status:** `CANDIDATE_PENDING_EXTERNAL_RELEASE_AUDIT`; `TASK_P03_003C=NOT_RELEASED`. JSON contract đồng nhất với draft; tài liệu này không cấp quyền sửa production code.
 > **Proposed code base SHA:** `246f74eabd09bbc2ea66624ee217035167824a86` (merge 3B đã tồn tại). Artifact contract sẽ được giao riêng sau audit/release; không nhúng SHA tự tham chiếu.
 > **Authority:** ADR-016 accepted, addendum approved, parent decomposition §3.3. `AUTOMATIC_RESTORE=DISABLED`; host/bootstrap phải cung cấp verified principal trước khi enable linked stop hoặc administrative clearance.
 
-## 1. JSON TaskContract dự thảo
+## 1. JSON TaskContract candidate
 
 ```json
 {
