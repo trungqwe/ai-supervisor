@@ -1,10 +1,10 @@
 # 18_CURRENT_STATE.md — Operational Tracking & Proof Status
 
-> **Status**: P02 COMPLETE — P03 ADR-016 ACCEPTED — TASK-P03-003A RELEASED FOR IMPLEMENTATION
+> **Status**: P02 COMPLETE — P03 ADR-016 ACCEPTED — TASK-P03-003A IMPLEMENTATION EXTERNAL_AUDIT_APPROVED — 3B CONTRACT PLANNING
 > **Phase 0 Baseline**: Frozen at tag `phase0-architecture-v1` (commit `6f72eaca30be3fc3ac00f25829dd4283ed98c3f5`)
 > **Phase 1 Historical Freeze**: Tag `phase1-architecture-v2` (commit `883b083023398d95d50e3bb88e90dcfca0171745`; `HISTORICAL_FREEZE_SNAPSHOT_SUPERSEDED_BY_REAUDIT`)
 > **Phase 1 Current Baseline**: Frozen at tag `phase1-architecture-v2.1` (commit `62d3fe0df4a3a05697da77349ff085430ea452f7`)
-> **Updated**: 2026-09-23 (P02 = COMPLETE; P02_FINAL_AUDIT = EXTERNAL_AUDIT_APPROVED; P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED; P03_ADR_016_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED; ADR_016 = EXTERNAL_APPROVED; ADR_016_ACCEPTANCE = GRANTED; TASK_P03_003A = RELEASED; TASK_P03_003A_IMPLEMENTATION = REVISION_REQUIRED; TASK_P03_003B/3C/3D = NOT_RELEASED; P03_CODE = AUTHORIZED_3A_ONLY; DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED; Active Gate: TASK_P03_003A_REMEDIATION)
+> **Updated**: 2026-09-23 (P02 = COMPLETE; P02_FINAL_AUDIT = EXTERNAL_AUDIT_APPROVED; P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED; P03_ADR_016_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED; ADR_016 = EXTERNAL_APPROVED; ADR_016_ACCEPTANCE = GRANTED; TASK_P03_003A = RELEASED; TASK_P03_003A_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED; TASK_P03_003B/3C/3D = NOT_RELEASED; P03_CODE = HELD_PENDING_TASK_P03_003B_CONTRACT_RELEASE; DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED; Active Gate: TASK_P03_003B_CONTRACT_PLANNING)
 
 ## 1. High-Level Summary
 
@@ -14,14 +14,14 @@
 | **Phase 1 (Upstream Proof)** | **COMPLETE** (Track P01-A: `EXTERNAL_AUDIT_APPROVED`; Track P01-B: `EXTERNAL_AUDIT_APPROVED`; Track P01-C: `EXTERNAL_AUDIT_APPROVED_WITH_ADR_011`; Track P01-D: `TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). All proofs verified. |
 | **Architecture V2 (Historical Freeze)** | **FROZEN** at tag `phase1-architecture-v2` (`HISTORICAL_FREEZE_SNAPSHOT_SUPERSEDED_BY_REAUDIT`). Immutable historical snapshot. |
 | **Architecture V2.1 (Current Baseline)** | **FROZEN** at tag `phase1-architecture-v2.1`. Zero modifications permitted without architecture governance amendment. |
-| **Project Stage** | **P02 COMPLETE / P03 TASK-P03-003A REMEDIATION**. ADR-016 and canonical reconciliation remain externally approved. Parent `TASK-P03-003` is released only for 3A: `TASK_P03_003A = RELEASED`; `TASK_P03_003A_IMPLEMENTATION = REVISION_REQUIRED`; 3B/3C/3D remain `NOT_RELEASED`. `P03_CODE = AUTHORIZED_3A_ONLY`. `ACTIVE_GATE = TASK_P03_003A_REMEDIATION`. |
-| **Blocked Issues** | V1 ChatGPT transport blocker: **NONE**. P01 upstream-proof blocker: **NONE**. Pre-code verification command gap: **RESOLVED**. `DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED` for unreleased 3D; it does not block 3A. |
+| **Project Stage** | **P02 COMPLETE / P03 TASK-P03-003B CONTRACT PLANNING**. ADR-016 and canonical reconciliation remain externally approved. Parent `TASK-P03-003` is released only for 3A: `TASK_P03_003A = RELEASED`; `TASK_P03_003A_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED`; 3B/3C/3D remain `NOT_RELEASED`. `P03_CODE = HELD_PENDING_TASK_P03_003B_CONTRACT_RELEASE`. `ACTIVE_GATE = TASK_P03_003B_CONTRACT_PLANNING`. |
+| **Blocked Issues** | V1 ChatGPT transport blocker: **NONE**. P01 upstream-proof blocker: **NONE**. Pre-code verification command gap: **RESOLVED**. `DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED` for unreleased 3D. |
 | **Known Process Deviations** | P00-DEV-001 (`ACCEPTED_AT_PHASE0_FREEZE`); Process Hygiene Deviation recorded; **P01B-DEV-001**; **P01C-DEV-002**; **P01C-DEV-003**; **P01C-DEV-004**. |
 | **Open Implementation Decisions** | **8 UNRESOLVED OPERATIONAL POLICIES (VALUE = UNSET)**: (1) `SUPERVISOR_HTTP_TIMEOUT`, (2) `SUPERVISOR_HEALTH_PROBE_TIMEOUT`, (3) `SUPERVISOR_SPAWN_TIMEOUT`, (4) `SUPERVISOR_SEND_TIMEOUT`, (5) `SUPERVISOR_ACTIVITY_POLL_INTERVAL`, (6) `SUPERVISOR_EXECUTION_DEADLINE`, (7) `SUPERVISOR_KILL_STOP_TIMEOUT`, (8) `SUPERVISOR_WORKSPACE_READ_TIMEOUT`. (Core directions of PROPOSAL-P03-001 are EXTERNAL_APPROVED; `UPSTREAM_AO_REQUEST_TIMEOUT = 60s` is an upstream server fact). |
 | **Documentation Baseline Versions** | AO `v0.13.0` (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`), Agy `1.2.7` (`7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`), `tunnel-client` `v0.0.14`. |
 | **Upstream Runtime Proofs (P01)** | Track P01-A (`EXTERNAL_AUDIT_APPROVED`), Track P01-B (`EXTERNAL_AUDIT_APPROVED`), Track P01-C (`EXTERNAL_AUDIT_APPROVED_WITH_ADR_011`), Track P01-D (`TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). Phase P01 proof activity is **COMPLETE**. |
-| **Next Approved Action** | Remediate findings `3A-R1-001` through `3A-R1-004` on `codex/p03-003a`, push the isolated branch, then stop for external re-audit. Contract and base SHA `1daf0b91efc7f065eb07146d642c0b6f6c259212` remain unchanged. |
-| **Active Gate** | `TASK_P03_003A_REMEDIATION` |
+| **Next Approved Action** | Draft `TASK-P03-003B` contract against merge SHA `b8b0c95576d87677e8d48210d9838cc2f599752a`; submit for External Supervisor review. No 3B release or implementation. |
+| **Active Gate** | `TASK_P03_003B_CONTRACT_PLANNING` |
 | **P01 Execution Status** | `COMPLETE` |
 
 ---
@@ -105,3 +105,5 @@
 | [`P03_ADR_016_CANONICAL_RECONCILIATION_EXTERNAL_AUDIT_ERRATUM_001.md`](audits/P03_ADR_016_CANONICAL_RECONCILIATION_EXTERNAL_AUDIT_ERRATUM_001.md) | `APPROVED_ERRATUM` (Citation correction: verified pinned AO commit 15e9ea9 line citations for /restore [OpenAPI 5245/5247, controller 195/1250] and /resume-agent [OpenAPI 5284/5286, controller 197/1289]; canonical reconciliation verdict unchanged) | 2026-09-23 |
 | [`P03_TASK_003A_CONTRACT_RELEASE_AUDIT.md`](audits/P03_TASK_003A_CONTRACT_RELEASE_AUDIT.md) | `EXTERNAL_APPROVED_AND_RELEASED` (Candidate commit `56b5ef3`, blob `5364edf`; full-schema and strict `ValidateRaw` policy checks PASS; `TASK_P03_003A = RELEASED`; 3B/3C/3D remain `NOT_RELEASED`; Active Gate: `TASK_P03_003A_IMPLEMENTATION`) | 2026-09-23 |
 | [`P03_TASK_003A_EXTERNAL_AUDIT_001.md`](audits/P03_TASK_003A_EXTERNAL_AUDIT_001.md) | `REVISION_REQUIRED` (Implementation commit `c793fb6` audited; original suites PASS, five audit probes FAIL; findings `3A-R1-001` through `3A-R1-004`; Active Gate: `TASK_P03_003A_REMEDIATION`) | 2026-09-23 |
+| [`P03_TASK_003A_EXTERNAL_REAUDIT_001.md`](audits/P03_TASK_003A_EXTERNAL_REAUDIT_001.md) | `EXTERNAL_AUDIT_APPROVED` (Implementation commit `deeb4404` audited; `3A-R1-001..004 = CLOSED`; merged at `b8b0c95`; integration checks exit 0; Active Gate: `TASK_P03_003B_CONTRACT_PLANNING`) | 2026-09-23 |
+| [`DRAFT_TASK_CONTRACT_P03_003B.md`](tasks/DRAFT_TASK_CONTRACT_P03_003B.md) | `DRAFT_PENDING_EXTERNAL_SUPERVISOR_APPROVAL` (3B `base_sha = b8b0c95`; full JSON schema PASS; verification profile metadata proposed, semantic release validation pending; 3B remains `NOT_RELEASED`) | 2026-09-23 |

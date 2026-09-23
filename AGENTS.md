@@ -52,7 +52,7 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003A REMEDIATION
+# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003B CONTRACT PLANNING
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
@@ -80,16 +80,16 @@ This document establishes immutable operational directives for all AI coding age
 > Task Contract for documentation reconciliation `CONTRACT-TASK-P03-DOC-RECONCILIATION-01` completed (`docs/tasks/TASK_CONTRACT_P03_CANONICAL_RECONCILIATION_ADR_016.md`).
 > Contract `CONTRACT-TASK-P03-003A-01` was approved by External Supervisor from candidate commit `56b5ef38ba5a45d56d58dd368a0c47cf45e0886f`, blob `5364edf076b31b8a42a37fee29193fc36ccdf413`, and is formally released as `docs/tasks/TASK_CONTRACT_P03_003A.md`.
 > External Supervisor audited implementation commit `c793fb66069e780f2fcc97129456fb5068b44f3d` and required revision for findings `3A-R1-001` through `3A-R1-004` (`docs/audits/P03_TASK_003A_EXTERNAL_AUDIT_001.md`). `TASK_P03_003A_IMPLEMENTATION = REVISION_REQUIRED`.
+> External Supervisor re-audited implementation commit `deeb4404e801d259cb589a2ef9b031f93b4b0367`, closed findings `3A-R1-001` through `3A-R1-004`, and approved `TASK_P03_003A_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED` (`docs/audits/P03_TASK_003A_EXTERNAL_REAUDIT_001.md`). The audited code was merged at `b8b0c95576d87677e8d48210d9838cc2f599752a`.
 > Architecture classification established: `P03_ARCHITECTURE_CHANGE = YES`, `P03_ADR_REQUIRED = YES`.
 > Parent `TASK-P03-003` is released only for subtask 3A. Subtasks 3B, 3C, and 3D remain **NOT_RELEASED**.
-> Production coding is **`AUTHORIZED_3A_ONLY`** under the immutable scope of `CONTRACT-TASK-P03-003A-01`.
-> The active phase gate is **`TASK_P03_003A_REMEDIATION`**.
+> Production coding is **`HELD_PENDING_TASK_P03_003B_CONTRACT_RELEASE`**.
+> The active phase gate is **`TASK_P03_003B_CONTRACT_PLANNING`**.
 
-1. **TASK-P03-003A REMEDIATION GATE**:
-   - Implementation must start from `base_sha = 1daf0b91efc7f065eb07146d642c0b6f6c259212`.
-   - Allowed scope is strictly `internal/domain/**` and `internal/store/**`.
-   - Remediate only External Supervisor findings `3A-R1-001` through `3A-R1-004` within the released contract and accepted ADR-016.
-   - After commit and push, stop for independent audit; do not merge to `main`.
+1. **TASK-P03-003B CONTRACT PLANNING GATE**:
+   - Draft the 3B Task Contract from accepted ADR-016, reconciled canonical specifications, source registry, reuse matrix, and merged code API evidence.
+   - Pin the draft `base_sha` to the existing 3A merge commit. The draft does not release 3B.
+   - No 3B production implementation until formal External Supervisor approval and separate contract release.
 
 2. **TASK-P03-003 PARTIAL RELEASE GUARD**:
    - `TASK_P03_003A = RELEASED`.
@@ -103,7 +103,7 @@ This document establishes immutable operational directives for all AI coding age
    - Absolutely NO SSE or `/api/v1/events` integration;
    - Absolutely NO workspace file fetching or WorkerReport handling;
    - Absolutely NO coordinator, AO calls, poller, or startup scanner implementation;
-   - Absolutely NO Go production code modification outside `internal/domain/**` and `internal/store/**`;
+   - Absolutely NO Go production code modification under this planning gate;
    - Absolutely NO modification to accepted ADR-016 or proposals.
 
 4. **FINAL GOVERNANCE STATE**:
@@ -117,10 +117,10 @@ This document establishes immutable operational directives for all AI coding age
    - `ADR_016 = EXTERNAL_APPROVED`
    - `ADR_016_ACCEPTANCE = GRANTED`
    - `TASK_P03_003A = RELEASED`
-   - `TASK_P03_003A_IMPLEMENTATION = REVISION_REQUIRED`
+   - `TASK_P03_003A_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED`
    - `TASK_P03_003B = NOT_RELEASED`
    - `TASK_P03_003C = NOT_RELEASED`
    - `TASK_P03_003D = NOT_RELEASED`
-   - `P03_CODE = AUTHORIZED_3A_ONLY`
-   - `ACTIVE_GATE = TASK_P03_003A_REMEDIATION`
+   - `P03_CODE = HELD_PENDING_TASK_P03_003B_CONTRACT_RELEASE`
+   - `ACTIVE_GATE = TASK_P03_003B_CONTRACT_PLANNING`
    - `DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED`
