@@ -23,9 +23,7 @@ func setupBoundAttempt(t *testing.T, s *Store, taskID, contractID, attemptID str
 		TerminalGeneration: "generation-" + taskID,
 		QuarantineState:    domain.QuarantineClean,
 	}
-	if err := s.CreateWorkerSession(ctx, session); err != nil {
-		t.Fatalf("CreateWorkerSession: %v", err)
-	}
+	seedWorkerSessionForTest(t, s, session)
 	reportPath, err := CanonicalExpectedReportPath(taskID, attemptID)
 	if err != nil {
 		t.Fatalf("CanonicalExpectedReportPath: %v", err)
@@ -55,9 +53,10 @@ func TestStore_WorkerSessionCRUDAndCAS(t *testing.T) {
 		Status:             domain.WorkerSessionIdle,
 		TerminalGeneration: "generation-1",
 	}
-	if err := s.CreateWorkerSession(ctx, session); err != nil {
-		t.Fatalf("CreateWorkerSession: %v", err)
+	if err := s.CreateWorkerSession(ctx, session); !errors.Is(err, ErrAtomicDispatchRequired) {
+		t.Fatalf("generic WorkerSession creation error = %v, want ErrAtomicDispatchRequired", err)
 	}
+	seedWorkerSessionForTest(t, s, session)
 	byPair, err := s.GetWorkerSessionByPair(ctx, pairID)
 	if err != nil {
 		t.Fatalf("GetWorkerSessionByPair: %v", err)
@@ -73,27 +72,50 @@ func TestStore_WorkerSessionCRUDAndCAS(t *testing.T) {
 	}
 	duplicateSession := session
 	duplicateSession.PairID = "pair-session-2"
-	if err := s.CreateWorkerSession(ctx, duplicateSession); !errors.Is(err, ErrDuplicateKey) {
-		t.Fatalf("duplicate session_id error = %v, want ErrDuplicateKey", err)
+	if err := s.CreateWorkerSession(ctx, duplicateSession); !errors.Is(err, ErrAtomicDispatchRequired) {
+		t.Fatalf("generic WorkerSession creation error = %v, want ErrAtomicDispatchRequired", err)
 	}
 	byID, err := s.GetWorkerSessionByID(ctx, "session-crud")
 	if err != nil || byID.PairID != pairID {
 		t.Fatalf("GetWorkerSessionByID: session=%+v err=%v", byID, err)
 	}
-	newGeneration := "generation-2"
 	err = s.UpdateWorkerSessionStatusAndQuarantine(ctx, pairID, WorkerSessionCASUpdate{
 		ExpectedStatus:          domain.WorkerSessionIdle,
 		ExpectedQuarantineState: domain.QuarantineClean,
 		Status:                  domain.WorkerSessionActive,
-		QuarantineState:         domain.QuarantineQuarantined,
-		TerminalGeneration:      &newGeneration,
+		QuarantineState:         domain.QuarantineClean,
 	})
 	if err != nil {
 		t.Fatalf("UpdateWorkerSessionStatusAndQuarantine: %v", err)
 	}
 	updated, _ := s.GetWorkerSessionByPair(ctx, pairID)
-	if updated.Status != domain.WorkerSessionActive || updated.QuarantineState != domain.QuarantineQuarantined || updated.TerminalGeneration != newGeneration {
+	if updated.Status != domain.WorkerSessionActive || updated.QuarantineState != domain.QuarantineClean || updated.TerminalGeneration != "generation-1" {
 		t.Fatalf("worker session CAS update mismatch: %+v", updated)
+	}
+	err = s.UpdateWorkerSessionStatusAndQuarantine(ctx, pairID, WorkerSessionCASUpdate{
+		ExpectedStatus:          domain.WorkerSessionActive,
+		ExpectedQuarantineState: domain.QuarantineClean,
+		Status:                  domain.WorkerSessionActive,
+		QuarantineState:         domain.QuarantineQuarantined,
+	})
+	if !errors.Is(err, ErrAtomicDispatchRequired) {
+		t.Fatalf("generic quarantine mutation error = %v, want ErrAtomicDispatchRequired", err)
+	}
+	seedWorkerSessionForTest(t, s, domain.WorkerSession{
+		PairID: "pair-session-2", SessionID: "session-quarantined", RuntimeType: "agy_tui",
+		WorkerAgentID: "agy", Status: domain.WorkerSessionActive, TerminalGeneration: "generation-q",
+		QuarantineState: domain.QuarantineQuarantined,
+	})
+	err = s.UpdateWorkerSessionStatusAndQuarantine(ctx, "pair-session-2", WorkerSessionCASUpdate{
+		ExpectedStatus: domain.WorkerSessionActive, ExpectedQuarantineState: domain.QuarantineQuarantined,
+		Status: domain.WorkerSessionIdle, QuarantineState: domain.QuarantineClean,
+	})
+	if !errors.Is(err, ErrAtomicDispatchRequired) {
+		t.Fatalf("generic quarantine clearance error = %v, want ErrAtomicDispatchRequired", err)
+	}
+	quarantined, err := s.GetWorkerSessionByPair(ctx, "pair-session-2")
+	if err != nil || quarantined.QuarantineState != domain.QuarantineQuarantined {
+		t.Fatalf("generic CAS cleared quarantine: session=%+v err=%v", quarantined, err)
 	}
 	err = s.UpdateWorkerSessionStatusAndQuarantine(ctx, pairID, WorkerSessionCASUpdate{
 		ExpectedStatus:          domain.WorkerSessionIdle,
@@ -111,29 +133,32 @@ func TestStore_LifecycleOperationCRUDAndConstraints(t *testing.T) {
 	s, _ := createTestStore(t)
 	defer s.Close()
 	pairID, attempt := setupBoundAttempt(t, s, "task-ops", "contract-ops", "attempt-ops")
+	_ = pairID
 
+	if err := s.CreateProject(ctx, domain.Project{ProjectID: "project-provision-ops", Name: "provision", RootPath: "/provision"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreatePair(ctx, domain.Pair{PairID: "pair-provision-ops", ProjectID: "project-provision-ops", CurrentPhaseID: "P03", State: "ACTIVE"}); err != nil {
+		t.Fatal(err)
+	}
 	provision := domain.PairProvisioningOperation{
 		OperationID: "provision-1",
-		PairID:      pairID,
+		PairID:      "pair-provision-ops",
 		Stage:       domain.ProvisionRequested,
 		ClientToken: "client-token-1",
 	}
-	if err := s.CreatePairProvisioningOperation(ctx, provision); err != nil {
-		t.Fatalf("CreatePairProvisioningOperation: %v", err)
+	if err := s.ReservePairProvisioning(ctx, provision, "supervisor"); err != nil {
+		t.Fatalf("ReservePairProvisioning: %v", err)
 	}
 	duplicate := provision
 	duplicate.OperationID = "provision-2"
-	duplicate.Stage = domain.ProvisionFailed
-	if err := s.CreatePairProvisioningOperation(ctx, duplicate); !errors.Is(err, ErrDuplicateKey) {
-		t.Fatalf("unresolved provisioning uniqueness error = %v, want ErrDuplicateKey", err)
+	if err := s.ReservePairProvisioning(ctx, duplicate, "supervisor"); err == nil {
+		t.Fatalf("duplicate Pair reservation unexpectedly succeeded")
 	}
 	completedAt := time.Now().UTC()
-	sessionID := "session-task-ops"
-	if err := s.UpdatePairProvisioningOperationStage(ctx, provision.OperationID, domain.ProvisionRequested, domain.ProvisionConfirmed, PairProvisioningStageUpdate{
-		SessionID:   &sessionID,
-		CompletedAt: &completedAt,
-	}); err != nil {
-		t.Fatalf("UpdatePairProvisioningOperationStage: %v", err)
+	sessionID := "session-provision-ops"
+	if err := s.ConfirmPairProvisioning(ctx, provision.OperationID, domain.WorkerSession{PairID: provision.PairID, SessionID: sessionID, RuntimeType: "agy_tui", WorkerAgentID: "agy", Status: domain.WorkerSessionIdle, TerminalGeneration: "generation-provision"}, "supervisor", completedAt); err != nil {
+		t.Fatalf("ConfirmPairProvisioning: %v", err)
 	}
 	gotProvision, err := s.GetPairProvisioningOperation(ctx, provision.OperationID)
 	if err != nil || gotProvision.Stage != domain.ProvisionConfirmed || gotProvision.SessionID == nil || *gotProvision.SessionID != sessionID {
@@ -144,11 +169,11 @@ func TestStore_LifecycleOperationCRUDAndConstraints(t *testing.T) {
 	if err != nil || gotDispatch.Stage != domain.DispatchBound || gotDispatch.AttemptID != attempt.AttemptID {
 		t.Fatalf("bound dispatch round trip: operation=%+v err=%v", gotDispatch, err)
 	}
-	if err := s.UpdateDispatchOperationStage(ctx, gotDispatch.OperationID, domain.DispatchBound, domain.SendRequested, DispatchStageUpdate{}); err != nil {
+	if err := s.RecordSendRequested(ctx, gotDispatch.OperationID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now().UTC()); err != nil {
 		t.Fatalf("dispatch DISPATCH_BOUND -> SEND_REQUESTED: %v", err)
 	}
 	confirmedAt := time.Now().UTC()
-	if err := s.UpdateDispatchOperationStage(ctx, gotDispatch.OperationID, domain.SendRequested, domain.SendConfirmed, DispatchStageUpdate{ConfirmedAt: &confirmedAt}); err != nil {
+	if err := s.RecordSendConfirmed(ctx, gotDispatch.OperationID, "supervisor", true, confirmedAt); err != nil {
 		t.Fatalf("dispatch SEND_REQUESTED -> SEND_CONFIRMED: %v", err)
 	}
 	if err := s.CreateDispatchOperation(ctx, domain.DispatchOperation{
@@ -159,8 +184,8 @@ func TestStore_LifecycleOperationCRUDAndConstraints(t *testing.T) {
 		SessionID:          *attempt.SessionID,
 		TerminalGeneration: *attempt.TerminalGeneration,
 		Stage:              domain.DispatchBound,
-	}); !errors.Is(err, ErrDuplicateKey) {
-		t.Fatalf("duplicate dispatch attempt error = %v, want ErrDuplicateKey", err)
+	}); !errors.Is(err, ErrAtomicDispatchRequired) {
+		t.Fatalf("generic dispatch creation error = %v, want ErrAtomicDispatchRequired", err)
 	}
 
 	taskID, contractID, attemptID := attempt.TaskID, attempt.ContractID, attempt.AttemptID
@@ -215,7 +240,7 @@ func TestStore_TaskAttemptNullableAndBoundSnapshotRoundTrip(t *testing.T) {
 
 	setupReadyTask(t, s, "task-null-snapshot", "contract-null-snapshot")
 	path, _ := CanonicalExpectedReportPath("task-null-snapshot", "attempt-null-snapshot")
-	if _, err := s.PrepareDispatch(ctx, "task-null-snapshot", "contract-null-snapshot", "attempt-null-snapshot", path, time.Now().UTC()); err != nil {
+	if _, err := prepareLegacyDispatchForTest(s, ctx, "task-null-snapshot", "contract-null-snapshot", "attempt-null-snapshot", path, time.Now().UTC()); err != nil {
 		t.Fatalf("PrepareDispatch nullable snapshot: %v", err)
 	}
 	nullable, err := s.GetTaskAttempt(ctx, "attempt-null-snapshot")
@@ -264,7 +289,7 @@ func TestStore_PrepareBoundDispatchAuditFailureRollsBackBinding(t *testing.T) {
 	defer s.Close()
 	setupReadyTask(t, s, "task-bound-rollback", "contract-bound-rollback")
 	pairID := "pair-d-task-bound-rollback"
-	if err := s.CreateWorkerSession(ctx, domain.WorkerSession{
+	seedWorkerSessionForTest(t, s, domain.WorkerSession{
 		PairID:             pairID,
 		SessionID:          "session-bound-rollback",
 		RuntimeType:        "agy_tui",
@@ -272,9 +297,7 @@ func TestStore_PrepareBoundDispatchAuditFailureRollsBackBinding(t *testing.T) {
 		Status:             domain.WorkerSessionIdle,
 		TerminalGeneration: "generation-bound-rollback",
 		QuarantineState:    domain.QuarantineClean,
-	}); err != nil {
-		t.Fatalf("CreateWorkerSession: %v", err)
-	}
+	})
 	if _, err := s.db.ExecContext(ctx, `
 CREATE TRIGGER reject_dispatch_bound_audit
 BEFORE INSERT ON audit_events

@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	CurrentSchemaVersion = 3
+	CurrentSchemaVersion = 4
 	GenesisAuditHash     = "0000000000000000000000000000000000000000000000000000000000000000"
 )
 
@@ -226,11 +226,72 @@ CREATE TABLE stop_operations (
 );
 `
 
+const v4Schema = `
+CREATE TABLE restore_authorizations (
+ authorization_id TEXT PRIMARY KEY, operation_id TEXT NOT NULL UNIQUE,
+ pair_id TEXT NOT NULL REFERENCES pairs(pair_id) ON DELETE RESTRICT,
+ session_id TEXT NOT NULL, expected_generation TEXT NOT NULL,
+ risk_scope TEXT NOT NULL CHECK (risk_scope IN ('POSSIBLE_PROMPT_REPLAY','PROMPT_REPLAY_AND_UNRESOLVED_EXECUTION')),
+ authorized_principal TEXT NOT NULL,
+ authorization_event_id TEXT NOT NULL UNIQUE REFERENCES audit_events(event_id) ON DELETE RESTRICT,
+ issued_at TEXT NOT NULL, consumed_at TEXT, consumed_by_operation_id TEXT UNIQUE,
+ UNIQUE(authorization_id,operation_id,pair_id,session_id,expected_generation),
+ CHECK ((consumed_at IS NULL AND consumed_by_operation_id IS NULL) OR
+        (consumed_at IS NOT NULL AND consumed_by_operation_id IS NOT NULL AND consumed_by_operation_id = operation_id))
+);
+CREATE TABLE pair_restore_operations (
+ operation_id TEXT PRIMARY KEY,
+ authorization_id TEXT NOT NULL UNIQUE REFERENCES restore_authorizations(authorization_id) ON DELETE RESTRICT,
+ pair_id TEXT NOT NULL REFERENCES pairs(pair_id) ON DELETE RESTRICT,
+ session_id TEXT NOT NULL, expected_generation TEXT NOT NULL, observed_generation TEXT,
+ restore_mode TEXT CHECK (restore_mode IN ('native','saved_prompt','fresh')),
+ stage TEXT NOT NULL CHECK (stage IN ('RESTORE_REQUESTED','RESTORE_CONFIRMED')),
+ resolution_state TEXT NOT NULL CHECK (resolution_state IN ('IN_FLIGHT','RESTORE_OUTCOME_UNKNOWN','RESTORE_RECOVERY_CLAIMED','RESTORE_CLEANUP_CLAIMED','RESTORE_RESOLVED')),
+ resolution_basis TEXT CHECK (resolution_basis IN ('RESTORE_HTTP_200_CONFIRMED','PHYSICAL_EXECUTION_RESOLUTION','ADMINISTRATIVE_RISK_RESOLUTION')),
+ recovery_principal TEXT, recovery_claimed_at TEXT, requested_at TEXT NOT NULL, http_200_at TEXT,
+ resolved_at TEXT, resolution_event_id TEXT UNIQUE REFERENCES audit_events(event_id) ON DELETE RESTRICT,
+ version INTEGER NOT NULL DEFAULT 0 CHECK(version >= 0),
+ FOREIGN KEY(authorization_id,operation_id,pair_id,session_id,expected_generation)
+  REFERENCES restore_authorizations(authorization_id,operation_id,pair_id,session_id,expected_generation) ON DELETE RESTRICT,
+ CHECK ((stage='RESTORE_CONFIRMED' AND http_200_at IS NOT NULL AND observed_generation IS NOT NULL AND restore_mode IS NOT NULL) OR
+        (stage='RESTORE_REQUESTED' AND http_200_at IS NULL AND observed_generation IS NULL AND restore_mode IS NULL)),
+ CHECK ((resolution_state='RESTORE_RESOLVED' AND resolved_at IS NOT NULL AND resolution_basis IS NOT NULL AND resolution_event_id IS NOT NULL) OR
+        (resolution_state<>'RESTORE_RESOLVED' AND resolved_at IS NULL AND resolution_basis IS NULL AND resolution_event_id IS NULL)),
+ CHECK (resolution_basis<>'RESTORE_HTTP_200_CONFIRMED' OR stage='RESTORE_CONFIRMED'),
+ CHECK (resolution_state NOT IN ('RESTORE_RECOVERY_CLAIMED','RESTORE_CLEANUP_CLAIMED') OR (recovery_principal IS NOT NULL AND recovery_claimed_at IS NOT NULL))
+);
+CREATE UNIQUE INDEX idx_pair_restore_unresolved ON pair_restore_operations(pair_id) WHERE resolution_state <> 'RESTORE_RESOLVED';
+CREATE INDEX idx_restore_stage_resolution ON pair_restore_operations(stage,resolution_state);
+ALTER TABLE stop_operations ADD COLUMN restore_operation_id TEXT REFERENCES pair_restore_operations(operation_id) ON DELETE RESTRICT;
+CREATE UNIQUE INDEX idx_stop_restore_operation ON stop_operations(restore_operation_id) WHERE restore_operation_id IS NOT NULL;
+CREATE TRIGGER trg_restore_auth_no_delete BEFORE DELETE ON restore_authorizations BEGIN SELECT RAISE(ABORT,'restore authorization is append-only'); END;
+CREATE TRIGGER trg_restore_op_no_delete BEFORE DELETE ON pair_restore_operations BEGIN SELECT RAISE(ABORT,'restore operation is append-only'); END;
+CREATE TRIGGER trg_restore_auth_immutable BEFORE UPDATE ON restore_authorizations
+WHEN NEW.authorization_id IS NOT OLD.authorization_id OR NEW.operation_id IS NOT OLD.operation_id OR
+ NEW.pair_id IS NOT OLD.pair_id OR NEW.session_id IS NOT OLD.session_id OR NEW.expected_generation IS NOT OLD.expected_generation OR
+ NEW.risk_scope IS NOT OLD.risk_scope OR NEW.authorized_principal IS NOT OLD.authorized_principal OR
+ NEW.authorization_event_id IS NOT OLD.authorization_event_id OR NEW.issued_at IS NOT OLD.issued_at OR
+ (OLD.consumed_at IS NOT NULL AND (NEW.consumed_at IS NOT OLD.consumed_at OR NEW.consumed_by_operation_id IS NOT OLD.consumed_by_operation_id))
+BEGIN SELECT RAISE(ABORT,'restore authorization immutable or already consumed'); END;
+CREATE TRIGGER trg_restore_op_forward_only BEFORE UPDATE ON pair_restore_operations
+WHEN NEW.operation_id IS NOT OLD.operation_id OR NEW.authorization_id IS NOT OLD.authorization_id OR NEW.pair_id IS NOT OLD.pair_id OR
+ NEW.session_id IS NOT OLD.session_id OR NEW.expected_generation IS NOT OLD.expected_generation OR NEW.requested_at IS NOT OLD.requested_at OR
+ NEW.version <> OLD.version+1 OR
+ (OLD.stage='RESTORE_CONFIRMED' AND (NEW.stage<>'RESTORE_CONFIRMED' OR NEW.http_200_at IS NOT OLD.http_200_at OR NEW.observed_generation IS NOT OLD.observed_generation OR NEW.restore_mode IS NOT OLD.restore_mode)) OR
+ (OLD.stage='RESTORE_REQUESTED' AND NEW.stage='RESTORE_CONFIRMED' AND OLD.resolution_state<>'IN_FLIGHT') OR
+ NOT (NEW.resolution_state=OLD.resolution_state OR
+ (OLD.resolution_state='IN_FLIGHT' AND NEW.resolution_state IN ('RESTORE_OUTCOME_UNKNOWN','RESTORE_RECOVERY_CLAIMED')) OR
+ (OLD.resolution_state='RESTORE_OUTCOME_UNKNOWN' AND NEW.resolution_state='RESTORE_RECOVERY_CLAIMED') OR
+ (OLD.resolution_state='RESTORE_RECOVERY_CLAIMED' AND NEW.resolution_state IN ('RESTORE_CLEANUP_CLAIMED','RESTORE_RESOLVED')) OR
+ (OLD.resolution_state='RESTORE_CLEANUP_CLAIMED' AND NEW.resolution_state='RESTORE_RESOLVED')) OR OLD.resolution_state='RESTORE_RESOLVED'
+BEGIN SELECT RAISE(ABORT,'restore operation identity or lifecycle violation'); END;
+`
+
 func migrate(ctx context.Context, db *sql.DB) error {
-	return migrateWithSchemas(ctx, db, v1Schema, v2Schema, v3Schema)
+	return migrateWithSchemas(ctx, db, v1Schema, v2Schema, v3Schema, v4Schema)
 }
 
-func migrateWithSchemas(ctx context.Context, db *sql.DB, v1DDL, v2DDL, v3DDL string) error {
+func migrateWithSchemas(ctx context.Context, db *sql.DB, v1DDL, v2DDL, v3DDL string, v4DDLs ...string) error {
 	var userVersion int
 	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&userVersion); err != nil {
 		return fmt.Errorf("store: failed to read PRAGMA user_version: %w", err)
@@ -301,6 +362,25 @@ func migrateWithSchemas(ctx context.Context, db *sql.DB, v1DDL, v2DDL, v3DDL str
 		}
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("store: failed to commit v3 migration: %w", err)
+		}
+	}
+
+	// V3 is immutable history. Only normal Open supplies the approved V4 schema.
+	if userVersion < 4 && len(v4DDLs) > 0 {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("store: failed to begin v4 migration transaction: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, v4DDLs[0]); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("store: failed to execute v4 migration DDL: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "PRAGMA user_version = 4"); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("store: failed to set PRAGMA user_version = 4: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("store: failed to commit v4 migration: %w", err)
 		}
 	}
 

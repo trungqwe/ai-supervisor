@@ -45,12 +45,10 @@ func TestStore_BoundDispatchGuardsRollback(t *testing.T) {
 			const taskID, contractID = "task-guard", "contract-guard"
 			setupReadyTask(t, s, taskID, contractID)
 			pairID := "pair-d-" + taskID
-			if err := s.CreateWorkerSession(ctx, domain.WorkerSession{
+			seedWorkerSessionForTest(t, s, domain.WorkerSession{
 				PairID: pairID, SessionID: "session-guard", RuntimeType: "agy_tui", WorkerAgentID: "agy",
 				Status: domain.WorkerSessionIdle, TerminalGeneration: "generation-guard", QuarantineState: domain.QuarantineClean,
-			}); err != nil {
-				t.Fatal(err)
-			}
+			})
 			tc.setup(t, s, pairID, taskID)
 			before, err := s.GetTask(ctx, taskID)
 			if err != nil {
@@ -114,9 +112,7 @@ func seedPriorQuarantinedAttempt(t *testing.T, s *Store, taskID string) {
 
 func seedUnresolvedProvisioning(t *testing.T, s *Store, pairID string, stage domain.PairProvisioningStage) {
 	t.Helper()
-	if err := s.CreatePairProvisioningOperation(context.Background(), domain.PairProvisioningOperation{
-		OperationID: "provision-guard", PairID: pairID, Stage: stage, ClientToken: "token-guard",
-	}); err != nil {
+	if _, err := s.db.ExecContext(context.Background(), `INSERT INTO pair_provisioning_operations(operation_id,pair_id,stage,client_token,requested_at) VALUES('provision-guard',?,?,?,?)`, pairID, string(stage), "token-guard", formatTime(timeNow())); err != nil {
 		t.Fatal(err)
 	}
 }

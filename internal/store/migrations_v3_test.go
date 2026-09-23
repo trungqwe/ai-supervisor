@@ -72,11 +72,11 @@ func TestMigrationV3_FreshV1V2AndRepeat(t *testing.T) {
 		t.Run(strconv.Itoa(startVersion)+"_to_v3", func(t *testing.T) {
 			db, _ := openRawMigrationDB(t, "migration.db")
 			installSchemaVersion(t, db, startVersion)
-			if err := migrate(ctx, db); err != nil {
+			if err := migrateWithSchemas(ctx, db, v1Schema, v2Schema, v3Schema); err != nil {
 				t.Fatalf("migrate from v%d: %v", startVersion, err)
 			}
 			assertV3Schema(t, db)
-			if err := migrate(ctx, db); err != nil {
+			if err := migrateWithSchemas(ctx, db, v1Schema, v2Schema, v3Schema); err != nil {
 				t.Fatalf("repeat migrate from v3: %v", err)
 			}
 			assertV3Schema(t, db)
@@ -98,7 +98,7 @@ INSERT INTO task_attempts(attempt_id, attempt_number, task_id, contract_id, expe
 	if err != nil {
 		t.Fatalf("seed v2 data: %v", err)
 	}
-	if err := migrate(ctx, db); err != nil {
+	if err := migrateWithSchemas(ctx, db, v1Schema, v2Schema, v3Schema); err != nil {
 		t.Fatalf("migrate preserved v2 data: %v", err)
 	}
 	var taskID, quarantine string

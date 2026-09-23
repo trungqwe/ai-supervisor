@@ -16,6 +16,8 @@ var timeNow = func() time.Time {
 	return time.Now().UTC()
 }
 
+var ErrBoundDispatchRequired = errors.New("store: legacy unbound dispatch is disabled; use PrepareBoundDispatch")
+
 // DispatchBinding supplies the immutable execution snapshot for DISPATCH_BOUND.
 type DispatchBinding struct {
 	OperationID        string
@@ -107,7 +109,13 @@ func (s *Store) PrepareDispatch(
 	expectedReportPath string,
 	startedAt time.Time,
 ) (domain.TaskAttempt, error) {
-	return s.prepareDispatch(ctx, taskID, contractID, attemptID, expectedReportPath, startedAt, nil)
+	_ = ctx
+	_ = taskID
+	_ = contractID
+	_ = attemptID
+	_ = expectedReportPath
+	_ = startedAt
+	return domain.TaskAttempt{}, ErrBoundDispatchRequired
 }
 
 // PrepareBoundDispatch extends the P02 dispatch allocation transaction with the
@@ -190,6 +198,15 @@ WHERE task_id = ? AND state = 'READY'
 	err = tx.QueryRowContext(ctx, "SELECT pair_id, current_attempt FROM tasks WHERE task_id = ?", taskID).Scan(&pairID, &allocatedAttemptNumber)
 	if err != nil {
 		return domain.TaskAttempt{}, fmt.Errorf("store: failed to read updated task info: %w", err)
+	}
+	var pairBlocked int
+	if err = tx.QueryRowContext(ctx, `SELECT
+EXISTS(SELECT 1 FROM pair_restore_operations WHERE pair_id=? AND resolution_state<>'RESTORE_RESOLVED') OR
+EXISTS(SELECT 1 FROM pair_provisioning_operations WHERE pair_id=? AND stage IN ('PROVISION_REQUESTED','PROVISION_FAILED'))`, pairID, pairID).Scan(&pairBlocked); err != nil {
+		return domain.TaskAttempt{}, fmt.Errorf("store: verify Pair lifecycle guard: %w", err)
+	}
+	if pairBlocked != 0 {
+		return domain.TaskAttempt{}, fmt.Errorf("%w: Pair has unresolved restore or provisioning", ErrQuarantinedExecution)
 	}
 
 	// 3. Pair active-lane invariant: at most one task in DISPATCHED, RUNNING, or REVIEWING per Pair (Finding R2-006)
