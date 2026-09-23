@@ -52,7 +52,7 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003B REMEDIATION
+# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003C CONTRACT PLANNING
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
@@ -83,32 +83,32 @@ This document establishes immutable operational directives for all AI coding age
 > External Supervisor re-audited implementation commit `deeb4404e801d259cb589a2ef9b031f93b4b0367`, closed findings `3A-R1-001` through `3A-R1-004`, and approved `TASK_P03_003A_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED` (`docs/audits/P03_TASK_003A_EXTERNAL_REAUDIT_001.md`). The audited code was merged at `b8b0c95576d87677e8d48210d9838cc2f599752a`.
 > Architecture classification established: `P03_ARCHITECTURE_CHANGE = YES`, `P03_ADR_REQUIRED = YES`.
 > Parent `TASK-P03-003` is released for 3A and 3B only. Subtasks 3C and 3D remain **NOT_RELEASED**.
-> `TASK_P03_003B_IMPLEMENTATION = REVISION_REQUIRED`; code remains authorized only for 3B remediation.
-> The active phase gate is **`TASK_P03_003B_REMEDIATION`**.
+> External Supervisor approved `TASK_P03_003B_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED` at `442e87e075e1540738ceeae00fdfa045d440cea8` (`docs/audits/P03_TASK_003B_EXTERNAL_REAUDIT_003.md`). The approved implementation was merged without code changes at `246f74eabd09bbc2ea66624ee217035167824a86`; post-merge race/full-suite checks passed.
+> `TASK_P03_003C/3D = NOT_RELEASED`; `P03_CODE = HELD_PENDING_TASK_P03_003C_CONTRACT_RELEASE`. The active phase gate is **`TASK_P03_003C_CONTRACT_PLANNING`**.
 
 > External Supervisor approved ADR-016 addendum design at audited SHA 3807343f06f99c0e11460c74522a2efb3be19491; ADD-R1-001..003 CLOSED. DESIGN_BLOCKER_3B_RESTORE_PROTOCOL=CLOSED_BY_APPROVED_ADDENDUM. Canonical reconciliation per addendum is EXTERNAL_AUDIT_APPROVED.
 > Host/bootstrap integration owns verified operator principal evidence at the trusted boundary. Library fake-principal tests do not enable runtime restore or linked stop. AUTOMATIC_RESTORE=DISABLED. 3C/3D remain NOT_RELEASED; DESIGN_BLOCKER_3D_STARTUP_WIRING preserved.
-> External Supervisor approved and released CONTRACT-TASK-P03-003B-01 from candidate SHA `ae8deb9ee41479d0e0868dced53ed89135252923`, blob `84bd84535352c2d28dbc1eba820aa8b22382dd99`, with code base SHA `b8b0c95576d87677e8d48210d9838cc2f599752a`. Only 3B implementation is authorized.
+> Historical 3B release: External Supervisor released CONTRACT-TASK-P03-003B-01 from candidate SHA `ae8deb9ee41479d0e0868dced53ed89135252923`, blob `84bd84535352c2d28dbc1eba820aa8b22382dd99`, with code base SHA `b8b0c95576d87677e8d48210d9838cc2f599752a`.
 
-1. **TASK-P03-003B IMPLEMENTATION GATE**:
-   - `TASK_P03_003B = RELEASED`; `TASK_P03_003B_IMPLEMENTATION = REVISION_REQUIRED`.
-   - Remediate only `docs/tasks/TASK_CONTRACT_P03_003B.md`, from code base SHA `b8b0c95576d87677e8d48210d9838cc2f599752a` on branch `codex/p03-003b`.
-   - Governance/release artifact stays separate from implementation diff. Read the release artifact and assigned contract as well as approved addendum/canonical specs.
-   - Host/bootstrap verified principal is a fail-closed dependency; AUTOMATIC_RESTORE remains DISABLED unless completion evidence reaches the trusted boundary.
+1. **TASK-P03-003C CONTRACT PLANNING GATE**:
+   - `TASK_P03_003C = NOT_RELEASED`; draft contract chưa cấp quyền sửa production code.
+   - Base SHA đề xuất của draft là merge commit `246f74eabd09bbc2ea66624ee217035167824a86`; release và implementation cần quyết định riêng của External Supervisor.
+   - Host/bootstrap verified principal vẫn là dependency fail-closed; `AUTOMATIC_RESTORE = DISABLED`. Test principal không chứng minh host authentication.
 
 2. **TASK-P03-003 PARTIAL RELEASE GUARD**:
    - `TASK_P03_003A = RELEASED`.
-   - `TASK_P03_003B = RELEASED`; `TASK_P03_003B_IMPLEMENTATION = REVISION_REQUIRED`.
+   - `TASK_P03_003B = RELEASED`; `TASK_P03_003B_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED`.
    - `TASK_P03_003C = NOT_RELEASED` and `TASK_P03_003D = NOT_RELEASED`.
    - `DESIGN_BLOCKER_3D_STARTUP_WIRING` remains preserved for 3D and does not block 3A.
 
-3. **EXPLICITLY FORBIDDEN IN THIS STAGE**:
+3. **EXPLICITLY FORBIDDEN IN THIS PLANNING STAGE**:
+   - No production Go code or migration before contract 3C release;
    - Absolutely NO polling loops, tickers, or background worker threads;
    - Absolutely NO invented numeric operational timeout or poll interval defaults;
    - Absolutely NO synthetic worker heartbeat generation;
    - Absolutely NO SSE or `/api/v1/events` integration;
    - Absolutely NO workspace file fetching or WorkerReport handling;
-   - No stop/kill coordinator, D6 clearance orchestration, poller, or startup scanner implementation in 3B;
+   - No stop/kill coordinator, D6 clearance orchestration, poller, or startup scanner implementation during contract planning;
    - No calls to a live AO or migration against a user's database for testing;
    - Absolutely NO modification to accepted ADR-016 or proposals.
 
@@ -125,17 +125,16 @@ This document establishes immutable operational directives for all AI coding age
    - `TASK_P03_003A = RELEASED`
    - `TASK_P03_003A_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED`
    - `TASK_P03_003B = RELEASED`
-   - `TASK_P03_003B_IMPLEMENTATION = REVISION_REQUIRED`
+   - `TASK_P03_003B_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED`
    - `TASK_P03_003C = NOT_RELEASED`
    - `TASK_P03_003D = NOT_RELEASED`
-   - `P03_CODE = AUTHORIZED_3B_ONLY`
-   - `ACTIVE_GATE = TASK_P03_003B_REMEDIATION`
+   - `P03_CODE = HELD_PENDING_TASK_P03_003C_CONTRACT_RELEASE`
+   - `ACTIVE_GATE = TASK_P03_003C_CONTRACT_PLANNING`
    - `DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED`
    - `ADR_016_ADDENDUM_DESIGN = EXTERNAL_APPROVED` (audited `3807343f06f99c0e11460c74522a2efb3be19491`)
    - `DESIGN_BLOCKER_3B_RESTORE_PROTOCOL = CLOSED_BY_APPROVED_ADDENDUM`
    - `P03_ADDENDUM_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED`
-   - `TASK_P03_003B = RELEASED`; `TASK_P03_003B_IMPLEMENTATION = REVISION_REQUIRED`; `AUTOMATIC_RESTORE = DISABLED`
-   - `P03_CODE = AUTHORIZED_3B_ONLY`; `ACTIVE_GATE = TASK_P03_003B_REMEDIATION`
+   - `AUTOMATIC_RESTORE = DISABLED`
    - Host/bootstrap integration owns verified operator principal evidence; until verified, runtime restore and linked stop remain disabled.
 
-> **Current remediation gate (2026-09-23)**: External Supervisor audited implementation `4b45c55d47a9bc7ede4c778e21355a476e198169`: original suite PASS, five audit probes FAIL; findings `3B-R1-001..005` OPEN; verdict `REVISION_REQUIRED` (`docs/audits/P03_TASK_003B_EXTERNAL_AUDIT_001.md`). `TASK_P03_003B_IMPLEMENTATION = REVISION_REQUIRED`; `P03_CODE = AUTHORIZED_3B_ONLY`; `ACTIVE_GATE = TASK_P03_003B_REMEDIATION`. Preserve `AUTOMATIC_RESTORE = DISABLED`, 3C/3D `NOT_RELEASED`, host-principal dependency, and `DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED`.
+> **Historical 3B remediation (superseded)**: Earlier implementation `4b45c55d47a9bc7ede4c778e21355a476e198169` had verdict `REVISION_REQUIRED` (`docs/audits/P03_TASK_003B_EXTERNAL_AUDIT_001.md`); subsequent re-audits are preserved in `docs/audits/P03_TASK_003B_EXTERNAL_REAUDIT_001.md` through `_003.md`. The current approval and gate are stated above.
