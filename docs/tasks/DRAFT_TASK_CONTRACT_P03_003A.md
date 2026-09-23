@@ -5,7 +5,7 @@
 > **Revision Number**: `1`
 > **Supersedes Contract ID**: `null`
 > **Phase ID**: `P03`
-> **Base SHA**: To be pinned to the formal release commit SHA at dispatch time (Draft reference: latest released commit; not defaulting to historical canonical audit SHA `41cf769b4cf8a980c95de3aa4be63140b04922c3`)
+> **Base SHA**: CHƯA CHỐT (`PENDING_RELEASE_PINNING` — Giá trị chưa chốt; draft chưa đủ điều kiện dispatch)
 > **Status**: `DRAFT_PENDING_EXTERNAL_SUPERVISOR_APPROVAL`
 > **Authority**: Formulated pursuant to accepted [ADR-016](../adr/ADR-016-durable-dispatch-session-binding-and-lifecycle-reconciliation.md) and approved canonical specifications ([docs/04](../04_ARCHITECTURE.md), [docs/05](../05_DOMAIN_MODEL.md), [docs/06](../06_WORKFLOW_STATE_MACHINE.md), [docs/08](../08_TASK_CONTRACT.md), [docs/12](../12_UPSTREAM_INTEGRATION.md), [docs/14](../14_FAILURE_RECOVERY.md), [docs/21](../21_TRACEABILITY_MATRIX.md), [docs/22](../22_MODULE_PROVENANCE.md), [docs/phases/P03_AO_INTEGRATION.md](../phases/P03_AO_INTEGRATION.md)).
 
@@ -15,6 +15,15 @@
 > **GOVERNANCE STATUS: DRAFT ONLY / NOT RELEASED**.
 > Production coding remains strictly **`HELD_PENDING_TASK_CONTRACT_RELEASE`** (`TASK_P03_003 = NOT_RELEASED`).
 > Absolutely ZERO Go code implementation (`internal/**/*.go`) and ZERO database migration execution is authorized by this document until formally approved and released by External Supervisor audit.
+>
+> **BASE_SHA VÀ QUY TRÌNH RELEASE**:
+> - `base_sha` hiện là giá trị **CHƯA CHỐT** (`PENDING_RELEASE_PINNING`). Do chưa có commit SHA hợp lệ tuân thủ pattern `^[0-9a-f]{7,40}$` đại diện cho baseline worker checkout, bản draft này **chưa đủ điều kiện dispatch** theo `docs/schemas/task-contract.schema.json` và quy chuẩn quản trị.
+> - **Không dùng baseline mặc định**: Tuyệt đối **không** lấy commit SHA audit canonical reconciliation (`41cf769b4cf8a980c95de3aa4be63140b04922c3`) làm baseline mặc định.
+> - **Quy trình release (tránh nghịch lý tự tham chiếu)**: Tuyệt đối không diễn đạt hoặc thực hiện theo cách nhúng SHA của chính commit đang tạo vào nội dung commit đó (bất khả thi về mặt mật mã học trong Git). Thay vào đó, quy trình release được thực hiện theo các bước chuẩn mực:
+>   1. External Supervisor phê duyệt nội dung Task Contract hoàn chỉnh và thiết lập trạng thái governance cần thiết;
+>   2. Xác định chính xác commit SHA mà worker sẽ thực sự checkout làm việc (commit baseline đã chứa bản contract hoàn chỉnh và trạng thái governance hợp lệ);
+>   3. Kiểm tra độc lập commit tại SHA đó: xác nhận commit đó thực sự tồn tại trong git tree, chứa file contract và trạng thái governance hợp lệ;
+>   4. Ghim chính xác SHA của commit checkout đó vào trường `base_sha` rồi mới chính thức xác nhận Task Contract hợp lệ và thực hiện dispatch cho worker.
 
 ---
 
@@ -136,39 +145,48 @@ Comparison between existing `internal/store/migrations.go` (v2) and target schem
 ```json
 [
   {
-    "request_id": "VR-P03-003A-STORE-TESTS",
-    "profile": "go-test",
+    "id": "VR-P03-003A-STORE-TESTS",
+    "profile_id": "go-test",
     "parameters": {
-      "package_pattern": "./internal/store/...",
-      "flags": ["-v", "-race"]
-    }
+      "package": "./internal/store/...",
+      "flags": [
+        "-v",
+        "-race"
+      ]
+    },
+    "cwd": ".",
+    "timeout_seconds": 300
   },
   {
-    "request_id": "VR-P03-003A-DOMAIN-TESTS",
-    "profile": "go-test",
+    "id": "VR-P03-003A-DOMAIN-TESTS",
+    "profile_id": "go-test",
     "parameters": {
-      "package_pattern": "./internal/domain/...",
-      "flags": ["-v", "-race"]
-    }
-  },
-  {
-    "request_id": "VR-P03-003A-FORMAT-HYGIENE",
-    "profile": "git-diff-check",
-    "parameters": {
-      "flags": ["--check"]
-    }
+      "package": "./internal/domain/...",
+      "flags": [
+        "-v",
+        "-race"
+      ]
+    },
+    "cwd": ".",
+    "timeout_seconds": 120
   }
 ]
 ```
+
+> [!NOTE]
+> - **Cấu trúc JSON tuân thủ schema**: Cấu trúc mỗi phần tử sử dụng đúng các trường `id`, `profile_id`, `parameters` (cùng tùy chọn `cwd`, `timeout_seconds`) theo định nghĩa tại `docs/schemas/task-contract.schema.json` và ADR-013 §5.1. Tham số của profile `go-test` sử dụng đúng `package` và `flags` theo đặc tả profile (ADR-013 §4.1).
+> - **Cách ly chứng cứ Git (ADR-013 §4.4)**: `git-diff-check` bị loại bỏ khỏi `verification_requests` vì `git` tuyệt đối không được mở ra như một profile xác minh của Task Contract. Chứng cứ Git (bao gồm `git diff` và `git diff --check`) do Supervisor độc lập thu thập qua `EvidenceCollector`.
+> - **Kiểm chứng Catalog cho Profile Host**: Profile `go-test` không được khẳng định hoặc coi là đã tồn tại sẵn trên host nếu chưa kiểm chứng qua catalog. Tại giai đoạn xác thực trước dispatch (ADR-013 §5.2 Stage B), tính khả dụng và chính sách tham số của profile `go-test` phải được đối soát thông qua pure domain interface `VerificationPolicyCatalog.LookupProfile("go-test")`.
 
 ---
 
 ## 8. Required Evidence
 
 1. `git_diff`: Git diff confirming changes are strictly within `internal/domain/**` and `internal/store/**`.
-2. `test_exit_code_zero`: Command output demonstrating `go test -v -race ./internal/store/... ./internal/domain/...` exited with code 0.
-3. `sqlite_schema_verification`: Test logs explicitly proving table DDL, `PRAGMA user_version = 3`, foreign key `ON DELETE RESTRICT` enforcement, and partial unique index behavior.
-4. `race_detector_zero_warnings`: `-race` execution logs clean of data races.
+2. `git_diff_check`: Command output of `git diff --check` demonstrating zero trailing whitespace, syntax hygiene, or merge conflict markers.
+3. `test_exit_code_zero`: Command output demonstrating `go test -v -race ./internal/store/... ./internal/domain/...` exited with code 0.
+4. `sqlite_schema_verification`: Test logs explicitly proving table DDL, `PRAGMA user_version = 3`, foreign key `ON DELETE RESTRICT` enforcement, and partial unique index behavior.
+5. `race_detector_zero_warnings`: `-race` execution logs clean of data races.
 
 ---
 

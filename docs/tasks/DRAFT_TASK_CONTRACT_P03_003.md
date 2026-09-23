@@ -21,7 +21,7 @@
 `TASK-P03-003` translates the 13 binding decisions of accepted ADR-016 into production code connecting the Supervisor Control Plane to the Untrivial Agent Orchestrator runtime.
 
 A technical complexity assessment reveals that executing `TASK-P03-003` as a single monolithic contract spans:
-- 3 new database tables, 2 schema alterations, 1 partial unique index, and foreign key constraints with `ON DELETE RESTRICT`;
+- **4 new database tables** (`worker_sessions`, `pair_provisioning_operations`, `dispatch_operations`, `stop_operations`), **1 existing table migrated** (`task_attempts` snapshot fields), 1 partial unique index (`idx_pair_provisioning_unresolved`), and foreign key constraints with `ON DELETE RESTRICT`;
 - 3 aggregate domain models and Model A snapshot extensions across 2 existing models;
 - 10+ StateStore methods including multi-table atomic CAS transitions;
 - Decoupled Pair session provisioning coordinator;
@@ -33,7 +33,7 @@ A technical complexity assessment reveals that executing `TASK-P03-003` as a sin
 
 Total blast radius is estimated at **1,800–2,500 lines of Go code and tests**. Executing this in a single review unit introduces severe verification friction and risks multi-round audit churn.
 
-To ensure fail-safe auditability, strict scope containment, and incremental verification without modifying roadmap phase boundaries, `TASK-P03-003` is partitioned into **four sequential, dependency-chained sub-contracts**:
+To ensure fail-safe auditability, strict scope containment, and incremental verification without modifying roadmap phase boundaries, `TASK-P03-003` is partitioned into **four strictly sequential, dependency-chained sub-contracts (`TASK-P03-003A` → `TASK-P03-003B` → `TASK-P03-003C` → `TASK-P03-003D`)**:
 
 ```mermaid
 graph TD
@@ -42,10 +42,9 @@ graph TD
     SubC["TASK-P03-003C: Purpose-Aware Stop Lifecycle & Double-Gated Quarantine"]
     SubD["TASK-P03-003D: Synchronous Startup Recovery Sweep & Lifecycle Observation Poller"]
 
-    SubA -->|Requires Migrations & Store Core| SubB
-    SubA -->|Requires Store Stop Operations| SubC
-    SubB -->|Requires Dispatch & Provisioning State| SubD
-    SubC -->|Requires Stop & Quarantine State| SubD
+    SubA -->|Step 1 -> Step 2| SubB
+    SubB -->|Step 2 -> Step 3| SubC
+    SubC -->|Step 3 -> Step 4| SubD
 ```
 
 ---
@@ -97,7 +96,7 @@ graph TD
 ### 3.3 Sub-Contract 3C: Purpose-Aware Stop Lifecycle & Double-Gated Quarantine Management
 - **Task ID**: `TASK-P03-003C`
 - **Objective**: Implement purpose-aware stop operations coordinating `POST /api/v1/sessions/{id}/kill` with Supervisor-owned `stop_operations` metadata; capture target generation for Supervisor-side precheck; track restart-stable `confirmation_deadline_at`; enforce `STOP_REISSUE_REQUIRES_HUMAN` (zero blind re-kill); evaluate all 6 conditions of `WORKER_STOPPED_ALLOWED_IFF` for `RUNNING_ATTEMPT_STOP` on `RUNNING` tasks; implement physical Class A clearance under D5/D6/D11 for `QUARANTINE_CLEANUP` on terminal tasks (zero TaskState transition, zero `ended_at` change, no `WORKER_STOPPED`); implement Class B (HTTP 404 administrative risk resolution) and Class C (human risk acceptance) clearance playbooks.
-- **Dependencies**: `TASK-P03-003A` and `TASK-P03-003B` approved and released baselines.
+- **Dependencies**: Sequential prerequisite is `TASK-P03-003B` approved and released baseline (which builds upon `TASK-P03-003A`).
 - **Projected Exit Gate**: Stop operations pass purpose matrix tests; deadline-expired observation fails closed to `STOP_CONFIRMATION_TIMEOUT` with quarantine retained; Class A/B/C quarantine clearance invariants verified.
 
 ---
@@ -105,17 +104,14 @@ graph TD
 ### 3.4 Sub-Contract 3D: Synchronous Startup Recovery Sweep & Lifecycle Observation Poller
 - **Task ID**: `TASK-P03-003D`
 - **Objective**: Implement the synchronous 5-step startup recovery scanner (ADR-016 §19) reconciling crash-interrupted provisioning, dispatch unknown delivery, stop in-flight operations, and blocked attempts with open attempts; implement observation poller mapping AO activity states (`active`, `idle`, `waiting_input`, `blocked`, `exited`) driving TaskState transitions; handle rapid turn completion (`MISSED_ACTIVE_WINDOW`).
-- **Dependencies**: `TASK-P03-003A`, `TASK-P03-003B`, and `TASK-P03-003C` approved and released baselines.
+- **Dependencies**: Sequential prerequisite is `TASK-P03-003C` approved and released baseline (which builds upon `TASK-P03-003B` and `TASK-P03-003A`).
 - **Projected Exit Gate**: All 5 startup sweep steps verified via deterministic recovery tests; observation poller state transitions pass with `-race`.
 
 > [!WARNING]
 > **DESIGN BLOCKER & RUNTIME ORDERING NOTICE (`DESIGN_BLOCKER_3D_STARTUP_WIRING`)**:
-> - The repository currently contains exclusively internal Go packages (`internal/domain`, `internal/store`, `internal/ao`, etc.) and does **NOT** yet contain an HTTP/MCP server entrypoint or daemon bootstrap binary (`cmd/` does not exist).
+> - The repository currently contains exclusively internal Go library packages (`internal/domain`, `internal/store`, `internal/ao`, etc.) and does **NOT** yet contain an HTTP/MCP server entrypoint or daemon bootstrap binary (`cmd/` does not exist).
 > - Consequently, the architectural assertion that *"startup recovery executes synchronously before accepting incoming API requests"* cannot be guaranteed or proven solely by a poller or scanner library function.
-> - **Condition for Contract 3D**: Contract 3D must NOT claim that this runtime sequencing is already guaranteed by the daemon. Instead, Contract 3D must:
->   1. Implement a self-contained, synchronous `StartupRecoveryScanner.Run(ctx)` component;
->   2. Formally declare an architectural contract requirement that any future daemon bootstrap (`cmd/server/main.go` or MCP entrypoint) MUST invoke `StartupRecoveryScanner.Run(ctx)` to completion prior to binding listeners or serving API requests;
->   3. Demonstrate this ordering via an integration test harness verifying that incoming requests are rejected or blocked until `StartupRecoveryScanner.Run(ctx)` completes.
+> - **Condition for Contract 3D**: Contract 3D must NOT claim that runtime ordering is already guaranteed by the daemon. An isolated integration test harness can only prove the scanner's invocation interface, preconditions, and return conditions (call contract / interface readiness); it **cannot** prove actual runtime execution ordering of the daemon when no daemon entrypoint exists in the codebase. Contract 3D must establish the self-contained scanner component and declare the binding architectural requirement that future daemon bootstrap (`cmd/server/main.go` or MCP entrypoint) MUST invoke `StartupRecoveryScanner.Run(ctx)` to completion prior to binding listeners or serving API requests.
 
 ---
 
