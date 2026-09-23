@@ -401,6 +401,17 @@ func (s *Store) ResolveAmbiguousRestore(ctx context.Context, operationID, pairID
 	if pendingStop != 0 {
 		return fmt.Errorf("%w: linked stop must be terminal before restore resolution", ErrStateConflict)
 	}
+	if basis == domain.AdministrativeRiskResolution {
+		var linked int
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM stop_operations WHERE restore_operation_id=?)`, operationID).Scan(&linked); err != nil {
+			return err
+		}
+		if linked != 0 {
+			if err := restoreAdministrativeCoverageTx(ctx, tx, operationID, pairID, principal); err != nil {
+				return err
+			}
+		}
+	}
 	if state == string(domain.RestoreResolved) && storedBasis.Valid && storedBasis.String == string(basis) && storedOwner.Valid && storedOwner.String == principal {
 		return nil
 	}
@@ -505,8 +516,12 @@ func (s *Store) ResolveAmbiguousRestore(ctx context.Context, operationID, pairID
 
 // positiveD11StopEvidence checks the committed stop row and its exact audit
 // tuple. Empty restoreID/attemptID means that dimension is not constrained.
-func positiveD11StopEvidence(ctx context.Context, tx *sql.Tx, pairID, sessionID, generation, restoreID, attemptID string) (bool, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT o.termination_confirmed_at,o.confirmation_deadline_at FROM stop_operations o JOIN audit_events e
+func positiveD11StopEvidence(ctx context.Context, tx *sql.Tx, pairID, sessionID, generation, restoreID, attemptID string, stopID ...string) (bool, error) {
+	exactStopID := ""
+	if len(stopID) > 0 {
+		exactStopID = stopID[0]
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT o.termination_confirmed_at,o.confirmation_deadline_at,o.call_completed_at FROM stop_operations o JOIN audit_events e
 		ON e.event_type='STOP_OPERATION_CONFIRMED'
 		AND json_extract(e.details_json,'$.stop_operation_id')=o.operation_id
 		AND json_extract(e.details_json,'$.restore_operation_id') IS o.restore_operation_id
@@ -520,6 +535,7 @@ func positiveD11StopEvidence(ctx context.Context, tx *sql.Tx, pairID, sessionID,
 		AND json_extract(e.details_json,'$.is_terminated')=1
 		WHERE o.pair_id=? AND o.session_id=? AND o.terminal_generation=?
 		AND (?='' OR o.restore_operation_id=?) AND (?='' OR o.attempt_id=?)
+		AND (?='' OR o.operation_id=?)
 		AND o.stage='STOP_TERMINATION_CONFIRMED' AND o.resolution_state='TERMINATION_CONFIRMED'
 		AND o.call_completed_at IS NOT NULL AND o.confirmation_deadline_at IS NOT NULL
 		AND o.termination_confirmed_at IS NOT NULL AND o.resolved_at IS NOT NULL
@@ -529,15 +545,15 @@ func positiveD11StopEvidence(ctx context.Context, tx *sql.Tx, pairID, sessionID,
 		    WHERE a.attempt_id=o.attempt_id AND a.task_id=o.task_id AND a.contract_id=o.contract_id
 		    AND t.pair_id=o.pair_id AND a.session_id=o.session_id AND a.terminal_generation=o.terminal_generation
 		    AND a.ended_at IS NOT NULL AND a.quarantine_state='QUARANTINED'))
-		`, pairID, sessionID, generation, restoreID, restoreID, attemptID, attemptID)
+		`, pairID, sessionID, generation, restoreID, restoreID, attemptID, attemptID, exactStopID, exactStopID)
 	if err != nil {
 		return false, fmt.Errorf("store: verify positive D11 evidence: %w", err)
 	}
 	defer rows.Close()
 	valid := false
 	for rows.Next() {
-		var confirmedRaw, deadlineRaw string
-		if err := rows.Scan(&confirmedRaw, &deadlineRaw); err != nil {
+		var confirmedRaw, deadlineRaw, callRaw string
+		if err := rows.Scan(&confirmedRaw, &deadlineRaw, &callRaw); err != nil {
 			return false, fmt.Errorf("store: read positive D11 timestamps: %w", err)
 		}
 		confirmedAt, err := parseTime(confirmedRaw)
@@ -548,7 +564,11 @@ func positiveD11StopEvidence(ctx context.Context, tx *sql.Tx, pairID, sessionID,
 		if err != nil {
 			return false, fmt.Errorf("%w: malformed D11 deadline timestamp: %v", ErrStateConflict, err)
 		}
-		if confirmedAt.Before(deadlineAt) {
+		callAt, err := parseTime(callRaw)
+		if err != nil {
+			return false, fmt.Errorf("%w: malformed D11 call timestamp: %v", ErrStateConflict, err)
+		}
+		if !confirmedAt.Before(callAt) && confirmedAt.Before(deadlineAt) {
 			valid = true
 		}
 	}
@@ -712,4 +732,65 @@ func (s *Store) ClaimRestoreRecovery(ctx context.Context, operationID, pairID, s
 		return fmt.Errorf("%w: restore recovery claim CAS lost", ErrStateConflict)
 	}
 	return tx.Commit()
+}
+
+// A linked restore cannot treat a terminal stop row alone as administrative
+// risk acceptance. Each quarantined execution lineage needs physical D11 proof
+// or its own prior, scoped operator decision before Tx D commits.
+func restoreAdministrativeCoverageTx(ctx context.Context, tx *sql.Tx, restoreID, pairID, principal string) error {
+	var session, generation, quarantine string
+	if err := tx.QueryRowContext(ctx, `SELECT session_id,terminal_generation,quarantine_state FROM worker_sessions WHERE pair_id=?`, pairID).Scan(&session, &generation, &quarantine); err != nil {
+		return err
+	}
+	if quarantine == string(domain.QuarantineQuarantined) {
+		ok, err := administrativeOrPhysicalLineageTx(ctx, tx, restoreID, pairID, principal, session, generation, "")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("%w: current runtime lacks stop reconciliation", ErrStateConflict)
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT a.attempt_id,a.session_id,a.terminal_generation FROM task_attempts a JOIN tasks t ON t.task_id=a.task_id WHERE t.pair_id=? AND a.quarantine_state='QUARANTINED'`, pairID)
+	if err != nil {
+		return err
+	}
+	type lineage struct{ id, session, generation string }
+	var all []lineage
+	for rows.Next() {
+		var l lineage
+		if err = rows.Scan(&l.id, &l.session, &l.generation); err != nil {
+			rows.Close()
+			return err
+		}
+		all = append(all, l)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, l := range all {
+		ok, e := administrativeOrPhysicalLineageTx(ctx, tx, restoreID, pairID, principal, l.session, l.generation, l.id)
+		if e != nil {
+			return e
+		}
+		if !ok {
+			return fmt.Errorf("%w: attempt %s lacks stop reconciliation", ErrStateConflict, l.id)
+		}
+	}
+	return nil
+}
+
+func administrativeOrPhysicalLineageTx(ctx context.Context, tx *sql.Tx, restoreID, pairID, principal, session, generation, attempt string) (bool, error) {
+	physical, err := positiveD11StopEvidence(ctx, tx, pairID, session, generation, "", attempt)
+	if err != nil {
+		return false, err
+	}
+	if physical {
+		return true, nil
+	}
+	var count int
+	err = tx.QueryRowContext(ctx, `SELECT count(*) FROM audit_events a JOIN stop_operations s ON s.operation_id=json_extract(a.details_json,'$.stop_operation_id') WHERE a.event_type=? AND a.pair_id=? AND a.actor=? AND json_extract(a.details_json,'$.authority_scope')='STOP_ADMINISTRATIVE_RECONCILIATION' AND json_extract(a.details_json,'$.session_id')=? AND json_extract(a.details_json,'$.terminal_generation')=? AND json_extract(a.details_json,'$.attempt_id')=? AND json_extract(a.details_json,'$.restore_operation_id')=? AND s.pair_id=? AND s.session_id=? AND s.restore_operation_id=? AND ((json_extract(a.details_json,'$.class')='CLASS_B' AND s.resolution_state='STOP_TARGET_ABSENT') OR (json_extract(a.details_json,'$.class')='CLASS_C' AND s.resolution_state='ADMINISTRATIVE_RISK_ACCEPTED'))`, domain.AuditAdministrativeRiskAccepted, pairID, principal, session, generation, attempt, restoreID, pairID, session, restoreID).Scan(&count)
+	return count > 0, err
 }

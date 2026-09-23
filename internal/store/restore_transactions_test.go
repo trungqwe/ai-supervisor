@@ -449,12 +449,11 @@ func confirmD11StopForRestoreTest(t *testing.T, s *Store, stop domain.StopOperat
 	ctx := context.Background()
 	callAt := time.Now().UTC().Truncate(time.Microsecond)
 	deadline := callAt.Add(time.Minute)
-	if err := s.UpdateStopOperationStage(ctx, stop.OperationID, domain.StopRequested, domain.StopCallSucceeded, StopStageUpdate{CallCompletedAt: &callAt, ConfirmationDeadlineAt: &deadline}); err != nil {
+	if err := s.CommitStopCallAccepted(ctx, stop.OperationID, callAt, deadline); err != nil {
 		t.Fatal(err)
 	}
 	confirmedAt := callAt.Add(time.Second)
-	resolved := domain.StopResolutionTerminationConfirmed
-	if err := s.UpdateStopOperationStage(ctx, stop.OperationID, domain.StopCallSucceeded, domain.StopTerminationConfirmed, StopStageUpdate{TerminationConfirmedAt: &confirmedAt, ResolvedAt: &confirmedAt, ResolutionState: &resolved, ObservedSessionID: stop.SessionID, ObservedGeneration: stop.TerminalGeneration, ObservedIsTerminated: true}); err != nil {
+	if err := s.CommitStopOutcome(ctx, stop.OperationID, StopTerminalOutcome{ExpectedStage: domain.StopCallSucceeded, Stage: domain.StopTerminationConfirmed, Resolution: domain.StopResolutionTerminationConfirmed, At: confirmedAt, ObservedSessionID: stop.SessionID, ObservedGeneration: stop.TerminalGeneration, ObservedIsTerminated: true}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -476,14 +475,18 @@ func TestRestorePhysicalResolutionCoversRuntimeAndEveryQuarantinedLineage(t *tes
 			pairID, attempt := setupBoundAttempt(t, s, "task-coverage", "contract-coverage", "attempt-coverage")
 			taskID, contractID, attemptID := attempt.TaskID, attempt.ContractID, attempt.AttemptID
 			if tc.oldProof {
+				if err := s.TransitionTask(ctx, taskID, domain.StateDispatched, domain.StateRunning); err != nil {
+					t.Fatal(err)
+				}
 				old := domain.StopOperation{OperationID: "stop-old", Purpose: domain.RunningAttemptStop, PairID: pairID, TaskID: &taskID, ContractID: &contractID, AttemptID: &attemptID, SessionID: *attempt.SessionID, TerminalGeneration: *attempt.TerminalGeneration, Actor: "supervisor"}
 				if err := s.CreateStopOperation(ctx, old); err != nil {
 					t.Fatal(err)
 				}
 				confirmD11StopForRestoreTest(t, s, old)
-			}
-			if err := s.AtomicTerminalTransition(ctx, attempt.TaskID, domain.StateDispatched, domain.StateFailed, "closed lineage", attempt.AttemptID, "ORDINARY_FAILURE"); err != nil {
-				t.Fatal(err)
+			} else {
+				if err := s.AtomicTerminalTransition(ctx, attempt.TaskID, domain.StateDispatched, domain.StateFailed, "closed lineage", attempt.AttemptID, "ORDINARY_FAILURE"); err != nil {
+					t.Fatal(err)
+				}
 			}
 			setRestoreSessionTerminated(t, s, pairID)
 			req := domain.RestoreReservation{AuthorizationID: "auth-coverage", OperationID: "restore-coverage", PairID: pairID, SessionID: *attempt.SessionID, ExpectedGeneration: *attempt.TerminalGeneration, RiskScope: "POSSIBLE_PROMPT_REPLAY", AuthorizedPrincipal: "verified-subject", Actor: "supervisor"}
@@ -491,6 +494,9 @@ func TestRestorePhysicalResolutionCoversRuntimeAndEveryQuarantinedLineage(t *tes
 				t.Fatal(err)
 			}
 			if err := s.ConfirmPairRestore(ctx, req.OperationID, req.SessionID, req.ExpectedGeneration, "new-generation", "native", domain.WorkerSessionActive, "supervisor", time.Now().UTC()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.ExecContext(ctx, `UPDATE task_attempts SET quarantine_state='QUARANTINED' WHERE attempt_id=?`, attemptID); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.ClaimRestoreRecovery(ctx, req.OperationID, pairID, req.SessionID, "new-generation", "verified-subject", "supervisor", time.Now().UTC()); err != nil {
@@ -570,16 +576,19 @@ func TestPhysicalEvidenceRejectsPersistedEqualDeadline(t *testing.T) {
 	pairID, attempt := setupBoundAttempt(t, s, "task-equal-evidence", "contract-equal-evidence", "attempt-equal-evidence")
 	taskID, contractID, attemptID := attempt.TaskID, attempt.ContractID, attempt.AttemptID
 	stop := domain.StopOperation{OperationID: "stop-equal-evidence", Purpose: domain.RunningAttemptStop, PairID: pairID, TaskID: &taskID, ContractID: &contractID, AttemptID: &attemptID, SessionID: *attempt.SessionID, TerminalGeneration: *attempt.TerminalGeneration, Actor: "supervisor"}
+	if err := s.TransitionTask(ctx, taskID, domain.StateDispatched, domain.StateRunning); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.CreateStopOperation(ctx, stop); err != nil {
 		t.Fatal(err)
 	}
 	confirmD11StopForRestoreTest(t, s, stop)
-	if err := s.AtomicTerminalTransition(ctx, taskID, domain.StateDispatched, domain.StateFailed, "closed", attemptID, "ORDINARY_FAILURE"); err != nil {
-		t.Fatal(err)
-	}
 	setRestoreSessionTerminated(t, s, pairID)
 	req := domain.RestoreReservation{AuthorizationID: "auth-equal-evidence", OperationID: "restore-equal-evidence", PairID: pairID, SessionID: stop.SessionID, ExpectedGeneration: stop.TerminalGeneration, RiskScope: "POSSIBLE_PROMPT_REPLAY", AuthorizedPrincipal: "verified-subject", Actor: "supervisor"}
 	if err := s.ReservePairRestore(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE task_attempts SET quarantine_state='QUARANTINED' WHERE attempt_id=?`, attemptID); err != nil {
 		t.Fatal(err)
 	}
 	// Simulate a legacy persisted equality row plus matching audit. The normal
