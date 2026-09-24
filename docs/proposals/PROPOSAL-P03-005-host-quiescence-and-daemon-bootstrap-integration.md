@@ -1,6 +1,6 @@
 # PROPOSAL-P03-005 — Host Quiescence & Daemon Bootstrap Integration (TASK-P03-004)
 
-> **Status:** `PROPOSED_FOR_SUPERVISOR_REAUDIT` (Revision 2)
+> **Status:** `PROPOSED_FOR_SUPERVISOR_REAUDIT` (Revision 3)
 > **Authority:** `docs/24_CHANGE_GOVERNANCE.md` (Level 3 Canonical Architecture / Level 5 Roadmap Alignment)
 > **Active Gate:** `TASK_P03_003D_HANDOFF_VERIFICATION`
 > **Proposed Phase Allocation:** Phase P03 subtask `TASK-P03-004`
@@ -23,7 +23,7 @@
 
 3. **Ranh giới với Phase P04 & Loại bỏ Verification Runner khỏi P03**:
    - Theo `docs/17_ROADMAP.md` và `docs/22_MODULE_PROVENANCE.md`, Phase P04 sở hữu độc quyền Evidence & Review Engine (`EvidenceCollector`, `ReviewBundleBuilder`, policy validator, git diff verification).
-   - Production verification runner và các công cụ thực thi verification profile thuộc sở hữu của Phase P04 và Phase P05 (`docs/21_TRACEABILITY_MATRIX.md`).
+   - Production verification runner và các công cụ thực thi verification profile thuộc sở hữu độc quyền của Phase P04 và Phase P05 (`docs/21_TRACEABILITY_MATRIX.md`).
    - Subtask `TASK-P03-004` **loại bỏ production verification runner khỏi scope**, chỉ tập trung vào host/bootstrap, admission và test harness kiểm chứng exit gate P03.
 
 4. **Phân bổ Subtask `TASK-P03-004` Thuộc Phase P03**:
@@ -47,12 +47,12 @@
      * `stop.TimeoutAdmission`: `AcquireEffect(ctx context.Context, pairID string, purpose string) (TimeoutPermit, error)` (tham số thứ ba là `purpose string`, ví dụ `"TIMEOUT_MONITOR"`).
    - Đóng admission, drain/join, cấp exclusive ownership và release permit theo cùng một authority duy nhất.
 
-4. **Cơ chế Machine-Wide Exclusivity trên Windows**:
-   - Không sử dụng `Local\` Named Mutex do bị cô lập theo Windows Logon Session.
-   - Khóa chính là Windows Exclusive Sidecar Lock File Handle (`CreateFileW` với `dwShareMode = 0`) tại `<canonical_db_path>.owner.lock`, có hiệu lực toàn máy và kernel tự đóng khi crash.
-   - File metadata tách biệt `<canonical_db_path>.owner.json` lưu thông tin liên lạc IPC (Named Pipe).
-   - Chuẩn hóa canonical path, chỉ hỗ trợ NTFS/ReFS cục bộ (cấm network/SMB shares), cấm handle inheritance (`bInheritHandle = FALSE`).
-   - Cạnh tranh giữa hai Windows logon sessions trả về `ERROR_SHARING_VIOLATION` (32).
+4. **Thuật toán Canonical DB & Lock Identity Duy Nhất**:
+   - Dùng Windows API `GetFinalPathNameByHandleW(VOLUME_NAME_DOS)` trên DB handle (nếu DB đã tồn tại) hoặc trên parent directory handle (nếu DB mới).
+   - Kiểm tra hard links (`nNumberOfLinks > 1`) và fail-closed nếu có alias hard link.
+   - Khóa độc quyền chính là Windows Exclusive Sidecar Lock File Handle (`CreateFileW` với `dwShareMode = 0`) tại `<canonical_db_path>.owner.lock`, có hiệu lực toàn máy và kernel tự đóng khi crash.
+   - File metadata tách biệt `<canonical_db_path>.owner.json` lưu thông tin liên lạc IPC (Named Pipe) được ghi atomically (qua file tạm `.owner.json.tmp` và rename). Nếu metadata hỏng/stale -> fail-closed, không suy đoán PID.
+   - Named Pipe takeover có xác thực client token/SID và kiểm tra `owner_instance_id`. Yêu cầu không hợp lệ không được khiến owner shutdown.
    - V1 chỉ áp dụng **Cooperative Takeover** qua Named Pipe. Nếu owner cũ không thoát -> fail-closed ngay lập tức. Bỏ hành vi tự động `TerminateProcess`.
 
 5. **Phân biệt Wire Effect Ranh giới vs. Outcome Chưa biết**:
@@ -73,18 +73,15 @@
 
 ## 3. Tiêu chuẩn Bằng chứng Runtime & Ranh giới Tooling
 
-1. **Ma trận Kiểm chứng Binary Thật**:
-   - Kiểm tra trạng thái cổng/admission thực tế bằng network probe qua 8 kịch bản (trước/đang/sau Run, Complete+PendingAO, Run lỗi, hai process cạnh tranh, shutdown drain, 5 bước P03 exit gate).
-   - Tách biệt hoàn toàn test Mock AO tự động khỏi bài kiểm chứng Live AO có kiểm soát.
+1. **Tách Bạch Hai Track Bằng Chứng**:
+   - Xóa bỏ giả định cho rằng daemon P03 đã có sẵn các effectful HTTP routes. Không dùng route AO trực tiếp vì bypass Supervisor state machine.
+   - **Track 1 (Binary Thật `cmd/supervisor`)**: Kiểm chứng lock độc quyền, cạnh tranh tiến trình, startup-before-serve (admission probe), PendingAO hold, và graceful drain.
+   - **Track 2 (P03 Integration Harness)**: Gọi trực tiếp các API điều phối nội bộ đã được duyệt của thư viện Go Supervisor (`internal/dispatch`, `internal/store`, `internal/stop`, `internal/ao`, `internal/recovery`) để kiểm chứng trọn vẹn 5 bước AO (session create, dispatch, observation reconciliation, raw file read, teardown) mà không cần production HTTP control surface hay code P04/P05.
 
-2. **Kích hoạt 5 Bước Exit Gate P03**:
-   - Khi chưa có 12 tool P05, 5 bước exit gate P03 (session create, dispatch, observation reconciliation, raw workspace-file read, teardown) được kích hoạt thông qua exit gate test harness gửi HTTP calls trực tiếp vào local admission endpoints của daemon.
-   - Network probe xác minh socket đóng trước khi scan hoàn tất, mở sau khi hoàn tất. Log chỉ đóng vai trò bổ trợ.
-
-3. **Ranh giới Tooling & An ninh SEC-003**:
+2. **Ranh giới Tooling & An ninh SEC-003**:
    - Giới hạn P03 host ở bootstrap/admission và test harness tối thiểu; loại bỏ production verification runner khỏi P03 (chuyển về P04/P05).
    - Ghi nhận ChatGPT Web là reasoning agent, Control Plane cung cấp local tools. Ở P04/P05 đối soát tool log/runner với `docs/11_CHATGPT_TOOL_SURFACE.md`, `docs/02_REQUIREMENTS.md`, và `docs/07_SECURITY_MODEL.md` (SEC-003). Tuyệt đối không cấp arbitrary shell execution.
 
-4. **Invariants Bất biến**:
+3. **Invariants Bất biến**:
    - `AUTOMATIC_RESTORE = DISABLED`: Tiếp tục tắt fail-closed.
    - 8 Operational policies tiếp tục giữ nguyên `UNSET` trong tài liệu; runtime bắt buộc phải được inject giá trị cấu hình hợp lệ, thiếu thì fail-closed khi khởi động.

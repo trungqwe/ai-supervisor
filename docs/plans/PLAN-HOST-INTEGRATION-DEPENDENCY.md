@@ -3,7 +3,7 @@
 > **Authority**: External Supervisor Governance Directive
 > **Active Gate**: `TASK_P03_003D_HANDOFF_VERIFICATION`
 > **Phạm vi tài liệu**: Kế hoạch kiến trúc và quản trị cho các dependency runtime còn thiếu sau khi merge TASK-P03-003D
-> **Status**: REVISED_FOR_SUPERVISOR_REAUDIT (Revision 4)
+> **Status**: REVISED_FOR_SUPERVISOR_REAUDIT (Revision 5)
 
 ---
 
@@ -66,27 +66,25 @@ Cần phân biệt rõ ràng hai khái niệm trực giao:
    - **Việc terminate process hoặc đóng local socket hoàn toàn KHÔNG chứng minh AO chưa nhận effect**.
    - **Nguyên tắc Xử lý**: Mọi intent mơ hồ (`STOP_REQUESTED`, `SEND_REQUESTED`, `RESTORE_REQUESTED`) phải được duy trì **fail-closed**, không bao giờ được replay mù quáng. Scanner và poller phải đối soát (reconcile) qua fresh GET / observation, hoặc nếu target đã terminated / generation mismatch thì ghi nhận governed logical resolution audit (`STOP_OPERATION_RESOLVED`), hoặc giữ nguyên quarantine và escalate cho human reconciliation.
 
-### 3.2. Thiết kế Machine-Wide Exclusivity trên Windows (Single Windows Host, Local Filesystem)
+### 3.2. Thuật toán Canonical DB & Lock Identity Duy Nhất
 1. **Loại bỏ `Local\` Named Mutex khỏi Bằng chứng Exclusivity**:
-   - Namespace `Local\` bị cô lập theo Windows Logon Session (Session 0: Services, Session 1+: Desktop), không ngăn chặn được tiến trình ở session khác hoặc elevated session truy cập cùng DB.
-   - Dễ bị name squatting / pre-creation DoS từ tiến trình không có đặc quyền. Do đó không dùng `Local\` named mutex làm bằng chứng độc quyền.
+   - Namespace `Local\` bị cô lập theo Windows Logon Session (Session 0 vs Session 1+), không bảo vệ được DB xuyên session.
 2. **Khóa Độc quyền Chính: Windows Exclusive Sidecar Lock File Handle**:
    - Sử dụng `CreateFileW` với cờ `dwShareMode = 0` (exclusive, cấm share đọc/ghi/xóa) mở file `<canonical_db_path>.owner.lock`.
    - Giữ từ TRƯỚC `Store.Open()`/migration đến SAU shutdown drain và `Store.Close()`.
    - Có hiệu lực toàn máy (machine-wide), bảo vệ DB xuyên suốt mọi logon session trên Windows.
-3. **Tách Biệt File Metadata & IPC Carrier**:
-   - File metadata: `<canonical_db_path>.owner.json`, mở với `FILE_SHARE_READ | FILE_SHARE_WRITE`.
-   - Chứa `pid`, `owner_instance_id`, `pipe_name`, `started_at`, `windows_session_id`.
-4. **Canonical Identity & Local Filesystem**:
-   - Chuẩn hóa canonical path qua `GetFinalPathNameByHandleW` / normalized path.
-   - Chỉ hỗ trợ NTFS và ReFS cục bộ trên fixed drive. Cấm tuyệt đối network/SMB shares.
-   - Cấm handle inheritance (`bInheritHandle = FALSE`) để tránh rò rỉ lock sang process con.
-5. **Crash Cleanup**:
-   - Kernel Windows tự động giải phóng toàn bộ file handles khi tiến trình thoát/crash, không để lại stale lock state.
-6. **Cạnh tranh Xuyên Session & Cooperative Takeover V1**:
-   - Cạnh tranh mở file trả về lỗi `ERROR_SHARING_VIOLATION` (32) từ filesystem filter manager.
-   - Tiến trình mới đọc `.owner.json`, kết nối Named Pipe yêu cầu cooperative takeover.
-   - Nếu owner cũ không hợp tác, không drain hoặc không thoát: **FAIL-CLOSED NGAY LẬP TỨC**. Bỏ hành vi tự động `TerminateProcess` trong V1.
+3. **Thuật toán Canonical Path Duy Nhất bằng Kernel Handle**:
+   - Nếu DB file đã tồn tại: Mở handle DB file, kiểm tra hard links (`info.nNumberOfLinks > 1` => reject fail-closed `ERR_HARDLINK_ALIAS_UNSUPPORTED`), gọi `GetFinalPathNameByHandleW(VOLUME_NAME_DOS)` để resolve triệt để relative paths, symlinks, directory junctions, subst drives, casing.
+   - Nếu DB file chưa tồn tại: Mở handle thư mục cha với `FILE_FLAG_BACKUP_SEMANTICS`, gọi `GetFinalPathNameByHandleW`, ghép với base name chuẩn hóa.
+   - Chỉ hỗ trợ NTFS/ReFS cục bộ (cấm network/SMB shares). Alias không chứng minh được thì **fail-closed**, không dùng fallback naive.
+4. **Bảo Mật Metadata `.owner.json`**:
+   - Ghi atomically qua file tạm `.owner.json.tmp` và rename (`MoveFileExW`).
+   - Chứa `pid`, `owner_instance_id` (UUIDv4), `pipe_name`, `started_at`, `canonical_db_path`. DACL chỉ cấp quyền ghi cho Owner/Admins/SYSTEM.
+   - Nếu metadata hỏng/stale: fail-closed ngay lập tức; không suy đoán PID từ OS.
+5. **Xác Thực Named Pipe Takeover**:
+   - Named Pipe xác thực client SID (`ImpersonateNamedPipeClient`).
+   - Request phải kèm `owner_instance_id` khớp với metadata. Request không hợp lệ bị từ chối và tuyệt đối không làm owner shutdown.
+   - Owner cũ không hợp tác/không thoát: tiến trình mới **fail-closed**, không auto-kill.
 
 ---
 
@@ -105,10 +103,11 @@ sequenceDiagram
     participant Listener as External API Listener
 
     rect rgb(255, 240, 240)
-    Note over Host,Store: BƯỚC 1: Acquire ProcessOwnerLease & Mở Store
+    Note over Host,Store: BƯỚC 1: Canonicalize Path, Acquire Lock & Mở Store
+    Host->>Host: GetFinalPathNameByHandleW (Verify no hardlinks)
     Host->>Lock: CreateFileW (.owner.lock, dwShareMode=0)
     Note over Lock: Machine-wide exclusive lock ACQUIRED
-    Host->>Host: Ghi metadata vào .owner.json (pid, pipe_name)
+    Host->>Host: Ghi atomic metadata vào .owner.json (pid, instance_id, pipe)
     Host->>Store: Open() & RunMigrations()
     Host->>Host: Đóng toàn bộ Listener Admission tiếp nhận request
     end
@@ -124,13 +123,13 @@ sequenceDiagram
     end
 
     rect rgb(255, 255, 240)
-    Note over Host,Listener: BƯỚC 3: Xử lý Kết quả Scan & Cấp Admission theo Pair Guards
+    Note over Host,Listener: BƯỚC 3: Xử lý Kết quả Scan & Mở Admission Cổng Probe
     alt report.Complete == true && err == nil (Gồm cả report.PendingAO)
         Note over Runner: Runner tự động đánh dấu r.ready = true
         Host->>Host: Kiểm tra Pair Guards (Quarantine CLEAN, no pending provisioning/restore)
         Host->>Poller: Start(ctx) (Kích hoạt vòng lặp quan sát nền)
         Host->>TM: Khởi động Ticker định kỳ gọi TimeoutMonitor.Tick(ctx)
-        Host->>Listener: Mở cổng tiếp nhận request (Listener Admission OPEN cho các Pair sạch)
+        Host->>Listener: Mở cổng probe tiếp nhận request (Readiness OPEN cho Pair sạch)
     else Incomplete (Complete == false hoặc err != nil)
         Note over Runner: Runner giữ r.ready = false
         Note over Host,Listener: FAIL-CLOSED: Listener Admission ĐÓNG, Daemon dừng phục vụ
@@ -138,7 +137,7 @@ sequenceDiagram
     end
 
     rect rgb(240, 240, 255)
-    Note over Host,Lock: BƯỚC 4: Graceful Shutdown khi nhận OS Signal
+    Note over Host,Lock: BƯỚC 4: Graceful Shutdown khi nhận OS Signal / Valid Takeover
     Host->>Listener: Đóng cổng tiếp nhận (Listener Admission CLOSED)
     Host->>Poller: Stop() (Đợi in-flight ticks drain xong)
     Host->>TM: Dừng Ticker, đợi các caller giữ TimeoutPermit kết thúc
@@ -150,35 +149,45 @@ sequenceDiagram
 
 ---
 
-## 5. Ma trận Kiểm chứng Runtime trên Binary Thật & Ranh giới Tooling
+## 5. Tách Bạch Hai Track Bằng Chứng & Ranh giới Tooling
 
-### 5.1. Ma trận Kiểm chứng trên Binary Thật (`cmd/supervisor`)
+### 5.1. Tách Bạch Hai Track Bằng Chứng
+1. **Xóa Giả Định Effectful Supervisor HTTP Routes**:
+   - Xóa bỏ giả định daemon P03 đã có sẵn các effectful HTTP routes tạo session, dispatch, workspace read, stop.
+   - Tuyệt đối không dùng route AO trực tiếp vì bypass Supervisor sagas và store guards.
+   - Thêm route Supervisor mới đòi hỏi governance riêng, không nhét vào ADR-017.
+2. **Track 1: Binary Daemon Thật (`cmd/supervisor`)**:
+   - Chứng minh: exclusive lock (`.owner.lock`), cạnh tranh 2 process, startup-before-serve (network probe socket đóng đến khi `r.ready == true`), PendingAO hold, graceful drain.
+3. **Track 2: P03 Integration Test Harness (Kiểm Chứng 5 Bước AO)**:
+   - Gọi trực tiếp các API điều phối nội bộ đã được duyệt của thư viện Go Supervisor (`internal/dispatch`, `internal/store`, `internal/stop`, `internal/ao`, `internal/recovery`).
+   - Kiểm chứng 5 bước: 1) Session create, 2) Dispatch prompt, 3) Observation reconciliation, 4) Raw workspace-file read, 5) Teardown.
+   - Bảo đảm đi qua toàn bộ Supervisor saga, store guards, state transitions và audit trail mà không cần production HTTP control surface hay code P04/P05.
+
+### 5.2. Ma trận Kiểm chứng Runtime trên Binary Thật (`cmd/supervisor`)
 
 | Kịch bản Kiểm chứng | Hành vi & Trạng thái Mong đợi | Phương pháp Kiểm tra Thực tế |
 |---|---|---|
 | **1. Trước Run** | `ProcessOwnerLease` được acquire (`.owner.lock` share mode 0). Listener chưa bind socket. | Network probe: Socket connect bị từ chối (Connection Refused). |
 | **2. Đang Run** | `Runner.Run(ctx)` nắm `ExclusiveScope`. Listener tiếp tục đóng. | Network probe: Socket connect bị từ chối; log chỉ bổ trợ. |
-| **3. Sau Run (Complete)** | `r.ready = true`. Pair guards sạch. Listener bind port thành công. | HTTP probe tới listener port trả về `200 OK` (Admission OPEN). |
-| **4. Sau Run (PendingAO)** | `r.ready = true`. Listener mở; Pair có hold trả về 409/503. | HTTP probe verify Pair sạch = 200, Pair hold = 409/503; Poller chạy nền. |
+| **3. Sau Run (Complete)** | `r.ready = true`. Pair guards sạch. Listener bind port thành công. | HTTP probe tới readiness probe port trả về `200 OK` (Admission OPEN). |
+| **4. Sau Run (PendingAO)** | `r.ready = true`. Listener mở; Pair có hold trả về 409/503. | HTTP probe verify readiness mở nhưng Pair hold bị khóa admission. |
 | **5. Run Lỗi / Incomplete** | `r.ready = false`. Admission đóng fail-closed; daemon exit non-zero. | Socket không bao giờ mở; process exit code != 0. |
 | **6. Cạnh tranh 2 Process** | Process B phát hiện `.owner.lock` bị giữ (`ERROR_SHARING_VIOLATION`); cooperative takeover an toàn. | Process A drain và exit; Process B tiếp quản; nếu A không thoát thì B fail-closed. |
 | **7. Shutdown Drain** | Nhận SIGINT: listener đóng -> poller drain -> timeout permit release -> Store.Close() -> đóng lock handle. | Probe socket đóng ngay; verify mọi in-flight connection hoàn tất trước khi DB đóng. |
-| **8. P03 Exit Gate** | 5 bước: session create, dispatch, observation reconciliation, raw file read, teardown. | Test harness kích hoạt trọn vẹn kịch bản mà không import/phụ thuộc code P04. |
 
-### 5.2. Cơ chế Kích hoạt 5 Bước Exit Gate P03 (Khi Chưa có 12 Tool P05)
-1. **Test Harness Kích hoạt Trực tiếp**:
-   - Khi chưa có 12 tool của Phase P05, việc kích hoạt 5 bước exit gate P03 được thực hiện qua **Exit Gate Test Harness**.
-   - Harness gửi HTTP requests trực tiếp vào các local admission endpoints của daemon:
-     * Tạo session: `POST /api/v1/sessions`
-     * Dispatch prompt: `POST /api/v1/sessions/{id}/dispatch`
-     * Observation reconciliation: Poller tick hoặc `GET /api/v1/sessions/{id}`
-     * Raw workspace-file read: Gọi endpoint đọc file từ workspace
-     * Teardown: `POST /api/v1/sessions/{id}/stop` hoặc thu hồi tài nguyên
-2. **Bằng chứng Thực tế**:
-   - Network probe kiểm tra trạng thái cổng thực tế (cổng đóng fail-closed đến khi `r.ready == true`, mở sau khi hoàn tất).
-   - Log chỉ đóng vai trò bổ trợ.
+### 5.3. Ma trận Kiểm chứng Canonical DB Identity & Alias Resolution
 
-### 5.3. Ranh giới Tooling P03/P04/P05 & An ninh SEC-003
+| Kịch bản Alias / Session | Đường dẫn Đầu vào Thử nghiệm | Kết quả Kỳ vọng |
+|---|---|---|
+| **Relative Path** | `.\data\db.sqlite` vs `data\..\data\db.sqlite` | Quy về cùng một canonical lock path `\\?\<Drive>:\...\data\db.sqlite.owner.lock` |
+| **Case Differences** | `D:\data\db.sqlite` vs `d:\DATA\DB.SQLITE` | Quy về cùng một canonical lock path (case-folded khớp tên đĩa vật lý) |
+| **Subst Drive** | `X:\db.sqlite` (với `subst X: D:\data`) | Kernel resolve về đường dẫn thực `\\?\D:\data\db.sqlite.owner.lock` |
+| **Directory Junction / Symlink** | `D:\junction\db.sqlite` -> `D:\real\db.sqlite` | `GetFinalPathNameByHandleW` resolve về `\\?\D:\real\db.sqlite.owner.lock` |
+| **DB Mới (Chưa tồn tại)** | File chưa có trên đĩa | Resolve canonical parent directory + lowercase base name |
+| **Hard Link Detection** | File có `nNumberOfLinks > 1` | Bị từ chối ngay lập tức: **FAIL-CLOSED** (`ERR_HARDLINK_ALIAS_UNSUPPORTED`) |
+| **Cross-Session Competition** | Session 0 (Service) vs Session 1 (Interactive) cùng trỏ DB | Process thứ hai nhận ngay `ERROR_SHARING_VIOLATION` (32) xuyên session |
+
+### 5.4. Ranh giới Tooling P03/P04/P05 & An ninh SEC-003
 1. **Loại bỏ Production Verification Runner khỏi Scope P03**:
    - P03 host chỉ giới hạn ở daemon bootstrap (`cmd/supervisor`), admission control và test harness tối thiểu cho exit gate P03.
    - Bỏ hoàn toàn production verification runner khỏi P03; `EvidenceCollector`, verification runner và profile execution tools thuộc sở hữu độc quyền của Phase P04 (`docs/22_MODULE_PROVENANCE.md`) và Phase P05 (`docs/21_TRACEABILITY_MATRIX.md`).
@@ -187,7 +196,7 @@ sequenceDiagram
    - Ở các phase P04/P05, các công cụ phục vụ ChatGPT Web (bao gồm tool đọc log và tool yêu cầu chạy profile verification) phải được đối soát nghiêm ngặt với `docs/11_CHATGPT_TOOL_SURFACE.md`, `docs/02_REQUIREMENTS.md`, và `docs/07_SECURITY_MODEL.md` (SEC-003).
    - **Tuyệt đối KHÔNG cấp arbitrary shell execution**; mọi lệnh kiểm thử phải qua runner độc lập có whitelist và hard timeout ở Phase P04/P05.
 
-### 5.4. Invariants Bất biến
+### 5.5. Invariants Bất biến
 - `AUTOMATIC_RESTORE = DISABLED`: Giữ nguyên disable fail-closed.
 - 8 Operational policies tiếp tục giữ nguyên ở trạng thái **`UNSET`** trong tài liệu; runtime bắt buộc phải được inject giá trị cấu hình hợp lệ khi khởi động, thiếu bất kỳ giá trị nào thì fail-closed ngay lập tức.
 - Tách biệt hoàn toàn test Mock AO tự động trong CI khỏi bài kiểm chứng Live AO có kiểm soát.
