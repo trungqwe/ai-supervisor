@@ -6,23 +6,35 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/trungqwe/ai-supervisor/internal/ao"
+	"github.com/trungqwe/ai-supervisor/internal/dispatch"
 	"github.com/trungqwe/ai-supervisor/internal/domain"
 	"github.com/trungqwe/ai-supervisor/internal/host"
+	"github.com/trungqwe/ai-supervisor/internal/recovery"
 	"github.com/trungqwe/ai-supervisor/internal/stop"
 	"github.com/trungqwe/ai-supervisor/internal/store"
 )
+
+type testHandoff struct {
+	available bool
+}
+
+func (h *testHandoff) Available(context.Context, store.RecoveryExecution) (bool, error) {
+	return h.available, nil
+}
 
 type mockAOServer struct {
 	mu            sync.Mutex
 	projects      map[string]bool
 	sessions      map[string]string
 	harnesses     map[string]string
+	generations   map[string]string
 	dispatches    map[string][]string
 	killed        map[string]bool
 	workspaceFile string
@@ -33,6 +45,7 @@ func newMockAOServer() *mockAOServer {
 		projects:      make(map[string]bool),
 		sessions:      make(map[string]string),
 		harnesses:     make(map[string]string),
+		generations:   make(map[string]string),
 		dispatches:    make(map[string][]string),
 		killed:        make(map[string]bool),
 		workspaceFile: "{\"task_id\":\"TASK-P03-004\",\"status\":\"COMPLETED\",\"summary\":\"5 AO steps proven\"}",
@@ -75,8 +88,10 @@ func (m *mockAOServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		sessID := fmt.Sprintf("sess-%d", len(m.sessions)+1)
-		m.sessions[sessID] = "active"
+		gen := fmt.Sprintf("gen-%s-1", sessID)
+		m.sessions[sessID] = "waiting_input"
 		m.harnesses[sessID] = req.Harness
+		m.generations[sessID] = gen
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -84,14 +99,15 @@ func (m *mockAOServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		sysPromptBytes := 240
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"session": map[string]any{
-				"id":           sessID,
-				"projectId":    req.ProjectID,
-				"kind":         "worker",
-				"harness":      req.Harness,
-				"status":       "active",
-				"isTerminated": false,
+				"id":                 sessID,
+				"projectId":          req.ProjectID,
+				"kind":               "worker",
+				"harness":            req.Harness,
+				"status":             "idle",
+				"isTerminated":       false,
+				"terminalGeneration": gen,
 				"activity": map[string]any{
-					"state":          "active",
+					"state":          "waiting_input",
 					"lastActivityAt": time.Now().UTC().Format(time.RFC3339),
 				},
 			},
@@ -111,6 +127,7 @@ func (m *mockAOServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		m.dispatches[sessID] = append(m.dispatches[sessID], req.Message)
 
+		// After task send, worker processes and transitions to idle
 		m.sessions[sessID] = "idle"
 
 		w.Header().Set("Content-Type", "application/json")
@@ -137,12 +154,13 @@ func (m *mockAOServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"session": map[string]any{
-				"id":           sessID,
-				"projectId":    "proj-p03",
-				"kind":         "worker",
-				"harness":      m.harnesses[sessID],
-				"status":       state,
-				"isTerminated": isTerminated,
+				"id":                 sessID,
+				"projectId":          "proj-1",
+				"kind":               "worker",
+				"harness":            m.harnesses[sessID],
+				"status":             state,
+				"isTerminated":       isTerminated,
+				"terminalGeneration": m.generations[sessID],
 				"activity": map[string]any{
 					"state":          state,
 					"lastActivityAt": time.Now().UTC().Format(time.RFC3339),
@@ -180,13 +198,23 @@ func (m *mockAOServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
 
-// TestP03IntegrationHarness5Steps verifies the 5 AO integration exit gate steps:
-// Step 1: Session creation & project registration
-// Step 2: Task transmission (send)
-// Step 3: Observation & reconciliation (poll until IDLE)
-// Step 4: Workspace report read
-// Step 5: Teardown / kill session
-func TestP03IntegrationHarness5Steps(t *testing.T) {
+// TestP03IntegrationHarness5StepsViaLibrarySaga verifies the 5 AO integration exit gate steps (AC-004-07)
+// by driving the execution entirely through internal supervisor library sagas, Store guards,
+// state transitions, and audit records (R1-005).
+func TestP03IntegrationHarness5StepsViaLibrarySaga(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "harness_saga.sqlite")
+
+	ctx := context.Background()
+	st, err := store.Open(ctx, store.Config{
+		DBPath:        dbPath,
+		BusyTimeoutMs: 5000,
+	})
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer st.Close()
+
 	mockServer := newMockAOServer()
 	ts := httptest.NewServer(mockServer)
 	defer ts.Close()
@@ -196,47 +224,146 @@ func TestP03IntegrationHarness5Steps(t *testing.T) {
 		t.Fatalf("failed to create AO client: %v", err)
 	}
 
-	ctx := context.Background()
+	auth := host.NewAuthority("")
 
-	// Step 1: Project registration and Session Creation
-	proj, err := client.RegisterProject(ctx, "proj-p03", "/workspace")
-	if err != nil {
-		t.Fatalf("Step 1 RegisterProject failed: %v", err)
-	}
-	if proj.ID != "proj-p03" {
-		t.Fatalf("unexpected project ID: %s", proj.ID)
-	}
-
-	sessResult, err := client.CreateWorkerSession(ctx, "proj-p03", "general")
-	if err != nil {
-		t.Fatalf("Step 1 CreateWorkerSession failed: %v", err)
-	}
-	sessionID := sessResult.Session.ID
-	if sessionID == "" {
-		t.Fatal("empty sessionID from CreateWorkerSession")
+	dispCoord := &dispatch.Coordinator{
+		Store:          st,
+		AO:             client,
+		Operator:       auth,
+		RestoreEnabled: false,
+		ExecutionPolicy: domain.ExecutionBudgetPolicy{
+			Duration:  30 * time.Minute,
+			PolicyRef: "policy-p03",
+		},
 	}
 
-	// Step 2: Task Transmission (send)
-	msg := "execute task contract 004"
-	dispatchRes, err := client.DispatchTaskContract(ctx, sessionID, msg)
-	if err != nil {
-		t.Fatalf("Step 2 DispatchTaskContract failed: %v", err)
+	// Step 1: Pair provisioning & Session Creation via dispatch.Coordinator.Provision
+	projID := "proj-1"
+	pairID := "pair-1"
+	if err := st.CreateProject(ctx, domain.Project{ProjectID: projID, Name: projID, RootPath: "/workspace"}); err != nil {
+		t.Fatalf("CreateProject failed: %v", err)
 	}
-	if dispatchRes == nil || dispatchRes.SessionID != sessionID {
-		t.Fatalf("invalid dispatch result: %+v", dispatchRes)
+	if err := st.CreatePair(ctx, domain.Pair{PairID: pairID, ProjectID: projID, CurrentPhaseID: "P03", State: "ACTIVE"}); err != nil {
+		t.Fatalf("CreatePair failed: %v", err)
 	}
 
-	// Step 3: Observation & Status Reconciliation
-	workerStatus, err := client.GetWorkerStatus(ctx, sessionID)
-	if err != nil {
-		t.Fatalf("Step 3 GetWorkerStatus failed: %v", err)
+	provOp := domain.PairProvisioningOperation{
+		OperationID: "prov-op-1",
+		PairID:      pairID,
+		ClientToken: "client-tok-1",
 	}
-	if workerStatus.Activity.State != ao.ActivityStateIdle {
-		t.Fatalf("expected ActivityStateIdle after send completion, got %s", workerStatus.Activity.State)
+	if err := dispCoord.Provision(ctx, provOp, projID, "agy", "supervisor"); err != nil {
+		t.Fatalf("Step 1 Provision failed: %v", err)
+	}
+
+	// Verify Store state after provisioning
+	durableProv, err := st.GetPairProvisioningOperation(ctx, provOp.OperationID)
+	if err != nil {
+		t.Fatalf("failed to get provisioning operation: %v", err)
+	}
+	if durableProv.Stage != domain.ProvisionConfirmed {
+		t.Fatalf("expected ProvisionConfirmed, got %s", durableProv.Stage)
+	}
+
+	session, err := st.GetWorkerSessionByPair(ctx, pairID)
+	if err != nil {
+		t.Fatalf("failed to get worker session: %v", err)
+	}
+	if session.Status != domain.WorkerSessionIdle {
+		t.Fatalf("expected WorkerSessionIdle, got %s", session.Status)
+	}
+	sessionID := session.SessionID
+	generation := session.TerminalGeneration
+
+	// Step 2: Task Transmission via dispatch.Coordinator.Dispatch
+	taskID := "task-1"
+	contractID := "contract-1"
+	attemptID := "attempt-1"
+	dispatchOpID := "dispatch-op-1"
+
+	if err := st.CreateTask(ctx, domain.Task{TaskID: taskID, PhaseID: "P03", PairID: pairID, State: domain.StateDraft}); err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+	if err := st.InsertTaskContract(ctx, domain.TaskContract{
+		ContractID:     contractID,
+		TaskID:         taskID,
+		RevisionNumber: 1,
+		BaseSHA:        "35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea",
+		AllowedScope:   []string{"internal/**"},
+	}); err != nil {
+		t.Fatalf("InsertTaskContract failed: %v", err)
+	}
+	if err := st.TransitionTask(ctx, taskID, domain.StateDraft, domain.StateReady); err != nil {
+		t.Fatalf("TransitionTask to ready failed: %v", err)
+	}
+
+	reportPath, err := store.CanonicalExpectedReportPath(taskID, attemptID)
+	if err != nil {
+		t.Fatalf("CanonicalExpectedReportPath failed: %v", err)
+	}
+
+	msg := "execute immutable task contract 004"
+	if err := dispCoord.Dispatch(ctx, taskID, contractID, attemptID, dispatchOpID, sessionID, generation, reportPath, msg, "supervisor"); err != nil {
+		t.Fatalf("Step 2 Dispatch failed: %v", err)
+	}
+
+	// Verify Store state after dispatch
+	dispOp, err := st.GetDispatchOperation(ctx, dispatchOpID)
+	if err != nil {
+		t.Fatalf("failed to get dispatch operation: %v", err)
+	}
+	if dispOp.Stage != domain.SendConfirmed {
+		t.Fatalf("expected DispatchSendConfirmed, got %s", dispOp.Stage)
+	}
+
+	budget, err := st.GetExecutionBudget(ctx, attemptID)
+	if err != nil {
+		t.Fatalf("failed to get execution budget: %v", err)
+	}
+	if budget.Duration <= 0 {
+		t.Fatalf("expected positive budget duration, got %v", budget.Duration)
+	}
+
+	attempt, err := st.GetTaskAttempt(ctx, attemptID)
+	if err != nil {
+		t.Fatalf("failed to get task attempt: %v", err)
+	}
+	if attempt.AttemptID != attemptID {
+		t.Fatalf("unexpected attempt ID: %s", attempt.AttemptID)
+	}
+
+	// Step 3: Observation & Status Reconciliation via recovery.Poller
+	scanner := &recovery.Runner{
+		Store:                st,
+		AO:                   client,
+		Host:                 auth,
+		ActivityPollInterval: 1 * time.Second,
+		ExecutionDeadline:    30 * time.Minute,
+		Handoff:              &testHandoff{available: true},
+		Actor:                "SUPERVISOR_RUNNER",
+		Now:                  time.Now,
+	}
+	scanReport, err := scanner.Run(ctx)
+	if err != nil {
+		t.Fatalf("Step 3 scanner.Run failed: %v", err)
+	}
+	if !scanReport.Complete {
+		t.Fatalf("expected scanReport.Complete = true, got %v", scanReport.Complete)
+	}
+
+	poller := &recovery.Poller{
+		Store:    st,
+		AO:       client,
+		Owner:    scanner,
+		Interval: 1 * time.Second,
+		Actor:    "SUPERVISOR_POLLER",
+	}
+	if err := poller.PollOnce(ctx); err != nil {
+		t.Fatalf("Step 3 PollOnce failed: %v", err)
 	}
 
 	// Step 4: Workspace File Retrieval (raw workspace transport)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+fmt.Sprintf("/api/v1/sessions/%s/workspace/file?path=.supervisor/reports/task-1/att-1.json", sessionID), nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+fmt.Sprintf("/api/v1/sessions/%s/workspace/file?path=%s", sessionID, reportPath), nil)
 	resp, err := ts.Client().Do(req)
 	if err != nil {
 		t.Fatalf("Step 4 workspace read failed: %v", err)
@@ -246,18 +373,45 @@ func TestP03IntegrationHarness5Steps(t *testing.T) {
 		t.Fatalf("expected HTTP 200 for workspace read, got %d", resp.StatusCode)
 	}
 
-	// Step 5: Teardown / Kill Session
-	stopRes, err := client.StopWorker(ctx, sessionID)
-	if err != nil {
-		t.Fatalf("Step 5 StopWorker failed: %v", err)
+	// Step 5: Teardown / Stop Session via stop.Coordinator.Start
+	stopCoord := &stop.Coordinator{
+		Store:       st,
+		AO:          client,
+		Operator:    auth,
+		KillTimeout: 5 * time.Second,
+		TimeoutHost: auth,
+		Now:         time.Now,
 	}
-	if stopRes == nil || !stopRes.Freed {
-		t.Fatalf("unexpected stop result: %+v", stopRes)
+
+	stopOpID := "stop-op-1"
+	stopOp := domain.StopOperation{
+		OperationID:        stopOpID,
+		Purpose:            domain.RunningAttemptStop,
+		PairID:             pairID,
+		TaskID:             &taskID,
+		ContractID:         &contractID,
+		AttemptID:          &attemptID,
+		SessionID:          sessionID,
+		TerminalGeneration: generation,
+		Actor:              "SUPERVISOR_STOP",
+	}
+
+	if err := stopCoord.Start(ctx, stopOp); err != nil {
+		t.Fatalf("Step 5 stopCoord.Start failed: %v", err)
+	}
+
+	// Verify Store state and AO state after stop
+	stOp, err := st.GetStopOperation(ctx, stopOpID)
+	if err != nil {
+		t.Fatalf("failed to get stop operation: %v", err)
+	}
+	if stOp.Stage != domain.StopCallSucceeded && stOp.Stage != domain.StopTerminationConfirmed {
+		t.Fatalf("unexpected stop operation stage: %s", stOp.Stage)
 	}
 
 	finalStatus, err := client.GetWorkerStatus(ctx, sessionID)
 	if err != nil {
-		t.Fatalf("final GetWorkerStatus failed: %v", err)
+		t.Fatalf("GetWorkerStatus failed: %v", err)
 	}
 	if !finalStatus.IsTerminated {
 		t.Fatal("expected IsTerminated = true after kill")
@@ -267,7 +421,7 @@ func TestP03IntegrationHarness5Steps(t *testing.T) {
 // TestPairHoldAndAdmissionGuard verifies that host authority prevents conflicting operations
 // and enforces fail-closed behavior for unauthenticated principals and automatic restore.
 func TestPairHoldAndAdmissionGuard(t *testing.T) {
-	auth := host.NewAuthority("verified-principal-123")
+	auth := host.NewAuthority("any-token")
 
 	// Invariant: Automatic restore is always disabled
 	if auth.AutomaticRestoreEnabled() {
@@ -301,7 +455,7 @@ func TestPairHoldAndAdmissionGuard(t *testing.T) {
 // through TimeoutAdmission.
 func TestStopCoordinatorIntegration(t *testing.T) {
 	tempDir := t.TempDir()
-	dbPath := tempDir + "/test_store.sqlite"
+	dbPath := filepath.Join(tempDir, "test_store.sqlite")
 
 	ctx := context.Background()
 	st, err := store.Open(ctx, store.Config{

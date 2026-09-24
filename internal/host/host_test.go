@@ -5,8 +5,10 @@ package host_test
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,6 +98,20 @@ func TestAuthorityExclusiveScope(t *testing.T) {
 	}
 }
 
+func TestVerifiedRestorePrincipalFailClosed(t *testing.T) {
+	auth := host.NewAuthority("any-token")
+	ctx := context.Background()
+
+	// Invariant (R1-003): Verified operator principal must fail-closed (return "", false, nil)
+	p, ok, err := auth.VerifiedRestorePrincipal(ctx, "task-1", "contract-1", "pair-1", "caller")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok || p != "" {
+		t.Fatalf("expected fail-closed (false, empty), got ok=%v, p=%q", ok, p)
+	}
+}
+
 func TestProcessOwnerLeaseAndTwoProcessContention(t *testing.T) {
 	tempDir := t.TempDir()
 	dbFile := filepath.Join(tempDir, "test.sqlite")
@@ -160,19 +176,37 @@ func TestPinnedDBPreventsFileDeletion(t *testing.T) {
 	}
 }
 
-func TestPrepareNewDB(t *testing.T) {
+func TestPrepareNewDBOrderAndVolume(t *testing.T) {
 	tempDir := t.TempDir()
-	newDB, err := host.PrepareNewDB(tempDir, "new_db.sqlite")
+	prep, err := host.ResolveNewDBPaths(tempDir, "order_test.sqlite")
 	if err != nil {
-		t.Fatalf("PrepareNewDB failed: %v", err)
+		t.Fatalf("ResolveNewDBPaths failed: %v", err)
 	}
-	defer newDB.Close()
 
-	if !newDB.IsNew {
+	// Invariant (R1-001): Before CreateAndPinDB, target file does not exist
+	if _, err := os.Stat(prep.StoreDBPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected target file not to exist before CreateAndPinDB, got err=%v", err)
+	}
+
+	// Acquire owner lease FIRST
+	lease, err := host.AcquireProcessOwnerLease(prep.CanonicalDBPath, "inst-order-1")
+	if err != nil {
+		t.Fatalf("AcquireProcessOwnerLease failed: %v", err)
+	}
+	defer lease.CloseLockHandle()
+
+	// Now create and pin DB
+	pinned, err := prep.CreateAndPinDB()
+	if err != nil {
+		t.Fatalf("CreateAndPinDB failed: %v", err)
+	}
+	defer pinned.Close()
+
+	if !pinned.IsNew {
 		t.Fatal("expected IsNew = true")
 	}
 
-	fi, err := os.Stat(newDB.StoreDBPath)
+	fi, err := os.Stat(pinned.StoreDBPath)
 	if err != nil {
 		t.Fatalf("failed to stat new db: %v", err)
 	}
@@ -180,7 +214,7 @@ func TestPrepareNewDB(t *testing.T) {
 		t.Fatalf("expected 0-byte file, got size %d", fi.Size())
 	}
 
-	if err := newDB.VerifyPostOpenIdentity(); err != nil {
+	if err := pinned.VerifyPostOpenIdentity(); err != nil {
 		t.Fatalf("VerifyPostOpenIdentity for new DB failed: %v", err)
 	}
 }
@@ -230,25 +264,18 @@ func TestNamedPipeTakeoverAndStatus(t *testing.T) {
 	}
 }
 
-type orderRecorder struct {
-	name   string
-	order  *[]string
-	target interface{ Close() error }
+type trackingCloser struct {
+	closed bool
 }
 
-func (c orderRecorder) Close() error {
-	*c.order = append(*c.order, c.name)
-	if c.target != nil {
-		return c.target.Close()
-	}
+func (t *trackingCloser) Close() error {
+	t.closed = true
 	return nil
 }
 
-func TestShutdownDrainSequence(t *testing.T) {
-	var callOrder []string
-
+func TestDrainTimeoutPreservesLockAndStore(t *testing.T) {
 	tempDir := t.TempDir()
-	dbFile := filepath.Join(tempDir, "drain_test.sqlite")
+	dbFile := filepath.Join(tempDir, "drain_timeout.sqlite")
 	_ = os.WriteFile(dbFile, []byte("d"), 0600)
 
 	pinned, err := host.PrepareExistingDB(dbFile)
@@ -257,41 +284,65 @@ func TestShutdownDrainSequence(t *testing.T) {
 	}
 	defer pinned.Close()
 
-	lease, err := host.AcquireProcessOwnerLease(pinned.CanonicalDBPath, "inst-drain")
+	lease, err := host.AcquireProcessOwnerLease(pinned.CanonicalDBPath, "inst-drain-to")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer lease.CloseLockHandle()
 
 	auth := host.NewAuthority("principal")
+	ctx := context.Background()
+
+	// Acquire in-flight permit that is NOT released
+	permit, err := auth.AcquireExclusiveScope(ctx, "active-pair", "IN_FLIGHT_CALLER")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	storeCloser := &trackingCloser{}
+	pinnedCloser := &trackingCloser{}
+	schedCloser := &trackingCloser{}
 
 	comps := host.ShutdownComponents{
-		PipeServer: orderRecorder{name: "pipe", order: &callOrder},
-		HTTPServer: orderRecorder{name: "http", order: &callOrder},
 		Authority:  auth,
-		Store:      orderRecorder{name: "store", order: &callOrder},
-		PinnedDB:   orderRecorder{name: "pinnedDB", order: &callOrder, target: pinned},
+		Store:      storeCloser,
+		PinnedDB:   pinnedCloser,
+		Schedulers: []io.Closer{schedCloser},
 		OwnerLease: lease,
 	}
 
+	// Execute drain with very short timeout
+	err = host.ExecuteShutdownDrain(20*time.Millisecond, comps)
+	if err == nil {
+		t.Fatal("expected ExecuteShutdownDrain to fail with timeout when permit held, got nil")
+	}
+	if !strings.Contains(err.Error(), "drain timeout") {
+		t.Fatalf("expected drain timeout error, got %v", err)
+	}
+
+	// Invariant (R1-002): Store and PinnedDB must NOT be closed, and owner lock must NOT be released
+	if storeCloser.closed {
+		t.Fatal("Store was closed despite drain timeout! Violation of R1-002")
+	}
+	if pinnedCloser.closed {
+		t.Fatal("PinnedDB was closed despite drain timeout! Violation of R1-002")
+	}
+
+	// Contender trying to acquire .owner.lock must be rejected with ErrSharingViolation
+	_, contenderErr := host.AcquireProcessOwnerLease(pinned.CanonicalDBPath, "contender-inst")
+	if !errors.Is(contenderErr, host.ErrSharingViolation) {
+		t.Fatalf("expected contender to fail with ErrSharingViolation while lock preserved, got %v", contenderErr)
+	}
+
+	// Now release the held permit
+	_ = permit.Release()
+
+	// Subsequent drain succeeds cleanly
 	err = host.ExecuteShutdownDrain(1*time.Second, comps)
 	if err != nil {
-		t.Fatalf("ExecuteShutdownDrain failed: %v", err)
+		t.Fatalf("expected successful drain after permit released, got %v", err)
 	}
-
-	// Verify order: pipe, http, store, pinnedDB
-	expected := []string{"pipe", "http", "store", "pinnedDB"}
-	if len(callOrder) != len(expected) {
-		t.Fatalf("expected callOrder %v, got %v", expected, callOrder)
-	}
-	for i, v := range expected {
-		if callOrder[i] != v {
-			t.Fatalf("callOrder[%d] = %s, expected %s", i, callOrder[i], v)
-		}
-	}
-
-	// Metadata file should be deleted
-	if _, err := os.Stat(lease.MetadataPath); !os.IsNotExist(err) {
-		t.Fatal("expected metadata file to be cleaned up")
+	if !storeCloser.closed {
+		t.Fatal("expected Store to be closed after clean drain")
 	}
 }

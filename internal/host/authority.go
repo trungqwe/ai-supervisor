@@ -48,7 +48,7 @@ func NewAuthority(principal string) *Authority {
 	}
 }
 
-// Principal returns the verified operator principal.
+// Principal returns the verified operator principal string, if any.
 func (a *Authority) Principal() string {
 	return a.principal
 }
@@ -76,12 +76,13 @@ func (a *Authority) AcquireMaintenance(ctx context.Context, pairID, purpose stri
 	return a.AcquireMaintenanceScope(ctx, pairID, purpose)
 }
 
-// VerifiedRestorePrincipal satisfies recovery.LegacyOperatorBoundary and stop.OperatorBoundary
+// VerifiedRestorePrincipal satisfies recovery.LegacyOperatorBoundary and stop.OperatorBoundary.
+// Invariant (R1-003): Unauthenticated CLI flag strings or caller parameters do not prove authentication.
+// Verified operator principal remains an OPEN dependency at the trusted boundary until real cryptographic
+// or authenticated token verification is integrated.
+// Always returns ("", false, nil) fail-closed.
 func (a *Authority) VerifiedRestorePrincipal(ctx context.Context, taskID, contractID, pairID, caller string) (string, bool, error) {
-	if a.principal == "" {
-		return "", false, nil
-	}
-	return a.principal, true, nil
+	return "", false, nil
 }
 
 // AcquireExclusiveScope locks a specific Pair for a dedicated purpose.

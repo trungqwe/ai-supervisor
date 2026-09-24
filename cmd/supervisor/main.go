@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -17,13 +18,34 @@ import (
 	"github.com/trungqwe/ai-supervisor/internal/ao"
 	"github.com/trungqwe/ai-supervisor/internal/host"
 	"github.com/trungqwe/ai-supervisor/internal/recovery"
+	"github.com/trungqwe/ai-supervisor/internal/stop"
 	"github.com/trungqwe/ai-supervisor/internal/store"
 )
+
+type daemonAO interface {
+	GetWorkerStatus(context.Context, string) (*ao.WorkerStatus, error)
+	StopWorker(context.Context, string) (*ao.StopWorkerResult, error)
+}
 
 type noopObserver struct{}
 
 func (noopObserver) GetWorkerStatus(ctx context.Context, sessionID string) (*ao.WorkerStatus, error) {
 	return nil, fmt.Errorf("ao: session %q not found in local bootstrap", sessionID)
+}
+
+func (noopObserver) StopWorker(ctx context.Context, sessionID string) (*ao.StopWorkerResult, error) {
+	return nil, fmt.Errorf("ao: session %q cannot be stopped in local bootstrap", sessionID)
+}
+
+type fnCloser struct {
+	fn func() error
+}
+
+func (f *fnCloser) Close() error {
+	if f == nil || f.fn == nil {
+		return nil
+	}
+	return f.fn()
 }
 
 func main() {
@@ -65,7 +87,7 @@ func runDaemon(args []string) error {
 	httpAddr := fs.String("http-addr", "127.0.0.1:0", "Address for readonly HTTP probe server")
 	aoAddr := fs.String("ao-addr", "", "Address of Untrivial AO REST daemon (optional)")
 	instanceID := fs.String("instance-id", "", "Unique daemon instance ID (defaults to timestamp-pid)")
-	operatorPrincipal := fs.String("operator-principal", "", "Authenticated operator principal token")
+	_ = fs.String("operator-principal", "", "Operator principal token (unverified in V1, remains OPEN dependency per R1-003)")
 	readySignalFile := fs.String("ready-signal-file", "", "Optional file written after startup readiness achieved")
 
 	// 8 mandatory operational policies
@@ -106,38 +128,57 @@ func runDaemon(args []string) error {
 		*instanceID = fmt.Sprintf("daemon-%d-%d", time.Now().UnixNano(), os.Getpid())
 	}
 
-	// Step 1: Prepare DB handle and derive canonical path
 	absDB, err := filepath.Abs(filepath.Clean(*dbPath))
 	if err != nil {
 		return fmt.Errorf("invalid DB path: %w", err)
 	}
 
-	var pinned *host.PinnedDB
+	var (
+		pinned *host.PinnedDB
+		lease  *host.ProcessOwnerLease
+	)
+
+	// Step 1 & 2: Handle DB preparation and acquire ProcessOwnerLease (.owner.lock)
+	// Invariant (R1-001): For a new DB, acquire owner lease BEFORE CREATE_NEW.
 	if _, err := os.Stat(absDB); errors.Is(err, os.ErrNotExist) {
 		// New DB path
 		parent := filepath.Dir(absDB)
 		name := filepath.Base(absDB)
-		pinned, err = host.PrepareNewDB(parent, name)
+		newPrep, err := host.ResolveNewDBPaths(parent, name)
 		if err != nil {
-			return fmt.Errorf("failed to prepare new DB: %w", err)
+			return fmt.Errorf("failed to resolve new DB paths: %w", err)
+		}
+
+		// Acquire owner lock FIRST before creating the file
+		lease, err = host.AcquireProcessOwnerLease(newPrep.CanonicalDBPath, *instanceID)
+		if err != nil {
+			return fmt.Errorf("failed to acquire owner lease for new DB: %w", err)
+		}
+
+		// Now create 0-byte file exclusively via CREATE_NEW and pin without FILE_SHARE_DELETE
+		pinned, err = newPrep.CreateAndPinDB()
+		if err != nil {
+			lease.CleanMetadata()
+			_ = lease.CloseLockHandle()
+			return fmt.Errorf("failed to create and pin new DB: %w", err)
 		}
 	} else if err != nil {
 		return fmt.Errorf("failed to stat DB path: %w", err)
 	} else {
-		// Existing DB path
+		// Existing DB path: open and pin handle first
 		pinned, err = host.PrepareExistingDB(absDB)
 		if err != nil {
 			return fmt.Errorf("failed to prepare existing DB: %w", err)
 		}
-	}
-	defer pinned.Close()
 
-	// Step 2: Acquire ProcessOwnerLease (.owner.lock)
-	lease, err := host.AcquireProcessOwnerLease(pinned.CanonicalDBPath, *instanceID)
-	if err != nil {
-		return fmt.Errorf("failed to acquire owner lease: %w", err)
+		lease, err = host.AcquireProcessOwnerLease(pinned.CanonicalDBPath, *instanceID)
+		if err != nil {
+			_ = pinned.Close()
+			return fmt.Errorf("failed to acquire owner lease for existing DB: %w", err)
+		}
 	}
 	defer lease.CloseLockHandle()
+	defer pinned.Close()
 
 	// Step 3: Open Store using validated StoreDBPath (local DOS path)
 	ctx := context.Background()
@@ -158,10 +199,11 @@ func runDaemon(args []string) error {
 	}
 
 	// Step 5: Initialize trusted authority
-	auth := host.NewAuthority(*operatorPrincipal)
+	// Invariant (R1-003): Verified operator principal remains an OPEN dependency at trusted boundary.
+	auth := host.NewAuthority("")
 
 	// Step 6: Setup observer
-	var observer recovery.Observer = noopObserver{}
+	var observer daemonAO = noopObserver{}
 	if *aoAddr != "" {
 		aoClient, err := ao.NewClient(*aoAddr, &http.Client{Timeout: policies.SupervisorHTTPTimeout})
 		if err != nil {
@@ -184,13 +226,74 @@ func runDaemon(args []string) error {
 
 	startupCtx, cancelStartup := context.WithTimeout(ctx, 30*time.Second)
 	defer cancelStartup()
-	_, err = scanner.Run(startupCtx)
+	scanReport, err := scanner.Run(startupCtx)
 	if err != nil {
 		lease.CleanMetadata()
 		return fmt.Errorf("startup recovery scan failed: %w", err)
 	}
+	// Invariant (R1-004): Scanner must report Complete == true before service begins
+	if !scanReport.Complete {
+		lease.CleanMetadata()
+		return fmt.Errorf("startup recovery scan incomplete (PendingAO=%v, Classified=%d)", scanReport.PendingAO, scanReport.Classified)
+	}
 
-	// Step 8: Start readonly HTTP probe server (ZERO effectful routes)
+	// Step 8: Start background poller and TimeoutMonitor scheduler (R1-004)
+	poller := &recovery.Poller{
+		Store:    st,
+		AO:       observer,
+		Owner:    scanner,
+		Interval: policies.SupervisorActivityPollInterval,
+		Actor:    "HOST_POLLER",
+	}
+	pollerCtx, cancelPoller := context.WithCancel(ctx)
+	if err := poller.Start(pollerCtx); err != nil {
+		lease.CleanMetadata()
+		return fmt.Errorf("failed to start poller: %w", err)
+	}
+
+	stopCoord := &stop.Coordinator{
+		Store:       st,
+		AO:          observer,
+		Operator:    auth,
+		KillTimeout: policies.SupervisorKillStopTimeout,
+		TimeoutHost: auth,
+		Now:         time.Now,
+	}
+	timeoutMonitor := &recovery.TimeoutMonitor{
+		Owner:    scanner,
+		Stop:     stopCoord,
+		Interval: policies.SupervisorActivityPollInterval,
+		Actor:    "TIMEOUT_MONITOR",
+		Now:      time.Now,
+	}
+
+	timeoutCtx, cancelTimeout := context.WithCancel(ctx)
+	timeoutDone := make(chan struct{})
+	go func() {
+		defer close(timeoutDone)
+		ticker := time.NewTicker(policies.SupervisorActivityPollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-timeoutCtx.Done():
+				return
+			case <-ticker.C:
+				_ = timeoutMonitor.Tick(timeoutCtx)
+			}
+		}
+	}()
+
+	pollerCloser := &fnCloser{fn: func() error {
+		cancelPoller()
+		return poller.Stop()
+	}}
+	timeoutCloser := &fnCloser{fn: func() error {
+		cancelTimeout()
+		<-timeoutDone
+		return nil
+	}}
+
+	// Step 9: Start readonly HTTP probe server (ZERO effectful routes)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -200,7 +303,8 @@ func runDaemon(args []string) error {
 		})
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		if !auth.Available() {
+		// Invariant (R1-004): Readiness requires authority available, scanner completed, and active ownership
+		if !auth.Available() || !scanReport.Complete {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
@@ -213,6 +317,8 @@ func runDaemon(args []string) error {
 
 	listener, err := net.Listen("tcp", *httpAddr)
 	if err != nil {
+		_ = pollerCloser.Close()
+		_ = timeoutCloser.Close()
 		lease.CleanMetadata()
 		return fmt.Errorf("failed to listen on HTTP addr %q: %w", *httpAddr, err)
 	}
@@ -228,7 +334,7 @@ func runDaemon(args []string) error {
 		_ = os.WriteFile(*readySignalFile, []byte(listener.Addr().String()), 0600)
 	}
 
-	// Step 9: Start Named Pipe Server for takeover and status
+	// Step 10: Start Named Pipe Server for takeover and status
 	stopTriggered := make(chan struct{})
 	var stopOnce bool
 	pipeServer, err := host.StartNamedPipeServer(lease.PipeName, *instanceID, func() error {
@@ -239,6 +345,8 @@ func runDaemon(args []string) error {
 		return nil
 	})
 	if err != nil {
+		_ = pollerCloser.Close()
+		_ = timeoutCloser.Close()
 		lease.CleanMetadata()
 		return fmt.Errorf("failed to start named pipe server: %w", err)
 	}
@@ -253,11 +361,12 @@ func runDaemon(args []string) error {
 	case <-stopTriggered:
 	}
 
-	// Step 10: Execute strict shutdown drain sequence
+	// Step 11: Execute strict shutdown drain sequence (R1-002, R1-004)
 	drainComponents := host.ShutdownComponents{
 		PipeServer: pipeServer,
 		HTTPServer: httpServer,
 		Authority:  auth,
+		Schedulers: []io.Closer{pollerCloser, timeoutCloser}, // stopped before Store.Close
 		Store:      st,
 		PinnedDB:   pinned,
 		OwnerLease: lease,
@@ -287,7 +396,6 @@ func stopDaemon(args []string) error {
 		return err
 	}
 
-	// Read sidecar metadata
 	_, metaPath, pipeName := host.DeriveSidecarPaths(absDB)
 	data, err := os.ReadFile(metaPath)
 	if err != nil {
@@ -328,6 +436,7 @@ func statusDaemon(args []string) error {
 	if err != nil {
 		return fmt.Errorf("daemon is not running (no metadata found at %q)", metaPath)
 	}
+
 	var meta host.OwnerMetadata
 	if err := json.Unmarshal(data, &meta); err == nil && meta.PipeName != "" {
 		pipeName = meta.PipeName
@@ -335,9 +444,9 @@ func statusDaemon(args []string) error {
 
 	resp, err := host.RequestPipeStatus(pipeName, *timeout)
 	if err != nil {
-		return fmt.Errorf("daemon status query failed: %w", err)
+		return fmt.Errorf("pipe status query failed: %w", err)
 	}
 
-	fmt.Printf("Daemon status: %s (PID=%d, instance=%s)\n", resp.Status, resp.PID, resp.InstanceID)
+	fmt.Printf("Daemon status: %s (instance=%s, pid=%d)\n", resp.Status, resp.InstanceID, resp.PID)
 	return nil
 }

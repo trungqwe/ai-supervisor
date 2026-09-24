@@ -48,6 +48,7 @@ type PinnedDB struct {
 }
 
 // GetFinalCanonicalPath derives the normalized canonical Win32 DOS path from an open OS handle.
+// Safely handles long paths and buffer re-allocation per MSDN GetFinalPathNameByHandleW specification (R1-006).
 func GetFinalCanonicalPath(h windows.Handle) (string, error) {
 	buf := make([]uint16, 1024)
 	r0, _, err := procGetFinalPathNameByHandleW.Call(
@@ -58,6 +59,19 @@ func GetFinalCanonicalPath(h windows.Handle) (string, error) {
 	)
 	if r0 == 0 {
 		return "", fmt.Errorf("GetFinalPathNameByHandleW: %w", err)
+	}
+	if r0 > uintptr(len(buf)) {
+		// Buffer was too small. r0 is the required buffer length in TCHARs including terminating null.
+		buf = make([]uint16, r0)
+		r0, _, err = procGetFinalPathNameByHandleW.Call(
+			uintptr(h),
+			uintptr(unsafe.Pointer(&buf[0])),
+			uintptr(len(buf)),
+			uintptr(VOLUME_NAME_DOS|FILE_NAME_NORMALIZED),
+		)
+		if r0 == 0 || r0 > uintptr(len(buf)) {
+			return "", fmt.Errorf("GetFinalPathNameByHandleW (resized buffer failed): %w", err)
+		}
 	}
 	return syscall.UTF16ToString(buf[:r0]), nil
 }
@@ -80,7 +94,6 @@ func GetPhysicalFileIDInfo(h windows.Handle) (*FILE_ID_INFO, error) {
 // ConvertWin32PathToStorePath validates that the canonical Win32 path is a local DOS volume (\\?\C:\...)
 // and strips the \\?\ prefix so standard SQLite URI parsers accept it cleanly without syntax errors.
 func ConvertWin32PathToStorePath(win32Path string) (string, error) {
-	// Must match \\?\<Drive>:\... where Drive is a single ASCII letter
 	if !strings.HasPrefix(win32Path, `\\?\`) {
 		return "", fmt.Errorf("%w: path does not have Win32 extended prefix: %s", ErrInvalidPath, win32Path)
 	}
@@ -115,7 +128,6 @@ func PrepareExistingDB(rawPath string) (*PinnedDB, error) {
 		return nil, fmt.Errorf("host: invalid DB path %q: %w", rawPath, err)
 	}
 
-	// Open handle omitting FILE_SHARE_DELETE: allows read and write by Store, blocks file removal/rename
 	h, err := windows.CreateFile(
 		pathUTF16,
 		windows.GENERIC_READ,
@@ -161,9 +173,22 @@ func PrepareExistingDB(rawPath string) (*PinnedDB, error) {
 	}, nil
 }
 
-// PrepareNewDB creates a 0-byte file using CREATE_NEW, pins its handle without FILE_SHARE_DELETE,
-// and validates parent directory volume identity.
-func PrepareNewDB(parentDir, fileName string) (*PinnedDB, error) {
+// NewDBPrep encapsulates the verified canonical parent directory and target paths
+// for a database file that does not yet exist.
+// Invariant (R1-001): ProcessOwnerLease MUST be acquired on CanonicalDBPath BEFORE
+// calling CreateAndPinDB().
+type NewDBPrep struct {
+	ParentCanon     string
+	CanonicalDBPath string
+	StoreDBPath     string
+	ParentVolume    uint64
+	FileName        string
+}
+
+// ResolveNewDBPaths opens the parent directory, validates that it is a local DOS volume,
+// derives the canonical Win32 DOS path and volume serial number, and prepares target paths.
+// Crucially, it does NOT create or touch the target DB file.
+func ResolveNewDBPaths(parentDir, fileName string) (*NewDBPrep, error) {
 	absParent, err := filepath.Abs(filepath.Clean(parentDir))
 	if err != nil {
 		return nil, fmt.Errorf("host: invalid parent dir %q: %w", parentDir, err)
@@ -173,7 +198,6 @@ func PrepareNewDB(parentDir, fileName string) (*PinnedDB, error) {
 		return nil, fmt.Errorf("host: invalid parent dir utf16: %w", err)
 	}
 
-	// Open parent directory to derive canonical path and volume serial number
 	hParent, err := windows.CreateFile(
 		parentUTF16,
 		windows.GENERIC_READ,
@@ -186,12 +210,13 @@ func PrepareNewDB(parentDir, fileName string) (*PinnedDB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("host: failed to open parent directory %q: %w", absParent, err)
 	}
+	defer windows.CloseHandle(hParent)
+
 	parentCanon, err := GetFinalCanonicalPath(hParent)
-	parentID, errID := GetPhysicalFileIDInfo(hParent)
-	_ = windows.CloseHandle(hParent)
 	if err != nil {
 		return nil, fmt.Errorf("host: failed to get canonical parent path: %w", err)
 	}
+	parentID, errID := GetPhysicalFileIDInfo(hParent)
 	if errID != nil {
 		return nil, fmt.Errorf("host: failed to get parent directory volume info: %w", errID)
 	}
@@ -204,12 +229,24 @@ func PrepareNewDB(parentDir, fileName string) (*PinnedDB, error) {
 	targetCanon := filepath.Join(parentCanon, fileName)
 	targetStore := filepath.Join(parentStore, fileName)
 
-	targetUTF16, err := windows.UTF16PtrFromString(targetCanon)
+	return &NewDBPrep{
+		ParentCanon:     parentCanon,
+		CanonicalDBPath: targetCanon,
+		StoreDBPath:     targetStore,
+		ParentVolume:    parentID.VolumeSerialNumber,
+		FileName:        fileName,
+	}, nil
+}
+
+// CreateAndPinDB exclusively creates the 0-byte database file using CREATE_NEW
+// and pins it without FILE_SHARE_DELETE.
+// MUST only be called AFTER ProcessOwnerLease is held (R1-001).
+func (p *NewDBPrep) CreateAndPinDB() (*PinnedDB, error) {
+	targetUTF16, err := windows.UTF16PtrFromString(p.CanonicalDBPath)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create 0-byte file exclusively via CREATE_NEW and pin with no FILE_SHARE_DELETE
 	h, err := windows.CreateFile(
 		targetUTF16,
 		windows.GENERIC_READ|windows.GENERIC_WRITE,
@@ -220,24 +257,47 @@ func PrepareNewDB(parentDir, fileName string) (*PinnedDB, error) {
 		0,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("host: failed to exclusive-create new DB file %q: %w", targetCanon, err)
+		return nil, fmt.Errorf("host: failed to exclusive-create new DB file %q: %w", p.CanonicalDBPath, err)
+	}
+
+	if err := CheckHardlinks(h); err != nil {
+		_ = windows.CloseHandle(h)
+		_ = os.Remove(p.StoreDBPath)
+		return nil, err
 	}
 
 	idInfo, err := GetPhysicalFileIDInfo(h)
 	if err != nil {
 		_ = windows.CloseHandle(h)
-		_ = os.Remove(targetStore)
+		_ = os.Remove(p.StoreDBPath)
 		return nil, fmt.Errorf("host: failed to get new DB file ID info: %w", err)
+	}
+
+	if p.ParentVolume != 0 && idInfo.VolumeSerialNumber != p.ParentVolume {
+		_ = windows.CloseHandle(h)
+		_ = os.Remove(p.StoreDBPath)
+		return nil, fmt.Errorf("%w: new DB volume %x does not match parent volume %x",
+			ErrIdentityMismatch, idInfo.VolumeSerialNumber, p.ParentVolume)
 	}
 
 	return &PinnedDB{
 		Handle:          h,
-		CanonicalDBPath: targetCanon,
-		StoreDBPath:     targetStore,
+		CanonicalDBPath: p.CanonicalDBPath,
+		StoreDBPath:     p.StoreDBPath,
 		PreIDInfo:       *idInfo,
-		ParentVolume:    parentID.VolumeSerialNumber,
+		ParentVolume:    p.ParentVolume,
 		IsNew:           true,
 	}, nil
+}
+
+// PrepareNewDB creates a 0-byte file using CREATE_NEW, pins its handle without FILE_SHARE_DELETE,
+// and validates parent directory volume identity. Kept for convenience / direct test usage.
+func PrepareNewDB(parentDir, fileName string) (*PinnedDB, error) {
+	prep, err := ResolveNewDBPaths(parentDir, fileName)
+	if err != nil {
+		return nil, err
+	}
+	return prep.CreateAndPinDB()
 }
 
 // VerifyPostOpenIdentity opens a validation handle to the database path after Store.Open()
@@ -267,7 +327,6 @@ func (p *PinnedDB) VerifyPostOpenIdentity() error {
 		return fmt.Errorf("host: post-open probe cannot query file ID: %w", err)
 	}
 
-	// Physical identity must match exactly between OS handles
 	if postInfo.VolumeSerialNumber != p.PreIDInfo.VolumeSerialNumber ||
 		!bytes.Equal(postInfo.FileId.Identifier[:], p.PreIDInfo.FileId.Identifier[:]) {
 		return fmt.Errorf("%w: opened DB identity (vol=%x, id=%x) does not match pre-open pinned identity (vol=%x, id=%x)",
@@ -275,7 +334,6 @@ func (p *PinnedDB) VerifyPostOpenIdentity() error {
 			p.PreIDInfo.VolumeSerialNumber, p.PreIDInfo.FileId.Identifier)
 	}
 
-	// For newly created DB, also verify volume matches parent directory volume
 	if p.IsNew && p.ParentVolume != 0 && postInfo.VolumeSerialNumber != p.ParentVolume {
 		return fmt.Errorf("%w: new DB volume %x does not match parent directory volume %x",
 			ErrIdentityMismatch, postInfo.VolumeSerialNumber, p.ParentVolume)
