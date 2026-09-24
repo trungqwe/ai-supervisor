@@ -1,6 +1,6 @@
 # DRAFT ADR-017 — Host Quiescence & Daemon Lifecycle Architecture
 
-> **Status:** `REVISION_5_PENDING_SUPERVISOR_REAUDIT`
+> **Status: PROPOSED / REVISION_6_PENDING_EXTERNAL_AUDIT (Audit: docs/audits/P03_ADR_017_EXTERNAL_REAUDIT_005.md)
 > **Authority:** `docs/24_CHANGE_GOVERNANCE.md` (Level 2 Approved ADR)
 > **Liên quan:** ADR-001, ADR-007, ADR-016 (D8, D9, D11, D12, D13), ADR-016 Addenda, `PROPOSAL-P03-005`.
 > **Phạm vi:** Kiến trúc Host Quiescence, Windows Exclusivity, Daemon Lifecycle và ranh giới Phase P03/P04.

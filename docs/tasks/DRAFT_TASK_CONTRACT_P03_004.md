@@ -96,7 +96,7 @@
   "acceptance_criteria": [
     "AC-004-01: cmd/supervisor implements Windows exclusive sidecar lock file handle (.owner.lock) with share mode 0, failing closed on contention",
     "AC-004-02: Canonical DB path algorithm resolves relative paths, casing, subst, and junctions; rejects hard links (nNumberOfLinks > 1) fail-closed",
-    "AC-004-03: Post-Store.Open identity validation compares volume and file ID against canonical lock key, closing Store and failing closed on mismatch",
+    "AC-004-03: Host holds pinned DB handle (GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE, OPEN_EXISTING, no FILE_SHARE_DELETE) preventing DB deletion/rename during entire Store lifecycle; pre- and post-Store.Open identity and parent volume validations compare volume and 128-bit FileIdInfo against canonical lock key, closing Store and failing closed on any mismatch",
     "AC-004-04: Shutdown drain sequence closes pipe listener, drains callers, closes Store, cleans metadata if instance matches, and closes lock handle LAST",
     "AC-004-05: Named Pipe takeover verifies caller SID via Impersonation and token check, reverts context via RevertToSelf(), and treats owner_instance_id as freshness marker",
     "AC-004-06: Binary readiness probe proves port closed before Run and open after Complete; Pair hold proven via Store/admission guards in harness",
@@ -106,7 +106,7 @@
   "verification_requests": [
     {
       "id": "VR-P03-004-HOST-TESTS",
-      "profile_id": "go-test",
+      "profile_id": "go-test-p03-004",
       "parameters": {
         "package": "./internal/host/...",
         "flags": [
@@ -120,7 +120,7 @@
     },
     {
       "id": "VR-P03-004-CMD-TESTS",
-      "profile_id": "go-test",
+      "profile_id": "go-test-p03-004",
       "parameters": {
         "package": "./cmd/supervisor/...",
         "flags": [
@@ -134,7 +134,7 @@
     },
     {
       "id": "VR-P03-004-INTEGRATION-TESTS",
-      "profile_id": "go-test",
+      "profile_id": "go-test-p03-004",
       "parameters": {
         "package": "./test/integration/...",
         "flags": [
