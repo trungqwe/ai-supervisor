@@ -94,11 +94,11 @@ Contract revision 3 đã RELEASED; implementation 3D EXTERNAL_AUDIT_APPROVED t�
 
 | Requirement / Invariant | Architecture & Design Reference | Acceptance Criteria |
 |---|---|---|
-| Machine-wide Exclusivity | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md#sec-2.3` | `AC-004-01` |
-| Alias Proof & Fail-Closed | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md#sec-6.5` | `AC-004-02` |
-| Host Pinned DB Handle & 4 Invariants | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md#sec-6.4` | `AC-004-03` |
-| Shutdown Drain & Order | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md#sec-8` | `AC-004-04` |
-| Named Pipe Takeover & SID Check | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md#sec-7` | `AC-004-05` |
-| Startup Readiness Probe | `docs/plans/PLAN-HOST-INTEGRATION-DEPENDENCY.md#sec-4` | `AC-004-06` |
-| P03 Integration Harness | `docs/plans/PLAN-HOST-INTEGRATION-DEPENDENCY.md#sec-5` | `AC-004-07` |
-| Zero Effectful HTTP & UNSET Policy | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md#sec-9` | `AC-004-08` |
+| Machine-wide Exclusivity | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md §2.3` | `AC-004-01` |
+| Alias Proof & Fail-Closed | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md §2.3, §4.3` | `AC-004-02` |
+| Host Pinned DB Handle & 4 Invariants | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md §2.3, §4.4` | `AC-004-03` |
+| Shutdown Drain & Order | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md §2.3, §2.6` | `AC-004-04` |
+| Named Pipe Takeover & SID Check | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md §2.3` | `AC-004-05` |
+| Startup Readiness Probe | `docs/plans/PLAN-HOST-INTEGRATION-DEPENDENCY.md §4; docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md §2.6` | `AC-004-06` |
+| P03 Integration Harness | `docs/plans/PLAN-HOST-INTEGRATION-DEPENDENCY.md §5; docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md §4.1` | `AC-004-07` |
+| Zero Effectful HTTP & UNSET Policy | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md §3.1, §4.2, §4.4` | `AC-004-08` |

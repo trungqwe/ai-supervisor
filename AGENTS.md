@@ -98,10 +98,12 @@ This document establishes immutable operational directives for all AI coding age
 > External Supervisor approved and released `CONTRACT-TASK-P03-003D-01` from candidate commit `7701b8b02c68006c4e692a1c8a61609c72a6c033`, blob `604c4786281354565c8e37238f0b5ba95542e4f9`, code base `583e700eb125a08cc6bd7d63b6b27a6f3d4cc527` (`docs/audits/P03_TASK_003D_CONTRACT_RELEASE_AUDIT.md`).
 > Historical 3B release: External Supervisor released CONTRACT-TASK-P03-003B-01 from candidate SHA `ae8deb9ee41479d0e0868dced53ed89135252923`, blob `84bd84535352c2d28dbc1eba820aa8b22382dd99`, with code base SHA `b8b0c95576d87677e8d48210d9838cc2f599752a`.
 
-1. **TASK-P03-003D IMPLEMENTATION GATE**:
-   - `TASK_P03_003C = RELEASED`; implementation `EXTERNAL_AUDIT_APPROVED` tại SHA `3d223e47eb4ba05809b196fc77caca61f94421eb`. `TASK_P03_003D = RELEASED` (contract revision 3); implementation `EXTERNAL_AUDIT_APPROVED` tại SHA `7513f1b9f39fa459be15e0abc836c6258a610d8b` và đã MERGED tại `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea`.
-   - Code baseline cho released contract 3D là merge commit `583e700eb125a08cc6bd7d63b6b27a6f3d4cc527`; release artifact được giao riêng, không đưa governance vào implementation diff.
-   - Host/bootstrap verified principal vẫn là dependency fail-closed; `AUTOMATIC_RESTORE = DISABLED`. Test principal không chứng minh host authentication.
+1. **TASK-P03-004 IMPLEMENTATION GATE**:
+   - `TASK_P03_004 = RELEASED`; `TASK_P03_004_IMPLEMENTATION = IN_PROGRESS`.
+   - Implement only `docs/tasks/TASK_CONTRACT_P03_004.md`, from base SHA `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea` on branch `codex/p03-004`.
+   - Governance and release artifacts stay separate from the implementation diff. Read the release artifact and assigned contract as well as accepted ADR-017 / canonical specs.
+   - Host/bootstrap verified principal remains an OPEN fail-closed dependency at the trusted boundary; `AUTOMATIC_RESTORE = DISABLED`.
+   - Tách bạch 3 track bằng chứng: Library/Mock AO unit tests trong CI; Real Windows binary verification (`cmd/supervisor`) cho two-process lock competition, startup-before-serve admission, và shutdown drain; Live AO proof (nếu có môi trường cô lập).
 
 2. **TASK-P03-003 PARTIAL RELEASE GUARD**:
    - `TASK_P03_003A = RELEASED`.
@@ -141,9 +143,10 @@ This document establishes immutable operational directives for all AI coding age
    - `TASK_P03_003D = RELEASED`
    - `TASK_P03_003D_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED`
    - `TASK_P03_003D_MERGE = MERGED` (merge commit `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea`)
-   - `TASK_P03_004 = CANDIDATE_PREPARED_NOT_RELEASED`
-   - `P03_CODE = HELD_PENDING_TASK_P03_004_CONTRACT_RELEASE`
-   - `ACTIVE_GATE = TASK_P03_004_RELEASE_AUDIT`
+   - `TASK_P03_004 = RELEASED`
+   - `TASK_P03_004_IMPLEMENTATION = IN_PROGRESS`
+   - `P03_CODE = AUTHORIZED_004_ONLY`
+   - `ACTIVE_GATE = TASK_P03_004_IMPLEMENTATION`
    - `HOST_QUIESCENCE_INTEGRATION = CLOSING_VIA_TASK_P03_004`
    - `DESIGN_BLOCKER_3D_STARTUP_WIRING = CLOSING_VIA_TASK_P03_004`
    - `AUTOMATIC_RESTORE = DISABLED`

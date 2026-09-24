@@ -173,11 +173,15 @@ sequenceDiagram
     end
 ```
 
----
+## 2.3 ADR-016 addendum: restore và dispatch safety
 
-# 3. Adapter Boundaries & Integration Realism
+Pair restore dùng v4 durable authorization/operation. Tx A consume one-shot authorization và commit RESTORE_REQUESTED/audit trước AO effect; không network trong SQLite transaction; chỉ trusted host principal enable restore. Admission chặn mọi open attempt, SEND_REQUESTED/resolution NULL và current_attempt bất nhất; closed historical DISPATCH_BOUND/SEND_CONFIRMED sạch không khóa mãi. Tx B HTTP 200 valid xác nhận cùng WorkerSession; ambiguous outcome giữ Pair lock/quarantine, không retry. Bound snapshot bất biến. Unknown send ghi DELIVERY_OUTCOME_UNKNOWN terminal cho dispatch operation; D6 clearance tách biệt, theo từng lineage. Pre-send protocol hold không bị timeout/GET tự hạ. Xem ADR-016 addendum §§2–8.
 
-### 2.5 Host Quiescence và Daemon Lifecycle (ADR-017)
+## 2.4 Execution budget và trusted maintenance (ADR-016 addendum)
+
+`dispatch_operations.confirmed_at` là origin của **send-confirmation-based execution budget**, không là actual execution start. Tx xác nhận `/send` HTTP 200 ghi cùng lúc `SEND_CONFIRMED`, budget/deadline/policy bất biến và audit; schema v5 thuộc Supervisor Store. Startup `Run` chỉ phân loại, không phát timeout effect. Runtime monitor sau startup dùng shared host admission và stop coordinator 3C: Tx R tái sử dụng `ReserveStopOperation` để commit intent, hai quarantine và audit nguyên tử; chỉ caller thắng còn permit sống được `/kill` một lần. GET mới không bảo đảm AO đứng yên đến effect. Nếu caller bỏ quyền, giữ `STOP_REQUESTED/IN_FLIGHT`, attempt mở và quarantine; startup sau exclusive drain/join hoặc human reconciliation phân loại, không replay. Legacy thiếu budget giữ normal admission/serve đóng; trusted maintenance scope độc quyền dùng authority riêng cho historical binding hoặc manual stop của exact open `RUNNING`, không ép `DISPATCHED` sang `RUNNING`; release maintenance không mở admission, phải Run lại. Xem [addendum execution budget](adr/ADR-016-ADDENDUM-send-confirmation-execution-budget.md) §§3–6. Contract Revision 3 đã RELEASED; implementation 3D EXTERNAL_AUDIT_APPROVED tại `7513f1b9f39fa459be15e0abc836c6258a610d8b`, findings `3D-R1-001..005` và `3D-R2-001..002` đã CLOSED ở library scope, code đã MERGED tại `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea`. Dependency host quiescence/principal và startup wiring tiếp tục là handoff dependency runtime (`HOST_QUIESCENCE_INTEGRATION=OPEN`, `DESIGN_BLOCKER_3D_STARTUP_WIRING=PRESERVED`, `AUTOMATIC_RESTORE=DISABLED`).
+
+## 2.5 Host Quiescence và Daemon Lifecycle (ADR-017)
 
 ADR-017 (Accepted) thiết lập kiến trúc host bootstrap và quản lý vòng đời daemon trên Windows:
 - **ProcessOwnerLease**: Khóa độc quyền toàn máy sử dụng Windows Exclusive Sidecar Lock File Handle (`<canonical_db_path>.owner.lock`, share mode 0, `OPEN_ALWAYS`, không kế thừa handle) nắm giữ liên tục từ trước khi mở DB đến sau shutdown drain.
@@ -187,6 +191,10 @@ ADR-017 (Accepted) thiết lập kiến trúc host bootstrap và quản lý vòn
   2. *DB Mới*: Chuẩn hóa thư mục cha -> acquire lock -> tạo file bằng Win32 `CREATE_NEW` và pin trước `store.Open` -> gọi `store.Open` khởi tạo file 0-byte -> kiểm tra volume cha.
 - **Ranh Giới Tích Hợp Store & 4 Invariants**: Host chuyển đổi `\\?\<Drive>:\...` thành `<Drive>:\...` khi đã chứng minh local DOS volume (UNC/device fail-closed); gọi `store.Open` thực tế; thay thế việc đọc `PRAGMA database_list` bằng 4 Invariants.
 - **Takeover Hợp Tác & Shutdown**: Named Pipe xác thực caller token SID; shutdown đóng listener -> drain -> `Store.Close()` -> đóng `hPinnedDB` -> đóng lock cuối cùng.
+
+---
+
+# 3. Adapter Boundaries & Integration Realism
 
 ## 3.1 AOAdapter Boundary
 All execution interactions flow strictly through `AOAdapter`. The adapter encapsulates:
@@ -217,12 +225,3 @@ Detailed HTTP mappings reside in `docs/sources/UPSTREAM_CONTRACT_BASELINE.md` an
 > 3. **AO internal database is NOT an integration API**: We never read or write directly to AO SQLite stores.
 > 4. **Code truth belongs exclusively to Git**: Commit SHAs, diffs, and worktree states are authoritative.
 5. **Trusted Verification Runner Boundary**: ChatGPT is never granted arbitrary shell or command execution primitives. Supervisor independent test verification runs exclusively through a constrained, allowlisted verification runner executing host-owned verification profiles (`verification_requests` per ADR-013) within execution isolation boundaries, capturing exit codes and outputs as independent evidence.
-
-
-## 2.3 ADR-016 addendum: restore và dispatch safety
-
-Pair restore dùng v4 durable authorization/operation. Tx A consume one-shot authorization và commit RESTORE_REQUESTED/audit trước AO effect; không network trong SQLite transaction; chỉ trusted host principal enable restore. Admission chặn mọi open attempt, SEND_REQUESTED/resolution NULL và current_attempt bất nhất; closed historical DISPATCH_BOUND/SEND_CONFIRMED sạch không khóa mãi. Tx B HTTP 200 valid xác nhận cùng WorkerSession; ambiguous outcome giữ Pair lock/quarantine, không retry. Bound snapshot bất biến. Unknown send ghi DELIVERY_OUTCOME_UNKNOWN terminal cho dispatch operation; D6 clearance tách biệt, theo từng lineage. Pre-send protocol hold không bị timeout/GET tự hạ. Xem ADR-016 addendum §§2–8.
-
-## 2.4 Execution budget và trusted maintenance (ADR-016 addendum)
-
-`dispatch_operations.confirmed_at` là origin của **send-confirmation-based execution budget**, không là actual execution start. Tx xác nhận `/send` HTTP 200 ghi cùng lúc `SEND_CONFIRMED`, budget/deadline/policy bất biến và audit; schema v5 thuộc Supervisor Store. Startup `Run` chỉ phân loại, không phát timeout effect. Runtime monitor sau startup dùng shared host admission và stop coordinator 3C: Tx R tái sử dụng `ReserveStopOperation` để commit intent, hai quarantine và audit nguyên tử; chỉ caller thắng còn permit sống được `/kill` một lần. GET mới không bảo đảm AO đứng yên đến effect. Nếu caller bỏ quyền, giữ `STOP_REQUESTED/IN_FLIGHT`, attempt mở và quarantine; startup sau exclusive drain/join hoặc human reconciliation phân loại, không replay. Legacy thiếu budget giữ normal admission/serve đóng; trusted maintenance scope độc quyền dùng authority riêng cho historical binding hoặc manual stop của exact open `RUNNING`, không ép `DISPATCHED` sang `RUNNING`; release maintenance không mở admission, phải Run lại. Xem [addendum execution budget](adr/ADR-016-ADDENDUM-send-confirmation-execution-budget.md) §§3–6. Contract Revision 3 đã RELEASED; implementation 3D EXTERNAL_AUDIT_APPROVED tại `7513f1b9f39fa459be15e0abc836c6258a610d8b`, findings `3D-R1-001..005` và `3D-R2-001..002` đã CLOSED ở library scope, code đã MERGED tại `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea`. Dependency host quiescence/principal và startup wiring tiếp tục là handoff dependency runtime (`HOST_QUIESCENCE_INTEGRATION=OPEN`, `DESIGN_BLOCKER_3D_STARTUP_WIRING=PRESERVED`, `AUTOMATIC_RESTORE=DISABLED`).

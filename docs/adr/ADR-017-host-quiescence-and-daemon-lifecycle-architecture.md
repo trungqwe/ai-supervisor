@@ -1,4 +1,4 @@
-# DRAFT ADR-017 — Host Quiescence & Daemon Lifecycle Architecture
+# ADR-017 — Host Quiescence & Daemon Lifecycle Architecture
 
 > **Status: ACCEPTED (Audited SHA: 583f0db545fcf2a902305f811c22d9dd116e9728, Decision: docs/audits/P03_ADR_017_EXTERNAL_APPROVAL_DECISION.md)
 > **Authority:** `docs/24_CHANGE_GOVERNANCE.md` (Level 2 Approved ADR)
