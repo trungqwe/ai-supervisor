@@ -3,7 +3,7 @@
 > **Authority**: External Supervisor Governance Directive
 > **Active Gate**: `TASK_P03_003D_HANDOFF_VERIFICATION`
 > **Phạm vi tài liệu**: Kế hoạch kiến trúc và quản trị cho các dependency runtime còn thiếu sau khi merge TASK-P03-003D
-> **Status**: REVISED_FOR_SUPERVISOR_REAUDIT (Revision 6)
+> **Status**: REVISED_FOR_SUPERVISOR_REAUDIT (Revision 7)
 
 ---
 
@@ -28,7 +28,7 @@ Tuy nhiên, đối chiếu với `docs/17_ROADMAP.md` và `docs/22_MODULE_PROVEN
 
 ### 2.1. Phân tách `ProcessOwnerLease` Dài hạn vs `ExclusiveScope` Ngắn hạn
 1. **`ProcessOwnerLease` (Dài hạn, cấp Host Process)**:
-   - Phạm vi: Cấp độ toàn bộ database (gắn với canonical DB path trên Windows).
+   - Phạm vi: Cấp độ toàn bộ database (gắn với canonical lock key trên Windows).
    - Vòng đời: Giữ độc quyền từ **TRƯỚC** khi gọi `Store.Open()` hoặc chạy migration, xuyên suốt quá trình daemon chạy và phục vụ, cho đến **SAU** khi shutdown drain hoàn tất và `Store.Close()` đã đóng kết nối database.
    - Mục đích: Bảo đảm tại một thời điểm trên toàn bộ máy Windows chỉ có DUY NHẤT một tiến trình daemon sở hữu database (Single Active Daemon).
 2. **`ExclusiveScope` (Ngắn hạn, cấp Recovery Scan)**:
@@ -66,7 +66,7 @@ Cần phân biệt rõ ràng hai khái niệm trực giao:
    - **Việc terminate process hoặc đóng local socket hoàn toàn KHÔNG chứng minh AO chưa nhận effect**.
    - **Nguyên tắc Xử lý**: Mọi intent mơ hồ (`STOP_REQUESTED`, `SEND_REQUESTED`, `RESTORE_REQUESTED`) phải được duy trì **fail-closed**, không bao giờ được replay mù quáng. Scanner và poller phải đối soát (reconcile) qua fresh GET / observation, hoặc nếu target đã terminated / generation mismatch thì ghi nhận governed logical resolution audit (`STOP_OPERATION_RESOLVED`), hoặc giữ nguyên quarantine và escalate cho human reconciliation.
 
-### 3.2. Hợp Đồng `CreateFileW` & Thuật toán Canonical DB Duy Nhất
+### 3.2. Hợp Đồng `CreateFileW`, Phân Biệt Lock Key vs File Identity & Post-Open Verification
 1. **Hợp Đồng `CreateFileW` Cho `.owner.lock`**:
    - `dwDesiredAccess = GENERIC_READ | GENERIC_WRITE` (nonzero, xung đột trực tiếp giữa các contender).
    - `dwShareMode = 0` (exclusive, cấm share đọc/ghi/xóa).
@@ -74,12 +74,13 @@ Cần phân biệt rõ ràng hai khái niệm trực giao:
    - `dwFlagsAndAttributes = FILE_ATTRIBUTE_NORMAL`.
    - `bInheritHandle = FALSE` (cấm process con kế thừa handle).
    - Mọi lỗi acquire đều fail-closed.
-2. **Thuật toán Canonical Path Trước `Store.Open()`**:
-   - Nếu DB đã có: Mở handle DB file, kiểm tra `nNumberOfLinks == 1` (cấm hard links fail-closed `ERR_HARDLINK_ALIAS_UNSUPPORTED`), gọi `GetFinalPathNameByHandleW(VOLUME_NAME_DOS)`.
-   - Nếu DB mới: Mở handle thư mục cha với `FILE_FLAG_BACKUP_SEMANTICS`, gọi `GetFinalPathNameByHandleW`, ghép base name chuẩn hóa.
-   - Chỉ hỗ trợ NTFS/ReFS cục bộ (cấm network/SMB shares). Alias không chứng minh được thì **fail-closed**.
-3. **Đối Chiếu DB File Identity Sau `Store.Open()`**:
-   - Sau `Store.Open()`, mở handle tới file DB SQLite vừa mở, đối chiếu canonical identity với canonical lock key. Mismatch lập tức `Store.Close()` và fail-closed.
+2. **Phân Biệt Lock Key vs File Identity & Thuật Toán Đối Chiếu**:
+   - Canonical Lock Key: `<canonical_db_path>.owner.lock`.
+   - Physical File Identity: VolumeSerialNumber + 128-bit FileId (via `FILE_ID_INFO` trên ReFS/NTFS).
+   - Pre-Open: Kiểm tra `nNumberOfLinks == 1` (cấm hard links `ERR_HARDLINK_ALIAS_UNSUPPORTED`), lấy canonical path qua `GetFinalPathNameByHandleW(VOLUME_NAME_DOS)`.
+   - Post-Open: Mở handle tới DB file SQLite vừa mở, đối chiếu VolumeSerialNumber + FileId128 với pre-open identity. Mismatch lập tức `Store.Close()` và fail-closed.
+3. **Ma Trận Kiểm Chứng Hai Tiến Trình Cho Alias**:
+   - Không võ đoán subst/junction/casing tự động hội tụ; đưa vào test probe 2 tiến trình: Contender B mở alias phải nhận `ERROR_SHARING_VIOLATION` (32) từ kernel.
 4. **Bảo Mật Metadata `.owner.json`**:
    - Ghi atomically qua file tạm `.owner.json.tmp` và rename (`MoveFileExW`).
    - Chứa `pid`, `owner_instance_id` (UUIDv4), `pipe_name`, `started_at`, `canonical_db_path`.
@@ -108,7 +109,7 @@ sequenceDiagram
 
     rect rgb(255, 240, 240)
     Note over Host,Store: BƯỚC 1: Canonicalize Path, Acquire Lock & Verify Post-Open
-    Host->>Host: GetFinalPathNameByHandleW (Verify no hardlinks)
+    Host->>Host: GetFinalPathNameByHandleW & FileIdInfo (Verify no hardlinks)
     Host->>Lock: CreateFileW (.owner.lock, GENERIC_READ|WRITE, dwShareMode=0, OPEN_ALWAYS)
     Note over Lock: Machine-wide exclusive lock ACQUIRED
     Host->>Host: Atomic write metadata vào .owner.json (pid, instance_id, pipe)
@@ -178,17 +179,17 @@ sequenceDiagram
 | **5. Cạnh tranh 2 Process** | Process B mở `.owner.lock` nhận `ERROR_SHARING_VIOLATION` (32); cooperative takeover an toàn. | Process A drain và exit; Process B tiếp quản; nếu A không thoát thì B fail-closed. |
 | **6. Shutdown Drain** | Nhận SIGINT: đóng pipe listener -> poller drain -> timeout permits drain -> Store.Close() -> dọn metadata -> đóng lock handle cuối cùng. | Probe socket đóng ngay; verify mọi in-flight connection hoàn tất trước khi DB đóng. |
 
-### 5.3. Ma trận Kiểm chứng Canonical DB Identity, Alias & Cross-Session Competition
+### 5.3. Ma trận Kiểm Chứng Hai Tiến Trình Cho Alias & Cross-Session Competition
 
-| Kịch bản Thử nghiệm | Đường dẫn / Môi trường Thử nghiệm | Kết quả Kỳ vọng |
+| Kịch bản Thử nghiệm | Đường dẫn / Môi trường Thử nghiệm | Phương Pháp Probe Thực Tế & Kết quả Kỳ vọng |
 |---|---|---|
 | **Exact Flags Contender** | Process A & B cùng mở `.owner.lock` với `GENERIC_READ\|GENERIC_WRITE`, `dwShareMode=0`, `OPEN_ALWAYS` | Process B nhận ngay `ERROR_SHARING_VIOLATION` (32) từ Windows kernel |
 | **Cross-Session Competition** | Session 0 (Service) vs Session 1 (Interactive) cùng mở `.owner.lock` | Process thứ hai nhận ngay `ERROR_SHARING_VIOLATION` (32) xuyên session |
-| **Relative Path** | `.\data\db.sqlite` vs `data\..\data\db.sqlite` | Quy về cùng một canonical lock path `\\?\<Drive>:\...\data\db.sqlite.owner.lock` |
-| **Case Differences** | `D:\data\db.sqlite` vs `d:\DATA\DB.SQLITE` | Quy về cùng một canonical lock path (case-folded khớp tên đĩa vật lý) |
-| **Subst Drive** | `X:\db.sqlite` (với `subst X: D:\data`) | Kernel resolve về đường dẫn thực `\\?\D:\data\db.sqlite.owner.lock` |
-| **Directory Junction / Symlink** | `D:\junction\db.sqlite` -> `D:\real\db.sqlite` | `GetFinalPathNameByHandleW` resolve về `\\?\D:\real\db.sqlite.owner.lock` |
-| **DB Mới (Chưa tồn tại)** | File chưa có trên đĩa | Resolve canonical parent directory + lowercase base name |
+| **Relative Path Probe** | `.\data\db.sqlite` vs `data\..\data\db.sqlite` | Probe xác nhận hai tiến trình tranh chấp cùng một canonical lock path |
+| **Case Differences Probe** | `D:\data\db.sqlite` vs `d:\DATA\DB.SQLITE` | Probe xác nhận hai tiến trình quy về cùng volume + file ID và lock path |
+| **Subst Drive Probe** | `X:\db.sqlite` (với `subst X: D:\data`) vs `D:\data\db.sqlite` | Probe kernel handle resolve về cùng volume + file ID; process 2 nhận violation |
+| **Directory Junction Probe** | `D:\junction\db.sqlite` -> `D:\real\db.sqlite` | Probe `GetFinalPathNameByHandleW` resolve về cùng physical identity |
+| **DB Mới (Chưa tồn tại)** | File chưa có trên đĩa | Pre-open parent dir volume check; post-open verify volume + file ID match lock key |
 | **Post-Open Identity Check** | Handle file DB sau `Store.Open()` đối chiếu canonical lock key | Khớp -> Tiếp tục; Mismatch -> `Store.Close()` & FAIL-CLOSED |
 | **Hard Link Detection** | File có `nNumberOfLinks > 1` | Bị từ chối ngay lập tức: **FAIL-CLOSED** (`ERR_HARDLINK_ALIAS_UNSUPPORTED`) |
 

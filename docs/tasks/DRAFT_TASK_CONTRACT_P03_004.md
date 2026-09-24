@@ -1,10 +1,13 @@
 # DRAFT TASK CONTRACT: TASK-P03-004
 
-> **Contract Identifier**: `DRAFT-CONTRACT-TASK-P03-004-01`
+> **Contract ID**: `DRAFT-CONTRACT-TASK-P03-004-01`
 > **Task ID**: `TASK-P03-004` (Host Quiescence & Daemon Bootstrap Integration)
+> **Revision Number**: `1`
+> **Supersedes Contract ID**: `null`
 > **Phase ID**: `P03`
-> **Status**: `DRAFT_PENDING_SUPERVISOR_AUDIT / NOT_RELEASED`
-> **Authority**: Formulated pursuant to proposed `DRAFT-ADR-017` (Revision 4), `PROPOSAL-P03-005` (Revision 4), and `PLAN-HOST-INTEGRATION-DEPENDENCY.md` (Revision 6).
+> **Base SHA**: `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea`
+> **Status**: `DRAFT_NOT_RELEASED`
+> **Authority**: Formulated pursuant to proposed `DRAFT-ADR-017` (Revision 5), `PROPOSAL-P03-005` (Revision 5), and `PLAN-HOST-INTEGRATION-DEPENDENCY.md` (Revision 7).
 
 ---
 
@@ -14,45 +17,157 @@
 > It does **NOT** authorize production code execution.
 > Production coding remains strictly **`HELD_PENDING_TASK_CONTRACT_RELEASE`** (`TASK_P03_004 = NOT_RELEASED`).
 > Do **NOT** modify canonical roadmap or accepted ADRs as if accepted.
+> Tách bạch hoàn toàn kiểm chứng: Mock AO test chạy tự động trong CI/harness không được suy diễn thành bằng chứng host principal thật.
 
----
+## 1. Authoritative Canonical TaskContract JSON Object
 
-## 1. Task Objective
-
-Triển khai daemon bootstrap nhị phân (`cmd/supervisor`), bộ quản lý độc quyền máy Windows (`ProcessOwnerLease` qua Windows Exclusive Sidecar Lock File Handle), cơ chế startup-before-serve và integration test harness kiểm chứng exit gate Phase P03 mà không phụ thuộc vào Phase P04 hoặc Phase P05.
-
----
-
-## 2. Allowed Scope (Khi Được Phê Duyệt Release)
-
-Chỉ các file và thư mục sau được phép tạo hoặc chỉnh sửa khi contract được chính thức release:
-- `cmd/supervisor/main.go`
-- `cmd/supervisor/`
-- `internal/host/` (chứa implementation của `HostQuiescence`, Windows lock handle, và Named Pipe cooperative takeover)
-- `test/integration/p03_exit_gate_test.go`
-- `test/integration/`
-
----
-
-## 3. Forbidden Scope (Bất Biến)
-
-Tuyệt đối cấm tạo hoặc sửa đổi các file và thư mục sau:
-- Mọi file thuộc Phase P04 (`internal/evidence/`, `internal/review/`, v.v.).
-- Mọi tool thuộc Phase P05 (`internal/tools/`, bộ 12 domain tools).
-- Các accepted ADRs (`docs/adr/ADR-001.md` đến `ADR-016.md`).
-- `docs/17_ROADMAP.md` (chỉ cập nhật sau khi ADR-017 và Task Contract được External Supervisor formally accepted).
-- Tuyệt đối không thêm Pair HTTP routes hay effectful Supervisor API (create session, dispatch, workspace read, stop) vào daemon listener P03.
-- Tuyệt đối không cấp arbitrary shell execution.
-
----
-
-## 4. Acceptance Criteria (AC1..AC8)
-
-- **AC1 (Windows Exclusive Sidecar Lock Contract)**: Mở `<canonical_db_path>.owner.lock` bằng `CreateFileW` với `GENERIC_READ | GENERIC_WRITE`, `dwShareMode = 0`, `OPEN_ALWAYS`, `FILE_ATTRIBUTE_NORMAL`, `bInheritHandle = FALSE`. Mọi lỗi acquire đều fail-closed.
-- **AC2 (Canonical DB Algorithm & Post-Open Verification)**: Tính canonical path trước `Store.Open()` bằng `GetFinalPathNameByHandleW(VOLUME_NAME_DOS)` (trên DB handle nếu đã tồn tại, hoặc trên parent dir handle với `FILE_FLAG_BACKUP_SEMANTICS` nếu DB mới). Hard links (`nNumberOfLinks > 1`) bị từ chối fail-closed (`ERR_HARDLINK_ALIAS_UNSUPPORTED`). Sau `Store.Open()`, đối chiếu DB file identity thực tế với canonical lock key; nếu mismatch lập tức `Store.Close()` và fail-closed.
-- **AC3 (Shutdown Lifecycle & Metadata Cleanup)**: Thứ tự dừng: đóng Named Pipe listener -> drain callers -> `Store.Close()` -> xóa `.owner.json` (chỉ khi `owner_instance_id` khớp với owner hiện tại) -> đóng handle `.owner.lock` **CUỐI CÙNG**. Không xóa metadata sau khi release lock. Owner mới sau crash được phép ghi đè atomically metadata stale sau khi acquire lock.
-- **AC4 (Named Pipe Authentication & Revert Context)**: Named Pipe takeover xác thực caller SID qua `ImpersonateNamedPipeClient` và token check, kiểm tra lỗi và bắt buộc gọi `RevertToSelf()`. `owner_instance_id` chỉ là freshness marker. Request không hợp lệ bị từ chối và không làm owner shutdown.
-- **AC5 (Binary Readiness Probe)**: Readiness probe trên `cmd/supervisor` chứng minh socket đóng trước Run và mở (200 OK) sau Run Complete (`r.ready == true`).
-- **AC6 (P03 Integration Test Harness Exit Gate)**: Kiểm chứng trọn vẹn 5 bước AO (session create, dispatch, observation reconciliation, raw workspace file read, teardown) và chứng minh Pair hold chặn admission khi `PendingAO == true` bằng cách gọi trực tiếp các API điều phối nội bộ của thư viện Go Supervisor (`internal/dispatch`, `internal/store`, `internal/stop`, `internal/ao`, `internal/recovery`).
-- **AC7 (Quiescence Separation & No Replay)**: `ExclusiveScope` của `Runner.Run(ctx)` là ngắn hạn; in-flight ambiguous wire effects trước crash giữ nguyên fail-closed, không replay; `AUTOMATIC_RESTORE = DISABLED`.
-- **AC8 (Fail-Closed Operational Policies)**: 8 operational policies giữ nguyên `UNSET` trong tài liệu; runtime fail-closed khi khởi động nếu thiếu bất kỳ giá trị nào.
+```json
+{
+  "contract_id": "CONTRACT-TASK-P03-004-01",
+  "task_id": "TASK-P03-004",
+  "revision_number": 1,
+  "supersedes_contract_id": null,
+  "phase_id": "P03",
+  "objective": "Implement host bootstrap daemon, Windows machine-wide exclusivity via exclusive sidecar lock file handle, startup-before-serve admission control, DB post-open identity validation, graceful shutdown drain, and P03 integration test harness verifying 5 AO exit gate steps without Phase P04/P05 dependencies.",
+  "requirements": [
+    "FR-004",
+    "FR-005",
+    "NFR-003",
+    "NFR-004",
+    "OPS-001",
+    "SEC-001",
+    "SEC-003"
+  ],
+  "architecture_refs": [
+    "docs/adr/DRAFT-ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md",
+    "docs/proposals/PROPOSAL-P03-005-host-quiescence-and-daemon-bootstrap-integration.md",
+    "docs/plans/PLAN-HOST-INTEGRATION-DEPENDENCY.md",
+    "docs/04_ARCHITECTURE.md",
+    "docs/05_DOMAIN_MODEL.md",
+    "docs/08_TASK_CONTRACT.md",
+    "docs/11_CHATGPT_TOOL_SURFACE.md",
+    "docs/14_FAILURE_RECOVERY.md",
+    "docs/21_TRACEABILITY_MATRIX.md",
+    "docs/22_MODULE_PROVENANCE.md"
+  ],
+  "base_sha": "35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea",
+  "allowed_scope": [
+    "cmd/supervisor/**",
+    "internal/host/**",
+    "test/integration/**"
+  ],
+  "forbidden_scope": [
+    "internal/ao/**",
+    "internal/dispatch/**",
+    "internal/domain/**",
+    "internal/recovery/**",
+    "internal/stop/**",
+    "internal/store/**",
+    "internal/evidence/**",
+    "internal/review/**",
+    "internal/tools/**",
+    "docs/adr/**",
+    "docs/proposals/**",
+    "docs/02_REQUIREMENTS.md",
+    "docs/04_ARCHITECTURE.md",
+    "docs/05_DOMAIN_MODEL.md",
+    "docs/06_WORKFLOW_STATE_MACHINE.md",
+    "docs/08_TASK_CONTRACT.md",
+    "docs/11_CHATGPT_TOOL_SURFACE.md",
+    "docs/12_UPSTREAM_INTEGRATION.md",
+    "docs/14_FAILURE_RECOVERY.md",
+    "docs/17_ROADMAP.md",
+    "docs/18_CURRENT_STATE.md",
+    "docs/21_TRACEABILITY_MATRIX.md",
+    "docs/22_MODULE_PROVENANCE.md",
+    "docs/phases/**",
+    "AGENTS.md"
+  ],
+  "constraints": [
+    "Exclusive sidecar lock handle contract on Windows: CreateFileW on <canonical_db_path>.owner.lock with GENERIC_READ|GENERIC_WRITE, dwShareMode=0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, bInheritHandle=FALSE",
+    "Canonical DB path via GetFinalPathNameByHandleW(VOLUME_NAME_DOS); hard links (nNumberOfLinks > 1) rejected fail-closed with ERR_HARDLINK_ALIAS_UNSUPPORTED",
+    "Post-Store.Open identity validation: verify VolumeSerialNumber and FileId of opened DB matches pre-open canonical key; mismatch triggers immediate Store.Close() and fail-closed",
+    "Shutdown order: close Named Pipe listener -> drain callers -> Store.Close() -> remove .owner.json ONLY IF owner_instance_id matches -> CloseHandle(.owner.lock) LAST",
+    "Named Pipe security: authenticate caller SID via ImpersonateNamedPipeClient and token check, verify return errors, revert context via RevertToSelf(); owner_instance_id is strictly a freshness marker",
+    "Binary readiness probe on cmd/supervisor proves socket refused before Run, and 200 OK only after Run Complete; zero Pair HTTP routes or effectful Supervisor API on daemon listener",
+    "Pair hold and 5 AO exit gate steps proven via P03 Integration Test Harness directly invoking approved library APIs without P04/P05 dependencies",
+    "All 8 operational policies remain UNSET in documentation, failing closed at runtime if missing; AUTOMATIC_RESTORE remains DISABLED"
+  ],
+  "acceptance_criteria": [
+    "AC-004-01: cmd/supervisor implements Windows exclusive sidecar lock file handle (.owner.lock) with share mode 0, failing closed on contention",
+    "AC-004-02: Canonical DB path algorithm resolves relative paths, casing, subst, and junctions; rejects hard links (nNumberOfLinks > 1) fail-closed",
+    "AC-004-03: Post-Store.Open identity validation compares volume and file ID against canonical lock key, closing Store and failing closed on mismatch",
+    "AC-004-04: Shutdown drain sequence closes pipe listener, drains callers, closes Store, cleans metadata if instance matches, and closes lock handle LAST",
+    "AC-004-05: Named Pipe takeover verifies caller SID via Impersonation and token check, reverts context via RevertToSelf(), and treats owner_instance_id as freshness marker",
+    "AC-004-06: Binary readiness probe proves port closed before Run and open after Complete; Pair hold proven via Store/admission guards in harness",
+    "AC-004-07: P03 Integration Test Harness verifies 5 AO exit gate steps (session create, dispatch, observation reconciliation, raw file read, teardown) via internal library APIs",
+    "AC-004-08: Zero effectful HTTP routes on daemon; 8 policies remain UNSET and fail closed; AUTOMATIC_RESTORE remains DISABLED; test suite passes with -race"
+  ],
+  "verification_requests": [
+    {
+      "id": "VR-P03-004-HOST-TESTS",
+      "profile_id": "go-test",
+      "parameters": {
+        "package": "./internal/host/...",
+        "flags": [
+          "-v",
+          "-race",
+          "-count=1"
+        ]
+      },
+      "cwd": ".",
+      "timeout_seconds": 300
+    },
+    {
+      "id": "VR-P03-004-CMD-TESTS",
+      "profile_id": "go-test",
+      "parameters": {
+        "package": "./cmd/supervisor/...",
+        "flags": [
+          "-v",
+          "-race",
+          "-count=1"
+        ]
+      },
+      "cwd": ".",
+      "timeout_seconds": 300
+    },
+    {
+      "id": "VR-P03-004-INTEGRATION-TESTS",
+      "profile_id": "go-test",
+      "parameters": {
+        "package": "./test/integration/...",
+        "flags": [
+          "-v",
+          "-race",
+          "-count=1"
+        ]
+      },
+      "cwd": ".",
+      "timeout_seconds": 300
+    }
+  ],
+  "required_evidence": [
+    "git_diff",
+    "git_diff_check",
+    "test_exit_code_zero",
+    "race_detector_zero_warnings",
+    "windows_cross_session_lock_evidence",
+    "startup_before_serve_probe_evidence",
+    "shutdown_drain_cleanup_evidence",
+    "db_identity_post_open_match_evidence",
+    "pair_hold_admission_guard_evidence",
+    "ao_integration_harness_pass_evidence"
+  ],
+  "worker_profile": "antigravity-standard",
+  "report_contract": "docs/schemas/worker-report.schema.json",
+  "stop_conditions": [
+    "Attempting to modify files outside allowed_scope or touching forbidden_scope",
+    "Windows filesystem fails to support mandatory exclusive file locking or GetFinalPathNameByHandleW",
+    "Hard link alias detected on database file (nNumberOfLinks > 1)",
+    "Post-Store.Open DB file identity does not match canonical lock key",
+    "Attempting to introduce effectful HTTP routes, arbitrary shell execution, or automatic restore into P03",
+    "Operational policies assigned default fallback values instead of failing closed when UNSET"
+  ]
+}
+```

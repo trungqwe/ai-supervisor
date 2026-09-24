@@ -1,6 +1,6 @@
 # PROPOSAL-P03-005 — Host Quiescence & Daemon Bootstrap Integration (TASK-P03-004)
 
-> **Status:** `PROPOSED_FOR_SUPERVISOR_REAUDIT` (Revision 4)
+> **Status:** `PROPOSED_FOR_SUPERVISOR_REAUDIT` (Revision 5)
 > **Authority:** `docs/24_CHANGE_GOVERNANCE.md` (Level 3 Canonical Architecture / Level 5 Roadmap Alignment)
 > **Active Gate:** `TASK_P03_003D_HANDOFF_VERIFICATION`
 > **Proposed Phase Allocation:** Phase P03 subtask `TASK-P03-004`
@@ -47,10 +47,10 @@
      * `stop.TimeoutAdmission`: `AcquireEffect(ctx context.Context, pairID string, purpose string) (TimeoutPermit, error)` (tham số thứ ba là `purpose string`, ví dụ `"TIMEOUT_MONITOR"`).
    - Đóng admission, drain/join, cấp exclusive ownership và release permit theo cùng một authority duy nhất.
 
-4. **Hợp Đồng `CreateFileW` Chuẩn & Thuật toán Canonical DB**:
-   - Mở `<canonical_db_path>.owner.lock` bằng `CreateFileW` với `GENERIC_READ | GENERIC_WRITE`, `dwShareMode = 0`, `OPEN_ALWAYS`, `FILE_ATTRIBUTE_NORMAL`, `bInheritHandle = FALSE`. Mọi lỗi acquire đều fail-closed.
-   - Thuật toán canonical path dùng `GetFinalPathNameByHandleW(VOLUME_NAME_DOS)` trên DB handle hoặc parent directory handle; kiểm tra `nNumberOfLinks == 1` (hard links bị cấm fail-closed `ERR_HARDLINK_ALIAS_UNSUPPORTED`).
-   - **Post-Open Validation**: Sau `Store.Open()`, đối chiếu DB file identity thực tế với canonical lock key; mismatch lập tức `Store.Close()` và fail-closed.
+4. **Phân Biệt Lock Key vs File Identity & Hợp Đồng CreateFileW**:
+   - Phân biệt Canonical Lock Key (`<canonical_db_path>.owner.lock`) với Physical File Identity (VolumeSerialNumber + FileId128 via `FILE_ID_INFO` trên ReFS / NTFS).
+   - Mở lock file bằng `CreateFileW` với `GENERIC_READ | GENERIC_WRITE`, `dwShareMode = 0`, `OPEN_ALWAYS`, `bInheritHandle = FALSE`.
+   - Đối chiếu identity trước và sau `Store.Open()`: mismatch lập tức `Store.Close()` và fail-closed. Cấm hard links (`nNumberOfLinks > 1`). Đưa subst/junction/casing vào ma trận probe hai tiến trình.
 
 5. **Shutdown Drain, Dọn Metadata & Xác Thực Named Pipe Takeover**:
    - Thứ tự dừng: đóng Named Pipe listener -> drain callers -> `Store.Close()` -> dọn `.owner.json` (chỉ khi `owner_instance_id` khớp) -> đóng lock handle `.owner.lock` **CUỐI CÙNG**.
