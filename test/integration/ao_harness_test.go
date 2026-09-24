@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -363,7 +364,11 @@ func TestP03IntegrationHarness5StepsViaLibrarySaga(t *testing.T) {
 	}
 
 	// Step 4: Workspace File Retrieval (raw workspace transport)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+fmt.Sprintf("/api/v1/sessions/%s/workspace/file?path=%s", sessionID, reportPath), nil)
+	// Reads and inspects raw report bytes (R1-005)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+fmt.Sprintf("/api/v1/sessions/%s/workspace/file?path=%s", sessionID, reportPath), nil)
+	if err != nil {
+		t.Fatalf("Step 4 create request failed: %v", err)
+	}
 	resp, err := ts.Client().Do(req)
 	if err != nil {
 		t.Fatalf("Step 4 workspace read failed: %v", err)
@@ -371,6 +376,26 @@ func TestP03IntegrationHarness5StepsViaLibrarySaga(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected HTTP 200 for workspace read, got %d", resp.StatusCode)
+	}
+
+	reportBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Step 4 read body failed: %v", err)
+	}
+	if string(reportBytes) != mockServer.workspaceFile {
+		t.Fatalf("report bytes mismatch: got %q, want %q", string(reportBytes), mockServer.workspaceFile)
+	}
+
+	var parsedReport struct {
+		TaskID  string `json:"task_id"`
+		Status  string `json:"status"`
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal(reportBytes, &parsedReport); err != nil {
+		t.Fatalf("failed to parse workspace report JSON: %v", err)
+	}
+	if parsedReport.TaskID != "TASK-P03-004" || parsedReport.Status != "COMPLETED" {
+		t.Fatalf("unexpected parsed report contents: %+v", parsedReport)
 	}
 
 	// Step 5: Teardown / Stop Session via stop.Coordinator.Start
@@ -415,6 +440,44 @@ func TestP03IntegrationHarness5StepsViaLibrarySaga(t *testing.T) {
 	}
 	if !finalStatus.IsTerminated {
 		t.Fatal("expected IsTerminated = true after kill")
+	}
+
+	// Full durable state and audit chain reconciliation across sagas (R1-005)
+	task, err := st.GetTask(ctx, taskID)
+	if err != nil {
+		t.Fatalf("reconcile GetTask failed: %v", err)
+	}
+	if task.TaskID != taskID {
+		t.Fatalf("task ID mismatch: %s", task.TaskID)
+	}
+
+	attemptRecord, err := st.GetTaskAttempt(ctx, attemptID)
+	if err != nil {
+		t.Fatalf("reconcile GetTaskAttempt failed: %v", err)
+	}
+	if attemptRecord.AttemptID != attemptID {
+		t.Fatalf("attempt ID mismatch: %s", attemptRecord.AttemptID)
+	}
+
+	durableDisp, err := st.GetDispatchOperation(ctx, dispatchOpID)
+	if err != nil {
+		t.Fatalf("reconcile GetDispatchOperation failed: %v", err)
+	}
+	if durableDisp.Stage != domain.SendConfirmed {
+		t.Fatalf("expected SendConfirmed, got %s", durableDisp.Stage)
+	}
+
+	durableStop, err := st.GetStopOperation(ctx, stopOpID)
+	if err != nil {
+		t.Fatalf("reconcile GetStopOperation failed: %v", err)
+	}
+	if durableStop.Stage != domain.StopCallSucceeded && durableStop.Stage != domain.StopTerminationConfirmed {
+		t.Fatalf("unexpected stop stage: %s", durableStop.Stage)
+	}
+
+	// Cryptographic verification of the tamper-evident append-only audit chain
+	if err := st.VerifyAuditChain(ctx); err != nil {
+		t.Fatalf("VerifyAuditChain failed: %v", err)
 	}
 }
 

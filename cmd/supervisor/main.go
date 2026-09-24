@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -100,6 +101,12 @@ func runDaemon(args []string) error {
 	killTimeout := fs.Duration("kill-timeout", 0, "SUPERVISOR_KILL_STOP_TIMEOUT (must be positive)")
 	workspaceTimeout := fs.Duration("workspace-timeout", 0, "SUPERVISOR_WORKSPACE_READ_TIMEOUT (must be positive)")
 
+	// Test/diagnostic hooks for deterministic fault injection and barrier testing
+	testHoldPermitDuration := fs.Duration("test-hold-permit-duration", 0, "Test hook: hold an active permit to test drain timeout")
+	testPauseBeforeCreateDuration := fs.Duration("test-pause-before-create-duration", 0, "Test hook: pause after lock acquisition before CREATE_NEW")
+	testLockAcquiredSignal := fs.String("test-lock-acquired-signal", "", "Test hook: write file when owner lock is acquired before CREATE_NEW")
+	testFailPoller := fs.Bool("test-fail-poller", false, "Test hook: inject failure after startup to verify readiness closes fail-closed")
+
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -134,9 +141,27 @@ func runDaemon(args []string) error {
 	}
 
 	var (
-		pinned *host.PinnedDB
-		lease  *host.ProcessOwnerLease
+		cleanupOnEarlyErr = true
+		pinned            *host.PinnedDB
+		lease             *host.ProcessOwnerLease
+		st                *store.Store
 	)
+
+	// Early error cleanup defer: only active before main loop / ExecuteShutdownDrain takes over (R1-002)
+	defer func() {
+		if cleanupOnEarlyErr {
+			if st != nil {
+				_ = st.Close()
+			}
+			if pinned != nil {
+				_ = pinned.Close()
+			}
+			if lease != nil {
+				lease.CleanMetadata()
+				_ = lease.CloseLockHandle()
+			}
+		}
+	}()
 
 	// Step 1 & 2: Handle DB preparation and acquire ProcessOwnerLease (.owner.lock)
 	// Invariant (R1-001): For a new DB, acquire owner lease BEFORE CREATE_NEW.
@@ -155,11 +180,17 @@ func runDaemon(args []string) error {
 			return fmt.Errorf("failed to acquire owner lease for new DB: %w", err)
 		}
 
+		// Barrier probe (R1-001): signal that lock is held while DB file does NOT exist yet
+		if *testLockAcquiredSignal != "" {
+			_ = os.WriteFile(*testLockAcquiredSignal, []byte("LOCKED"), 0600)
+		}
+		if *testPauseBeforeCreateDuration > 0 {
+			time.Sleep(*testPauseBeforeCreateDuration)
+		}
+
 		// Now create 0-byte file exclusively via CREATE_NEW and pin without FILE_SHARE_DELETE
 		pinned, err = newPrep.CreateAndPinDB()
 		if err != nil {
-			lease.CleanMetadata()
-			_ = lease.CloseLockHandle()
 			return fmt.Errorf("failed to create and pin new DB: %w", err)
 		}
 	} else if err != nil {
@@ -173,28 +204,22 @@ func runDaemon(args []string) error {
 
 		lease, err = host.AcquireProcessOwnerLease(pinned.CanonicalDBPath, *instanceID)
 		if err != nil {
-			_ = pinned.Close()
 			return fmt.Errorf("failed to acquire owner lease for existing DB: %w", err)
 		}
 	}
-	defer lease.CloseLockHandle()
-	defer pinned.Close()
 
 	// Step 3: Open Store using validated StoreDBPath (local DOS path)
 	ctx := context.Background()
-	st, err := store.Open(ctx, store.Config{
+	st, err = store.Open(ctx, store.Config{
 		DBPath:        pinned.StoreDBPath,
 		BusyTimeoutMs: 5000,
 	})
 	if err != nil {
-		lease.CleanMetadata()
 		return fmt.Errorf("failed to open store: %w", err)
 	}
-	defer st.Close()
 
 	// Step 4: Verify post-open physical identity
 	if err := pinned.VerifyPostOpenIdentity(); err != nil {
-		lease.CleanMetadata()
 		return fmt.Errorf("post-open physical identity verification failed: %w", err)
 	}
 
@@ -207,7 +232,6 @@ func runDaemon(args []string) error {
 	if *aoAddr != "" {
 		aoClient, err := ao.NewClient(*aoAddr, &http.Client{Timeout: policies.SupervisorHTTPTimeout})
 		if err != nil {
-			lease.CleanMetadata()
 			return fmt.Errorf("failed to initialize AO client: %w", err)
 		}
 		observer = aoClient
@@ -228,12 +252,10 @@ func runDaemon(args []string) error {
 	defer cancelStartup()
 	scanReport, err := scanner.Run(startupCtx)
 	if err != nil {
-		lease.CleanMetadata()
 		return fmt.Errorf("startup recovery scan failed: %w", err)
 	}
 	// Invariant (R1-004): Scanner must report Complete == true before service begins
 	if !scanReport.Complete {
-		lease.CleanMetadata()
 		return fmt.Errorf("startup recovery scan incomplete (PendingAO=%v, Classified=%d)", scanReport.PendingAO, scanReport.Classified)
 	}
 
@@ -247,7 +269,6 @@ func runDaemon(args []string) error {
 	}
 	pollerCtx, cancelPoller := context.WithCancel(ctx)
 	if err := poller.Start(pollerCtx); err != nil {
-		lease.CleanMetadata()
 		return fmt.Errorf("failed to start poller: %w", err)
 	}
 
@@ -269,6 +290,20 @@ func runDaemon(args []string) error {
 
 	timeoutCtx, cancelTimeout := context.WithCancel(ctx)
 	timeoutDone := make(chan struct{})
+
+	// Health monitoring for background schedulers (R1-004)
+	var (
+		healthMu      sync.RWMutex
+		daemonHealthy = true
+	)
+	setUnhealthy := func(component string, failure error) {
+		healthMu.Lock()
+		daemonHealthy = false
+		healthMu.Unlock()
+		auth.SetUnavailable()
+		fmt.Fprintf(os.Stderr, "daemon component %s failed fail-closed: %v\n", component, failure)
+	}
+
 	go func() {
 		defer close(timeoutDone)
 		ticker := time.NewTicker(policies.SupervisorActivityPollInterval)
@@ -278,7 +313,26 @@ func runDaemon(args []string) error {
 			case <-timeoutCtx.Done():
 				return
 			case <-ticker.C:
-				_ = timeoutMonitor.Tick(timeoutCtx)
+				if err := timeoutMonitor.Tick(timeoutCtx); err != nil && timeoutCtx.Err() == nil {
+					setUnhealthy("TimeoutMonitor", err)
+				}
+			}
+		}
+	}()
+
+	// Poller fault injection / health check loop (R1-004)
+	go func() {
+		ticker := time.NewTicker(policies.SupervisorActivityPollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-pollerCtx.Done():
+				return
+			case <-ticker.C:
+				if *testFailPoller {
+					setUnhealthy("Poller (Injected)", errors.New("injected background poller failure"))
+					return
+				}
 			}
 		}
 	}()
@@ -293,48 +347,8 @@ func runDaemon(args []string) error {
 		return nil
 	}}
 
-	// Step 9: Start readonly HTTP probe server (ZERO effectful routes)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status":      "HEALTHY",
-			"instance_id": *instanceID,
-		})
-	})
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		// Invariant (R1-004): Readiness requires authority available, scanner completed, and active ownership
-		if !auth.Available() || !scanReport.Complete {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status":      "READY",
-			"instance_id": *instanceID,
-		})
-	})
-
-	listener, err := net.Listen("tcp", *httpAddr)
-	if err != nil {
-		_ = pollerCloser.Close()
-		_ = timeoutCloser.Close()
-		lease.CleanMetadata()
-		return fmt.Errorf("failed to listen on HTTP addr %q: %w", *httpAddr, err)
-	}
-	defer listener.Close()
-
-	httpServer := &http.Server{Handler: mux}
-	go func() {
-		_ = httpServer.Serve(listener)
-	}()
-
-	// Signal readiness file if requested
-	if *readySignalFile != "" {
-		_ = os.WriteFile(*readySignalFile, []byte(listener.Addr().String()), 0600)
-	}
-
-	// Step 10: Start Named Pipe Server for takeover and status
+	// Step 9: Start Named Pipe Server for takeover and status
+	// Invariant (R1-004): Must be initialized and ready BEFORE writing ready signal or serving probe
 	stopTriggered := make(chan struct{})
 	var stopOnce bool
 	pipeServer, err := host.StartNamedPipeServer(lease.PipeName, *instanceID, func() error {
@@ -347,10 +361,68 @@ func runDaemon(args []string) error {
 	if err != nil {
 		_ = pollerCloser.Close()
 		_ = timeoutCloser.Close()
-		lease.CleanMetadata()
 		return fmt.Errorf("failed to start named pipe server: %w", err)
 	}
-	defer pipeServer.Close()
+
+	// Step 10: Start readonly HTTP probe server (ZERO effectful routes)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":      "HEALTHY",
+			"instance_id": *instanceID,
+		})
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		healthMu.RLock()
+		healthy := daemonHealthy
+		healthMu.RUnlock()
+
+		// Invariant (R1-004): Readiness requires authority available, scan complete, and healthy background schedulers
+		if !healthy || !auth.Available() || !scanReport.Complete {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "UNAVAILABLE",
+				"error":  "host admission closed or background component failed",
+			})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":      "READY",
+			"instance_id": *instanceID,
+		})
+	})
+
+	listener, err := net.Listen("tcp", *httpAddr)
+	if err != nil {
+		_ = pipeServer.Close()
+		_ = pollerCloser.Close()
+		_ = timeoutCloser.Close()
+		return fmt.Errorf("failed to listen on HTTP addr %q: %w", *httpAddr, err)
+	}
+
+	httpServer := &http.Server{Handler: mux}
+	go func() {
+		_ = httpServer.Serve(listener)
+	}()
+
+	// Invariant (R1-004): Only write readySignalFile AFTER scanner Complete, poller, scheduler, pipe, and HTTP all ready
+	if *readySignalFile != "" {
+		_ = os.WriteFile(*readySignalFile, []byte(listener.Addr().String()), 0600)
+	}
+
+	// Test hook: hold active permit to test real binary drain timeout (R1-002)
+	if *testHoldPermitDuration > 0 {
+		permit, err := auth.AcquireExclusiveScope(ctx, "test-hold-pair", "IN_FLIGHT_WORKER")
+		if err != nil {
+			return fmt.Errorf("failed to acquire test hold permit: %w", err)
+		}
+		go func() {
+			time.Sleep(*testHoldPermitDuration)
+			_ = permit.Release()
+		}()
+	}
 
 	// Wait for OS interrupt or Named Pipe stop signal
 	sigCh := make(chan os.Signal, 1)
@@ -362,6 +434,9 @@ func runDaemon(args []string) error {
 	}
 
 	// Step 11: Execute strict shutdown drain sequence (R1-002, R1-004)
+	// Disarm early error defer so ExecuteShutdownDrain owns teardown
+	cleanupOnEarlyErr = false
+
 	drainComponents := host.ShutdownComponents{
 		PipeServer: pipeServer,
 		HTTPServer: httpServer,
@@ -377,7 +452,13 @@ func runDaemon(args []string) error {
 		_ = os.Remove(*readySignalFile)
 	}
 
-	return drainErr
+	if drainErr != nil {
+		// When drain times out, resources were intentionally NOT closed to preserve ownership (R1-002).
+		// Return error fail-closed without touching lease/store.
+		return fmt.Errorf("shutdown drain failed: %w", drainErr)
+	}
+
+	return nil
 }
 
 func stopDaemon(args []string) error {

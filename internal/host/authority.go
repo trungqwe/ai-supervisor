@@ -66,6 +66,14 @@ func (a *Authority) Available() bool {
 	return !a.draining
 }
 
+// SetUnavailable marks the host authority unavailable and closes effect admission fail-closed.
+// Used when background schedulers fail or during teardown.
+func (a *Authority) SetUnavailable() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.draining = true
+}
+
 // Acquire satisfies recovery.HostQuiescence
 func (a *Authority) Acquire(ctx context.Context) (recovery.ExclusiveScope, error) {
 	return a.AcquireGlobalExclusiveScope(ctx, "RECOVERY_SCAN")
