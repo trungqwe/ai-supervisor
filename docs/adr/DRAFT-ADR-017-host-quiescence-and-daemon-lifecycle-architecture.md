@@ -1,6 +1,6 @@
 # DRAFT ADR-017 — Host Quiescence & Daemon Lifecycle Architecture
 
-> **Status:** `REVISION_3_PENDING_SUPERVISOR_REAUDIT`
+> **Status:** `REVISION_4_PENDING_SUPERVISOR_REAUDIT`
 > **Authority:** `docs/24_CHANGE_GOVERNANCE.md` (Level 2 Approved ADR)
 > **Liên quan:** ADR-001, ADR-007, ADR-016 (D8, D9, D11, D12, D13), ADR-016 Addenda, `PROPOSAL-P03-005`.
 > **Phạm vi:** Kiến trúc Host Quiescence, Windows Exclusivity, Daemon Lifecycle và ranh giới Phase P03/P04.
@@ -34,51 +34,58 @@ Quyết định bổ sung subtask `TASK-P03-004 Host Quiescence & Daemon Bootstr
 
 ### 2.3. Cơ chế Machine-Wide Exclusivity trên Windows (Single Windows Host, Local Filesystem)
 
-1. **Loại bỏ `Local\` Named Mutex khỏi Bằng chứng Exclusivity**:
-   - Trong Windows OS, các đối tượng trong namespace `Local\` bị cô lập theo Windows Logon Session (Session 0 dành cho Windows Services / Task Scheduler, Session 1+ dành cho người dùng tương tác, SSH sessions, Fast User Switching). Một named mutex tạo trong `Local\` không thể ngăn chặn một tiến trình ở session khác hoặc elevated session truy cập cùng DB.
-   - Đồng thời, Named Mutex dễ bị name squatting / pre-creation DoS từ các tiến trình không có đặc quyền. Do đó, V1 **không dùng `Local\` named mutex** làm bằng chứng độc quyền.
+1. **Hợp Đồng `CreateFileW` Cho `.owner.lock`**:
+   Khóa độc quyền chính là một Windows Exclusive Sidecar Lock File Handle mở trên file `<canonical_db_path>.owner.lock` với bộ tham số API kernel bất biến:
+   - `dwDesiredAccess = GENERIC_READ | GENERIC_WRITE`: Yêu cầu quyền truy cập non-zero xung đột trực tiếp giữa các tiến trình cạnh tranh.
+   - `dwShareMode = 0`: Chế độ độc quyền hoàn toàn (không chia sẻ đọc, không chia sẻ ghi, không chia sẻ xóa).
+   - `dwCreationDisposition = OPEN_ALWAYS`: Tạo file nếu chưa tồn tại; mở file hiện có mà **TUYỆT ĐỐI KHÔNG TRUNCATE** file lock đang bị tiến trình khác nắm giữ.
+   - `dwFlagsAndAttributes = FILE_ATTRIBUTE_NORMAL`: Kết hợp thuộc tính chuẩn của hệ thống tệp.
+   - `lpSecurityAttributes.bInheritHandle = FALSE`: Ngăn chặn handle leak sang child process.
+   - **Xử lý lỗi**: Mọi lỗi acquire (như `ERROR_SHARING_VIOLATION` (32), `ERROR_ACCESS_DENIED` (5)) đều được xử lý **FAIL-CLOSED** ngay lập tức.
 
-2. **Khóa Độc quyền Chính: Windows Exclusive Sidecar Lock File Handle**:
-   - V1 sử dụng một **Windows Exclusive Sidecar Lock File Handle** mở bằng API hệ điều hành `CreateFileW` với cờ `dwShareMode = 0` (exclusive, không chia sẻ đọc, không chia sẻ ghi, không chia sẻ xóa).
-   - Đường dẫn lock file: `<canonical_db_path>.owner.lock`.
-   - Vòng đời: Handle này được mở từ **TRƯỚC** khi gọi `Store.Open()` hoặc chạy migration, và được giữ liên tục trong bộ nhớ tiến trình cho đến **SAU** khi shutdown drain hoàn tất và `Store.Close()` đã đóng kết nối database.
-   - Tính chất Machine-Wide: Khóa độc quyền qua filesystem filter manager của Windows có hiệu lực toàn máy (machine-wide), áp dụng cho mọi Windows logon session, mọi user account và mọi mức đặc quyền.
+2. **Thuật toán Định Danh Canonical DB Trước `Store.Open()`**:
+   Định danh DB phải duy nhất trên filesystem cục bộ (NTFS/ReFS). Thuật toán:
+   - **Nếu DB file đã tồn tại**: Mở handle tới DB file (`FILE_READ_ATTRIBUTES`, share all, `OPEN_EXISTING`). Giữ handle đủ lâu để:
+     1. Kiểm tra Hard Link: Gọi `GetFileInformationByHandle`. Nếu `nNumberOfLinks > 1` (DB có hard link alias), daemon **FAIL-CLOSED NGAY LẬP TỨC** (`ERR_HARDLINK_ALIAS_UNSUPPORTED`).
+     2. Lấy Canonical Path: Gọi `GetFinalPathNameByHandleW(hDB, VOLUME_NAME_DOS)` để giải quyết triệt để relative paths, symlinks, directory junctions, subst drives, và casing.
+     3. Đóng handle DB.
+   - **Nếu DB file chưa tồn tại (DB Mới)**:
+     1. Mở handle tới thư mục cha với cờ `FILE_FLAG_BACKUP_SEMANTICS`.
+     2. Gọi `GetFinalPathNameByHandleW(hDir, VOLUME_NAME_DOS)` nhận canonical path thư mục cha.
+     3. Ghép canonical parent dir với lowercase base name: `<canonical_db_path> = canonicalDir + "\" + base_name`.
+     4. Đóng handle thư mục cha.
+   - **Quy tắc Fail-Closed**: Nếu `GetFinalPathNameByHandleW` lỗi hoặc filesystem không phải NTFS/ReFS cục bộ (ví dụ network share SMB/UNC), daemon **FAIL-CLOSED NGAY LẬP TỨC**; không fallback sang naive normalization.
+   - Khóa độc quyền đặt tại: `<canonical_db_path>.owner.lock`.
 
-3. **Thuật toán Định Danh Canonical DB & Lock Path Duy Nhất Trước Store.Open**:
-   Tuyệt đối không dùng `filepath.Clean` thông thường làm giải pháp thay thế, vì các đường dẫn tương đối, symlinks, directory junctions, subst drives, hard links, và sự khác biệt chữ hoa/thường trên Windows sẽ tạo ra các chuỗi path khác nhau cho cùng một physical database. Thuật toán định danh bắt buộc tuân thủ quy trình sau:
-   - **Trường hợp A: Database file ĐÃ TỒN TẠI trên đĩa**:
-     1. Mở handle tới DB file bằng `CreateFileW` với `dwDesiredAccess = FILE_READ_ATTRIBUTES`, `dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE`, `dwCreationDisposition = OPEN_EXISTING`, `dwFlagsAndAttributes = FILE_ATTRIBUTE_NORMAL`.
-     2. Kiểm tra Hard Link Alias: Gọi `GetFileInformationByHandle(hDB, &info)`. Nếu `info.nNumberOfLinks > 1`, database file đang có hard link alias (hai hoặc nhiều tên file trỏ tới cùng dữ liệu trên MFT). Do hard link alias không thể bảo đảm tính duy nhất của path-based lock file, daemon **FAIL-CLOSED NGAY LẬP TỨC** (`ERR_HARDLINK_ALIAS_UNSUPPORTED`).
-     3. Gọi `GetFinalPathNameByHandleW(hDB, pathBuf, len, VOLUME_NAME_DOS)` để nhận đường dẫn chuẩn hóa tuyệt đối (canonical NT DOS path, e.g. `\?\C:\path\db.sqlite`).
-     4. Đóng handle `hDB`.
-   - **Trường hợp B: Database file CHƯA TỒN TẠI (DB Mới)**:
-     1. Tách đường dẫn thành thư mục cha (`parent_dir = filepath.Dir(input_path)`) và tên file cơ sở (`base_name = filepath.Base(input_path)`).
-     2. Mở handle tới `parent_dir` (bắt buộc phải tồn tại) bằng `CreateFileW` với `FILE_FLAG_BACKUP_SEMANTICS` (cần thiết cho directory handle trên Windows).
-     3. Gọi `GetFinalPathNameByHandleW(hDir, dirBuf, len, VOLUME_NAME_DOS)` để nhận canonical path của thư mục cha.
-     4. Ghép canonical parent directory với `base_name` (được chuẩn hóa lowercase/case-folded): `<canonical_db_path> = canonicalDir + "\" + base_name`.
-     5. Đóng handle `hDir`.
-   - **Quy tắc Fail-Closed khi Gặp Alias Không Thể Chứng Minh**:
-     Nếu `GetFinalPathNameByHandleW` thất bại, hoặc volume filesystem không phải là NTFS/ReFS cục bộ (ví dụ network share SMB/UNC), hoặc alias không thể chứng minh duy nhất: daemon **FAIL-CLOSED NGAY LẬP TỨC**, tuyệt đối không fallback sang naive normalization.
-   - **Đường dẫn Lock File**: `<canonical_db_path>.owner.lock`.
+3. **Đối Chiếu DB File Identity Sau `Store.Open()` (Defense in Depth)**:
+   - Ngay sau khi `Store.Open()` mở kết nối SQLite tới database, host mở handle kiểm tra tới chính file DB mà SQLite vừa mở.
+   - Gọi `GetFinalPathNameByHandleW` đối chiếu canonical path của file thực tế với canonical lock key đã tính toán trước đó.
+   - **Mismatch Check**: Nếu phát hiện bất kỳ sự sai lệch nào (do symlink swap, directory redirection, hoặc alias mismatch giữa driver SQLite và host): host lập tức gọi `Store.Close()`, đóng lock handle, và **FAIL-CLOSED** trước khi khởi động bất kỳ listener, admission hay phát sinh AO effect nào!
 
-4. **Bảo Mật Metadata `.owner.json` & Quản Lý Trạng Thái**:
-   - File metadata `<canonical_db_path>.owner.json` là kênh truyền thông tin nhưng **KHÔNG ĐƯỢC TIN CẬY MÙ QUÁNG** khi chưa xác thực.
-   - **Ghi Atomically**: Sau khi acquire thành công `.owner.lock`, owner ghi nội dung metadata gồm: `pid`, `owner_instance_id` (cryptographically secure random UUIDv4), `pipe_name`, `started_at`, `canonical_db_path` vào file tạm `<canonical_db_path>.owner.json.tmp`, sau đó thực hiện atomic replace qua `MoveFileExW(..., MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)`.
-   - **DACL & Phân Quyền**: File `.owner.json` có explicit DACL chỉ cho phép Owner SID, Administrators và SYSTEM được ghi; các tiến trình khác chỉ có quyền đọc (`FILE_SHARE_READ`).
-   - **Xử lý Stale / Corrupt Metadata**: Khi Process B gặp `ERROR_SHARING_VIOLATION` khi mở `.owner.lock`, Process B đọc `.owner.json`. Nếu file không tồn tại, bị rỗng, JSON bị hỏng (corrupt), hoặc trường `canonical_db_path` không khớp: Process B coi metadata là không đáng tin cậy. Vì lock file chắc chắn đang bị giữ ở kernel, Process B **FAIL-CLOSED NGAY LẬP TỨC**; tuyệt đối không tự suy đoán PID từ OS để can thiệp.
+4. **Bảo Mật Metadata `.owner.json` & Phân Định Quyền Hạn**:
+   - File metadata `<canonical_db_path>.owner.json` chứa: `pid`, `owner_instance_id` (cryptographic UUIDv4), `pipe_name`, `started_at`, `canonical_db_path`.
+   - **Ghi Atomically**: Owner ghi vào `<canonical_db_path>.owner.json.tmp`, thiết lập DACL chỉ cho Owner SID, Administrators và SYSTEM; sau đó atomic rename qua `MoveFileExW(..., MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)`.
+   - **Xử lý Stale / Corrupt Metadata**: File metadata không đáng tin cậy nếu chưa xác thực. Nếu file thiếu, rỗng, corrupt JSON, hoặc mismatch `canonical_db_path`: contender coi metadata là invalid, **FAIL-CLOSED NGAY LẬP TỨC**; tuyệt đối không suy đoán PID để can thiệp.
+   - **Ghi đè Sau Crash**: Owner mới sau crash, sau khi đã **acquire thành công `.owner.lock`**, được phép ghi đè atomically metadata mới thay thế metadata stale cũ.
 
-5. **Xác Thực Named Pipe Takeover & Chống DoS**:
-   - Named Pipe `\\.\pipe\<pipe_name>` được tạo với security descriptor chỉ cấp quyền cho current user SID (hoặc authorized operator principal).
-   - Khi Process B gửi request cooperative takeover qua Named Pipe:
-     * Request phải mang cấu trúc có kèm `owner_instance_id` khớp với instance ID trong `.owner.json`.
-     * Process A (owner hiện tại) gọi `ImpersonateNamedPipeClient` / `GetNamedPipeHandleStateW` để xác thực caller SID trùng khớp với owner SID hoặc authorized operator.
-     * Mọi request không hợp lệ, không đúng SID, sai `owner_instance_id`, hoặc malformed **ĐỀU BỊ TỪ CHỐI**; tuyệt đối **KHÔNG ĐƯỢC KHIẾN OWNER SHUTDOWN**.
-   - Nếu takeover request hợp lệ: Process A phản hồi ACK, đóng admission, drain/join toàn bộ callers, đóng Store, đóng handle `.owner.lock`, xóa `.owner.json`, và thoát.
-   - Nếu Process A không phản hồi, không hợp tác, hoặc không thoát đúng hạn: Process B **FAIL-CLOSED NGAY LẬP TỨC**. V1 cấm tuyệt đối tự động gọi `TerminateProcess`. Mọi đề xuất auto-kill phải lập proposal riêng kèm bằng chứng an toàn.
+5. **Xác Thực Named Pipe Takeover & Revert Context**:
+   - Named Pipe `\\.\pipe\<pipe_name>` có security descriptor chỉ cấp quyền cho current user SID (hoặc authorized operator principal).
+   - Khi nhận takeover request:
+     1. Owner gọi `ImpersonateNamedPipeClient(hPipe)` và kiểm tra lỗi trả về.
+     2. Lấy caller token (`OpenThreadToken`), đối chiếu caller SID có trùng khớp với owner SID hoặc authorized operator hay không.
+     3. Bắt buộc gọi `RevertToSelf()` trong khối cleanup/defer để hoàn nguyên security context của thread và kiểm tra lỗi của `RevertToSelf()`.
+     4. `owner_instance_id` truyền trong payload **CHỈ LÀ FRESHNESS MARKER** (chống replay stale request tới instance cũ), **KHÔNG PHẢI SECRET XÁC THỰC**.
+     5. Yêu cầu không đúng SID hoặc sai freshness marker bị từ chối; tuyệt đối **KHÔNG ĐƯỢC KHIẾN OWNER SHUTDOWN**.
 
-6. **Handle Inheritance & Crash Cleanup**:
-   - Mọi handle file và pipe bắt buộc tạo với `SECURITY_ATTRIBUTES{bInheritHandle: FALSE}` để chống handle leak sang child processes.
-   - Kernel Windows tự động giải phóng toàn bộ file handles khi tiến trình thoát/crash, exclusive share lock tự động biến mất ngay lập tức mà không để lại stale lock.
+6. **Thứ Tự Shutdown Drain & Giải Phóng Lock Cuối Cùng**:
+   Khi Process A dừng (bình thường hoặc takeover hợp lệ):
+   1. Đóng Named Pipe listener để chặn request takeover mới.
+   2. Đóng listener admission.
+   3. Dừng Poller và TimeoutMonitor scheduler, drain/join toàn bộ callers.
+   4. Đóng kết nối cơ sở dữ liệu: `Store.Close()`.
+   5. Xóa file `.owner.json` **CHỈ KHI** `owner_instance_id` trong file vẫn khớp với instance ID của Process A (tránh xóa nhầm metadata của process khác).
+   6. **ĐÓNG LOCK HANDLE (`.owner.lock`) CUỐI CÙNG** sau khi Store đã đóng và sau khi đã dọn metadata.
+   7. Tuyệt đối **KHÔNG XÓA METADATA SAU KHI ĐÃ ĐÓNG LOCK HANDLE** (tránh race condition xóa nhầm metadata của owner mới vừa acquire lock).
 
 ### 2.4. Phân biệt Wire Effect Mới vs. Outcome Đã phát Chưa biết
 1. **Bản chất Bằng chứng**:
@@ -108,14 +115,6 @@ Toàn bộ việc đóng admission, drain/join, cấp exclusive scope và releas
 4. **`TimeoutMonitor` Scheduling**:
    - `TimeoutMonitor` chỉ có phương thức `Tick(ctx)`. Host daemon chịu trách nhiệm thiết lập ticker scheduler định kỳ gọi `Tick(ctx)`.
 
-### 2.7. Vòng đời Dừng An toàn (Graceful Shutdown)
-Khi nhận OS interrupt/signal:
-1. Đóng listener admission ngay lập tức để ngừng nhận request mới.
-2. Dừng `Poller` (`Poller.Stop()`), đợi in-flight ticks drain xong.
-3. Dừng scheduler của `TimeoutMonitor`, đợi các caller đang giữ `TimeoutPermit` kết thúc.
-4. Đợi tất cả effect callers hoàn tất và release permit (drain/join) **TRƯỚC KHI** đóng Store và kết nối SQLite database.
-5. Sau khi `Store.Close()` hoàn tất, đóng Windows exclusive lock file handle (`.owner.lock`) và xóa file metadata (`.owner.json`) để giải phóng `ProcessOwnerLease`.
-
 ---
 
 ## 3. Ranh giới Tooling P03/P04/P05 & An ninh SEC-003
@@ -139,47 +138,39 @@ Khi nhận OS interrupt/signal:
 ## 4. Tách Bạch Hai Track Bằng Chứng & Ma trận Kiểm chứng Runtime
 
 ### 4.1. Tách Bạch Hai Loại Bằng Chứng Kiểm Chứng
-1. **Xóa Giả Định Effectful Supervisor HTTP Routes**:
-   - Bản thiết kế này **xóa bỏ hoàn toàn giả định** cho rằng daemon P03 đã có sẵn các HTTP routes tạo session, dispatch, đọc workspace và stop. Supervisor Control Plane ở Phase P03 CHƯA có production HTTP control routes cho các tác vụ effectful này.
-   - Tuyệt đối **KHÔNG dùng HTTP routes của Untrivial AO trực tiếp** để tuyên bố "đạt" exit gate, vì làm như vậy sẽ hoàn toàn bỏ qua state machine, sagas, store guards và audit trail của Supervisor.
-   - Mọi dự định bổ sung effectful Supervisor HTTP API phải được lập hồ sơ governance độc lập theo `docs/24_CHANGE_GOVERNANCE.md`; không được đưa vào phạm vi ADR-017.
-2. **Track 1: Binary Daemon Thật (`cmd/supervisor`)**:
-   - Chứng minh các năng lực cốt lõi của daemon host:
-     * Machine-wide exclusive lock (`ProcessOwnerLease` trên `.owner.lock`).
-     * Xử lý cạnh tranh hai tiến trình (trong cùng session hoặc xuyên qua 2 Windows logon sessions).
-     * Cơ chế startup-before-serve: Socket admission listener bị từ chối kết nối (`Connection Refused`) trong suốt thời gian `Runner.Run(ctx)` đang sweep snapshot; chỉ mở sau khi scan hoàn tất (`r.ready == true`).
-     * PendingAO admission hold: Cổng mở nhưng các Pair bị hold trả về lỗi 409/503.
-     * Run Incomplete: Cổng tiếp tục đóng fail-closed, daemon dừng.
-     * Shutdown drain: Drain/join toàn bộ callers trước khi đóng Store và giải phóng lock handle.
-   - Admission listener của daemon ở P03 chỉ phục vụ probe trạng thái (health/readiness) hoặc cooperative takeover IPC.
-3. **Track 2: P03 Integration Test Harness (Kiểm Chứng 5 Bước Exit Gate AO)**:
-   - Kiểm chứng trọn vẹn 5 bước exit gate AO của Phase P03 (session creation, dispatch, observation reconciliation, raw workspace-file read, teardown).
-   - **Phương thức thực thi**: Harness gọi **trực tiếp các API điều phối nội bộ đã được duyệt của thư viện Go Supervisor** (`internal/dispatch`, `internal/store`, `internal/stop`, `internal/ao`, `internal/recovery`).
-   - Bảo đảm đi qua toàn bộ Supervisor saga, store guards, state transitions và audit trail, hoàn toàn không cần production HTTP control surface và không phụ thuộc vào code P04/P05.
+1. **Track 1: Binary Daemon Thật (`cmd/supervisor`)**:
+   - Chứng minh machine-wide exclusivity (`.owner.lock` với cờ `CreateFileW` chuẩn), cạnh tranh hai process, startup-before-serve và shutdown drain.
+   - **Phạm vi Readiness Probe**: Probe cổng HTTP của daemon **CHỈ CHỨNG MINH** socket đóng (Connection Refused) trước Run và mở (200 OK) sau Run Complete (`r.ready == true`).
+   - Tuyệt đối **KHÔNG thêm Pair HTTP routes hay effectful Supervisor API** vào daemon P03.
+2. **Track 2: P03 Integration Test Harness (Kiểm Chứng 5 Bước AO & Pair Hold)**:
+   - Chứng minh 5 bước exit gate AO (session creation, dispatch, observation reconciliation, raw workspace file read, teardown) bằng cách **gọi trực tiếp các API điều phối nội bộ đã được duyệt của thư viện Go Supervisor** (`internal/dispatch`, `internal/store`, `internal/stop`, `internal/ao`, `internal/recovery`).
+   - Chứng minh **Pair hold chặn admission** khi `PendingAO == true` thông qua các StateStore guards và admission check nội bộ trong integration harness.
+   - Đi qua đầy đủ sagas, guards, transitions và audit trail mà không bypass state machine và không phụ thuộc vào code P04/P05.
 
 ### 4.2. Ma trận Kiểm chứng Runtime trên Binary Thật (`cmd/supervisor`)
 
 | Kịch bản Kiểm chứng | Hành vi & Trạng thái Mong đợi | Phương pháp Kiểm tra Thực tế |
 |---|---|---|
-| **1. Trước Run** | `ProcessOwnerLease` được acquire (`.owner.lock` share mode 0). Listener chưa bind socket. | Network probe: Socket connect bị từ chối (Connection Refused). |
+| **1. Trước Run** | `ProcessOwnerLease` được acquire (`.owner.lock` với `dwShareMode = 0`). Listener chưa bind. | Network probe: Socket connect bị từ chối (Connection Refused). |
 | **2. Đang Run** | `Runner.Run(ctx)` nắm `ExclusiveScope`. Listener tiếp tục đóng. | Network probe: Socket connect bị từ chối; log chỉ bổ trợ. |
-| **3. Sau Run (Complete)** | `r.ready = true`. Pair guards sạch. Listener bind port thành công. | HTTP probe tới readiness probe port trả về `200 OK` (Admission OPEN). |
-| **4. Sau Run (PendingAO)** | `r.ready = true`. Listener mở; Pair có hold trả về 409/503. | HTTP probe verify readiness mở nhưng Pair hold bị khóa admission. |
-| **5. Run Lỗi / Incomplete** | `r.ready = false`. Admission đóng fail-closed; daemon exit non-zero. | Socket không bao giờ mở; process exit code != 0. |
-| **6. Cạnh tranh 2 Process** | Process B phát hiện `.owner.lock` bị giữ (`ERROR_SHARING_VIOLATION`); cooperative takeover an toàn. | Process A drain và exit; Process B tiếp quản; nếu A không thoát thì B fail-closed. |
-| **7. Shutdown Drain** | Nhận SIGINT: listener đóng -> poller drain -> timeout permit release -> Store.Close() -> đóng lock handle. | Probe socket đóng ngay; verify mọi in-flight connection hoàn tất trước khi DB đóng. |
+| **3. Sau Run (Complete)** | `r.ready = true`. Readiness port mở. | HTTP probe tới readiness port trả về `200 OK`. |
+| **4. Run Lỗi / Incomplete** | `r.ready = false`. Admission đóng fail-closed; daemon exit non-zero. | Socket không bao giờ mở; process exit code != 0. |
+| **5. Cạnh tranh 2 Process** | Process B mở `.owner.lock` nhận `ERROR_SHARING_VIOLATION` (32); cooperative takeover an toàn. | Process A drain và exit; Process B tiếp quản; nếu A không thoát thì B fail-closed. |
+| **6. Shutdown Drain** | Nhận SIGINT: listener đóng -> poller drain -> timeout permits drain -> Store.Close() -> dọn .owner.json (nếu khớp instance) -> đóng lock handle cuối cùng. | Probe socket đóng ngay; verify mọi in-flight connection hoàn tất trước khi DB đóng. |
 
-### 4.3. Ma trận Kiểm chứng Canonical DB Identity & Alias Resolution
+### 4.3. Ma trận Kiểm chứng Canonical DB Identity, Alias & Cross-Session Competition
 
-| Kịch bản Alias / Session | Đường dẫn Đầu vào Thử nghiệm | Kết quả Kỳ vọng |
+| Kịch bản Thử nghiệm | Đường dẫn / Môi trường Thử nghiệm | Kết quả Kỳ vọng |
 |---|---|---|
+| **Exact Flags Contender** | Process A & Process B cùng mở `.owner.lock` với `GENERIC_READ\|GENERIC_WRITE`, `dwShareMode=0`, `OPEN_ALWAYS` | Process B nhận ngay `ERROR_SHARING_VIOLATION` (32) từ Windows kernel |
+| **Cross-Session Competition** | Session 0 (Service) vs Session 1 (Interactive) cùng mở `.owner.lock` | Process thứ hai nhận ngay `ERROR_SHARING_VIOLATION` (32) xuyên session |
 | **Relative Path** | `.\data\db.sqlite` vs `data\..\data\db.sqlite` | Quy về cùng một canonical lock path `\\?\<Drive>:\...\data\db.sqlite.owner.lock` |
 | **Case Differences** | `D:\data\db.sqlite` vs `d:\DATA\DB.SQLITE` | Quy về cùng một canonical lock path (case-folded khớp tên đĩa vật lý) |
 | **Subst Drive** | `X:\db.sqlite` (với `subst X: D:\data`) | Kernel resolve về đường dẫn thực `\\?\D:\data\db.sqlite.owner.lock` |
 | **Directory Junction / Symlink** | `D:\junction\db.sqlite` -> `D:\real\db.sqlite` | `GetFinalPathNameByHandleW` resolve về `\\?\D:\real\db.sqlite.owner.lock` |
 | **DB Mới (Chưa tồn tại)** | File chưa có trên đĩa | Resolve canonical parent directory + lowercase base name |
+| **Post-Open Identity Check** | Handle file DB sau `Store.Open()` đối chiếu canonical lock key | Khớp -> Tiếp tục; Mismatch -> `Store.Close()` & FAIL-CLOSED |
 | **Hard Link Detection** | File có `nNumberOfLinks > 1` | Bị từ chối ngay lập tức: **FAIL-CLOSED** (`ERR_HARDLINK_ALIAS_UNSUPPORTED`) |
-| **Cross-Session Competition** | Session 0 (Service) vs Session 1 (Interactive) cùng trỏ DB | Process thứ hai nhận ngay `ERROR_SHARING_VIOLATION` (32) xuyên session |
 
 ### 4.4. Invariants Bất biến
 - `AUTOMATIC_RESTORE = DISABLED`: Giữ nguyên disable fail-closed.
