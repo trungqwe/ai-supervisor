@@ -96,7 +96,7 @@
   "acceptance_criteria": [
     "AC-004-01: cmd/supervisor implements Windows exclusive sidecar lock file handle (.owner.lock) with share mode 0, failing closed on contention",
     "AC-004-02: Path lock key derivation is strictly distinguished from physical file ID; aliases (subst, junctions, casing) are only admitted upon runtime probe proof of convergence to identical canonical lock key, otherwise fail-closed without unconditional support promises",
-    "AC-004-03: Host holds pinned DB handle (no FILE_SHARE_DELETE) preventing file substitution during entire Store lifecycle; pre- and post-Store.Open physical identity validations compare VolumeSerialNumber and 128-bit FileId between OS handles and parent volume, closing Store and failing closed on any mismatch",
+    "AC-004-03: Host holds pinned DB handle (no FILE_SHARE_DELETE) preventing file substitution during entire Store lifecycle; converts validated Win32 DOS path to Store DBPath while UNC/device paths fail-closed; invokes store.Open(ctx, store.Config{DBPath, BusyTimeoutMs}) without inspecting private DB pragmas; physical identity validations compare VolumeSerialNumber and 128-bit FileId between OS handles and parent volume, closing Store and failing closed on any mismatch",
     "AC-004-04: Shutdown drain sequence closes pipe listener, drains callers, closes Store, cleans metadata if instance matches, and closes lock handle LAST",
     "AC-004-05: Named Pipe takeover verifies caller SID via Impersonation and token check, reverts context via RevertToSelf(), and treats owner_instance_id as freshness marker",
     "AC-004-06: Binary readiness probe proves port closed before Run and open after Complete; Pair hold proven via Store/admission guards in harness",
@@ -165,7 +165,7 @@
     "Attempting to modify files outside allowed_scope or touching forbidden_scope",
     "Windows filesystem fails to support mandatory exclusive file locking or GetFinalPathNameByHandleW",
     "Hard link alias detected on database file (nNumberOfLinks > 1)",
-    "Post-Store.Open DB file identity does not match canonical lock key",
+    "Post-Store.Open physical DB file identity does not match pre-open pinned OS handle identity or parent volume",
     "Attempting to introduce effectful HTTP routes, arbitrary shell execution, or automatic restore into P03",
     "Operational policies assigned default fallback values instead of failing closed when UNSET"
   ]

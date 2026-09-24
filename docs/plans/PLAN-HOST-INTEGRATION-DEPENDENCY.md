@@ -66,18 +66,21 @@ Cần phân biệt rõ ràng hai khái niệm trực giao:
    - **Việc terminate process hoặc đóng local socket hoàn toàn KHÔNG chứng minh AO chưa nhận effect**.
    - **Nguyên tắc Xử lý**: Mọi intent mơ hồ (`STOP_REQUESTED`, `SEND_REQUESTED`, `RESTORE_REQUESTED`) phải được duy trì **fail-closed**, không bao giờ được replay mù quáng. Scanner và poller phải đối soát (reconcile) qua fresh GET / observation, hoặc nếu target đã terminated / generation mismatch thì ghi nhận governed logical resolution audit (`STOP_OPERATION_RESOLVED`), hoặc giữ nguyên quarantine và escalate cho human reconciliation.
 
-### 3.2. Hợp Đồng `CreateFileW`, Host Pinned DB Handle Cho Hai Đường Đi & Post-Open Verification
+### 3.2. Hợp Đồng `CreateFileW`, Phân Tách Win32 vs DOS DBPath & 4 Invariants Cho Hai Đường Đi
 
-1. **Hai Đường Đi Khởi Tạo DB**:
-   - *Đường đi 1 (DB hiện hữu)*: Mở handle pin `hPinnedDB` (GENERIC_READ, share READ|WRITE, OPEN_EXISTING, no DELETE) -> chuẩn hóa path & kiểm tra FILE_ID_INFO & nNumberOfLinks == 1 -> acquire lock file `.owner.lock` -> Store.Open() -> post-open kiểm tra PRAGMA database_list và re-check physical identity trên `hPinnedDB` -> giữ pin liên tục -> Store.Close() -> đóng `hPinnedDB` -> đóng `.owner.lock` cuối cùng.
-   - *Đường đi 2 (DB mới)*: Chuẩn hóa thư mục cha & ghi nhận volume -> acquire lock file `.owner.lock` -> exclusive-create file database bằng CREATE_NEW (GENERIC_READ|GENERIC_WRITE, share READ|WRITE, no DELETE) trước Store.Open -> nếu file đã tồn tại hoặc lỗi thì fail-closed ngay lập tức (ERROR_FILE_EXISTS 80) -> kiểm tra canonical path, volume trùng volume cha, nNumberOfLinks == 1 -> Store.Open() khởi tạo file 0-byte (đã probe chứng minh thực tế hỗ trợ migration, rollback, commit) -> giữ pin liên tục -> Store.Close() -> đóng `hPinnedDB` -> đóng `.owner.lock` cuối cùng.
-   - *Ranh giới Store*: Không sửa đổi `internal/store`.
-2. **Phân Biệt Lock Key vs File Identity & Chính Sách Alias**:
-   - *Lock Key*: Token đường dẫn `<canonical_db_path>.owner.lock`.
-   - *File Identity*: `VolumeSerialNumber` + 128-bit `FileId` (`FILE_ID_INFO`).
-   - *Alias*: Chỉ chấp nhận nếu probe runtime (`GetFinalPathNameByHandleW`) chứng minh hội tụ về cùng lock key; còn lại fail-closed.
-3. **Thứ Tự Dừng**:
-   - Đóng pipe listener -> drain callers -> `Store.Close()` -> đóng `hPinnedDB` -> dọn `.owner.json` (chỉ khi instance khớp) -> đóng lock handle `.owner.lock` **CUỐI CÙNG**.
+1. **Phân Tách Win32 Canonical Path vs Store DOS DBPath**:
+   - Win32 API (`CreateFileW`) quản lý sidecar lock và `hPinnedDB` qua đường dẫn mở rộng `\\?\<Drive>:\...`.
+   - Store nhận DOS path `<Drive>:\...` (chuyển đổi từ `\\?\` khi đã xác thực local DOS volume). UNC/device không chứng minh được lập tức fail-closed.
+2. **Gọi API Thật `store.Open` & 4 Invariants**:
+   - Sử dụng `store.Open(ctx, store.Config{DBPath: storeDOSPath, BusyTimeoutMs: injectedTimeout})`.
+   - Không yêu cầu đọc `PRAGMA database_list` qua private DB của Store; thiết lập 4 Invariants:
+     1. Đường dẫn DOS bắt nguồn 1-1 từ canonical Win32 path.
+     2. `hPinnedDB` (omitting `FILE_SHARE_DELETE`) ngăn cấm hoàn toàn xóa/đổi tên file.
+     3. Đối chiếu physical identity (`VolumeSerialNumber` + 128-bit `FileId`) trực tiếp giữa các OS handles vật lý.
+     4. `store.Open` thẩm định pragmas và chạy migrations lên v5 thành công.
+3. **Quy Trình Hai Đường Đi**:
+   - *Existing DB*: Pin handle pre-open -> acquire lock -> gọi `store.Open` -> giữ pin xuyên suốt -> shutdown: `Store.Close()` -> đóng `hPinnedDB` -> đóng lock last.
+   - *New DB*: Parent canonicalization -> acquire lock -> exclusive-create `CREATE_NEW` & pin 0-byte file -> gọi `store.Open` -> giữ pin xuyên suốt -> shutdown: `Store.Close()` -> đóng `hPinnedDB` -> đóng lock last.
 
 ## 4. Sơ đồ Quy trình Khởi động (Startup-Before-Serve & Graceful Drain)
 
