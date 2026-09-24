@@ -66,50 +66,18 @@ Cần phân biệt rõ ràng hai khái niệm trực giao:
    - **Việc terminate process hoặc đóng local socket hoàn toàn KHÔNG chứng minh AO chưa nhận effect**.
    - **Nguyên tắc Xử lý**: Mọi intent mơ hồ (`STOP_REQUESTED`, `SEND_REQUESTED`, `RESTORE_REQUESTED`) phải được duy trì **fail-closed**, không bao giờ được replay mù quáng. Scanner và poller phải đối soát (reconcile) qua fresh GET / observation, hoặc nếu target đã terminated / generation mismatch thì ghi nhận governed logical resolution audit (`STOP_OPERATION_RESOLVED`), hoặc giữ nguyên quarantine và escalate cho human reconciliation.
 
-### 3.2. Hợp Đồng `CreateFileW`, Host Pinned DB Handle, Phân Biệt Lock Key vs File Identity & Post-Open Verification
+### 3.2. Hợp Đồng `CreateFileW`, Host Pinned DB Handle Cho Hai Đường Đi & Post-Open Verification
 
-1. **Host-Scope Pinned DB Handle (Chống hoán đổi file)**:
-   - Nhận diện `PRAGMA database_list` chỉ trả về string đường dẫn ở user-mode; việc mở lại đường dẫn này không cho ra OS handle của SQLite.
-   - Để ngăn chặn hoàn toàn việc xóa, đổi tên hoặc tráo đổi file database trong toàn bộ thời gian Store hoạt động, Host mở và giữ một pinned handle `hPinnedDB` trực tiếp ở tầng OS thông qua Win32 API:
-     ```c
-     HANDLE hPinnedDB = CreateFileW(
-         canonicalDBPath,
-         GENERIC_READ,
-         FILE_SHARE_READ | FILE_SHARE_WRITE, // TUYỆT ĐỐI KHÔNG CẤP FILE_SHARE_DELETE
-         NULL,
-         OPEN_EXISTING,
-         0,
-         NULL
-     );
-     ```
-   - **Bằng chứng Probe Windows Thực tế**: Thực nghiệm trên Windows xác nhận khi `hPinnedDB` đang được giữ, mọi thao tác `os.remove` và `os.rename` đều bị Windows chặn với lỗi `[WinError 32] ERROR_SHARING_VIOLATION`. Đồng thời, SQLite vẫn kết nối, đọc và ghi dữ liệu bình thường (`FILE_SHARE_READ | FILE_SHARE_WRITE` tương thích hoàn toàn với SQLite win32 VFS).
-   - **Quy trình với DB đã tồn tại**:
-     1. Host chuẩn hóa đường dẫn qua `GetFinalPathNameByHandleW`.
-     2. Host acquire lock file `<canonical_db_path>.owner.lock` (share mode 0).
-     3. Host mở `hPinnedDB` (không cấp `FILE_SHARE_DELETE`).
-     4. Host kiểm tra `FILE_ID_INFO` (128-bit `FileId` + `VolumeSerialNumber`) và `nNumberOfLinks == 1` (chặn hard link alias).
-     5. Host truyền `canonicalDBPath` vào `store.NewStore()`. `Store.Open()` kết nối SQLite.
-     6. Post-open: Host kiểm tra `PRAGMA database_list` trả về đúng `canonicalDBPath`, và re-check identity trên `hPinnedDB`.
-     7. Host giữ `hPinnedDB` liên tục trong suốt runtime của daemon.
-     8. Shutdown drain: `Store.Close()` được gọi trước; sau khi Store đóng xong, Host đóng `hPinnedDB`, và cuối cùng đóng `.owner.lock` handle.
-   - **Quy trình với DB mới**:
-     1. DB chưa tồn tại trước `Store.Open()`.
-     2. Host mở handle thư mục cha, chuẩn hóa đường dẫn cha và ghi nhận volume serial number của thư mục cha.
-     3. Host acquire `.owner.lock` theo canonical path dự kiến.
-     4. Truyền canonical path vào `store.NewStore()`. `Store.Open()` tạo file SQLite mới.
-     5. Ngay sau `Store.Open()`, Host mở `hPinnedDB` (không cấp `FILE_SHARE_DELETE`).
-     6. Gọi `GetFinalPathNameByHandleW` trên `hPinnedDB`, xác nhận khớp chính xác với `canonicalDBPath`.
-     7. Lấy `FILE_ID_INFO`, kiểm tra volume trùng volume thư mục cha và `nNumberOfLinks == 1`.
-     8. Nếu có bất kỳ sai lệch nào, lập tức đóng `Store`, đóng `hPinnedDB` và fail-closed.
-   - **Ranh giới Store**: Toàn bộ cơ chế pin và đối chiếu nằm trọn trong `internal/host`; không sửa đổi bất kỳ dòng code nào trong `internal/store`.
-2. **Phân biệt Lock Key vs File Identity & Chính sách Alias Fail-Closed**:
+1. **Hai Đường Đi Khởi Tạo DB**:
+   - *Đường đi 1 (DB hiện hữu)*: Mở handle pin `hPinnedDB` (GENERIC_READ, share READ|WRITE, OPEN_EXISTING, no DELETE) -> chuẩn hóa path & kiểm tra FILE_ID_INFO & nNumberOfLinks == 1 -> acquire lock file `.owner.lock` -> Store.Open() -> post-open kiểm tra PRAGMA database_list và re-check physical identity trên `hPinnedDB` -> giữ pin liên tục -> Store.Close() -> đóng `hPinnedDB` -> đóng `.owner.lock` cuối cùng.
+   - *Đường đi 2 (DB mới)*: Chuẩn hóa thư mục cha & ghi nhận volume -> acquire lock file `.owner.lock` -> exclusive-create file database bằng CREATE_NEW (GENERIC_READ|GENERIC_WRITE, share READ|WRITE, no DELETE) trước Store.Open -> nếu file đã tồn tại hoặc lỗi thì fail-closed ngay lập tức (ERROR_FILE_EXISTS 80) -> kiểm tra canonical path, volume trùng volume cha, nNumberOfLinks == 1 -> Store.Open() khởi tạo file 0-byte (đã probe chứng minh thực tế hỗ trợ migration, rollback, commit) -> giữ pin liên tục -> Store.Close() -> đóng `hPinnedDB` -> đóng `.owner.lock` cuối cùng.
+   - *Ranh giới Store*: Không sửa đổi `internal/store`.
+2. **Phân Biệt Lock Key vs File Identity & Chính Sách Alias**:
    - *Lock Key*: Token đường dẫn `<canonical_db_path>.owner.lock`.
    - *File Identity*: `VolumeSerialNumber` + 128-bit `FileId` (`FILE_ID_INFO`).
-   - *Chính sách Alias*: Không cam kết hỗ trợ vô điều kiện cho subst drives hay directory junctions. Alias chỉ được chấp nhận nếu probe runtime (`GetFinalPathNameByHandleW`) chứng minh nó hội tụ về chính xác cùng một canonical path và lock key; nếu không chứng minh được hoặc có bất kỳ sự mơ hồ nào, hệ thống fail-closed ngay lập tức (`BLOCKED`).
-3. **Thứ Tự Dừng & Giải Phóng Lock Cuối Cùng**:
-   - Đóng pipe listener -> drain callers -> `Store.Close()` -> đóng `hPinnedDB` -> dọn `.owner.json` (chỉ khi `owner_instance_id` khớp) -> đóng lock handle `.owner.lock` **CUỐI CÙNG**.
-
----
+   - *Alias*: Chỉ chấp nhận nếu probe runtime (`GetFinalPathNameByHandleW`) chứng minh hội tụ về cùng lock key; còn lại fail-closed.
+3. **Thứ Tự Dừng**:
+   - Đóng pipe listener -> drain callers -> `Store.Close()` -> đóng `hPinnedDB` -> dọn `.owner.json` (chỉ khi instance khớp) -> đóng lock handle `.owner.lock` **CUỐI CÙNG**.
 
 ## 4. Sơ đồ Quy trình Khởi động (Startup-Before-Serve & Graceful Drain)
 

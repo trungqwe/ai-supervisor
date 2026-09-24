@@ -1,6 +1,6 @@
 # DRAFT ADR-017 — Host Quiescence & Daemon Lifecycle Architecture
 
-> **Status: PROPOSED / REVISION_6_PENDING_EXTERNAL_AUDIT (Audit: docs/audits/P03_ADR_017_EXTERNAL_REAUDIT_005.md)
+> **Status: PROPOSED / REVISION_7_PENDING_EXTERNAL_AUDIT (Audit: docs/audits/P03_ADR_017_EXTERNAL_REAUDIT_006.md)
 > **Authority:** `docs/24_CHANGE_GOVERNANCE.md` (Level 2 Approved ADR)
 > **Liên quan:** ADR-001, ADR-007, ADR-016 (D8, D9, D11, D12, D13), ADR-016 Addenda, `PROPOSAL-P03-005`.
 > **Phạm vi:** Kiến trúc Host Quiescence, Windows Exclusivity, Daemon Lifecycle và ranh giới Phase P03/P04.
@@ -32,9 +32,9 @@ Quyết định bổ sung subtask `TASK-P03-004 Host Quiescence & Daemon Bootstr
    - Vòng đời: `Runner.Run(ctx)` **tự động gọi** `HostQuiescence.Acquire(ctx)` để lấy `ExclusiveScope` khi bắt đầu sweep và gọi `scope.Release()` ngay khi sweep snapshot hoàn tất.
    - Tách biệt: Khi `ExclusiveScope.Release()` được gọi, `ProcessOwnerLease` **vẫn tiếp tục được giữ** bởi daemon cho đến khi daemon shutdown hoàn toàn. Entrypoint tuyệt đối không gọi `HostQuiescence.Acquire()` lần hai.
 
-### 2.3. Cơ chế Machine-Wide Exclusivity trên Windows (Single Windows Host, Local Filesystem)
+### 2.3. Cơ chế Machine-Wide Exclusivity trên Windows & Hai Đường Đi Khởi Tạo DB
 
-1. **Hợp Đồng `CreateFileW` Cho `.owner.lock`**:
+1. **Hợp đồng `CreateFileW` Cho `.owner.lock`**:
    Khóa độc quyền chính là một Windows Exclusive Sidecar Lock File Handle mở trên file `<canonical_db_path>.owner.lock` với bộ tham số API kernel bất biến:
    - `dwDesiredAccess = GENERIC_READ | GENERIC_WRITE`: Yêu cầu quyền truy cập non-zero xung đột trực tiếp giữa các tiến trình cạnh tranh.
    - `dwShareMode = 0`: Chế độ độc quyền hoàn toàn (không chia sẻ đọc, không chia sẻ ghi, không chia sẻ xóa).
@@ -44,66 +44,34 @@ Quyết định bổ sung subtask `TASK-P03-004 Host Quiescence & Daemon Bootstr
    - **Xử lý lỗi**: Mọi lỗi acquire (như `ERROR_SHARING_VIOLATION` (32), `ERROR_ACCESS_DENIED` (5)) đều được xử lý **FAIL-CLOSED** ngay lập tức.
 
 2. **Phân Biệt Rành Mạch: Canonical Lock Key vs. Physical File Identity**:
-   - **Canonical Lock Key (Path-based)**: Chuỗi đường dẫn canonical NT DOS `<canonical_db_path>.owner.lock` được xác lập trước khi mở DB nhằm thiết lập cơ chế loại trừ tương hỗ (mutual exclusion) giữa các tiến trình trên filesystem.
+   - **Canonical Lock Key (Path-based Token)**: Chuỗi đường dẫn canonical NT DOS `<canonical_db_path>.owner.lock` được xác lập nhằm thiết lập cơ chế loại trừ tương hỗ (mutual exclusion) giữa các tiến trình trên filesystem.
    - **Physical File Identity (Volume + File ID)**: Cặp định danh vật lý `(VolumeSerialNumber, FileId)` đại diện cho chính xác thực thể inode/file trên volume đĩa vật lý của Windows.
-     * Trên **NTFS**: Sử dụng `FILE_ID_INFO` (128-bit `FileId` + `VolumeSerialNumber`) qua `GetFileInformationByHandleEx`, hoặc `BY_HANDLE_FILE_INFORMATION` (64-bit FileIndex).
-     * Trên **ReFS**: ReFS sử dụng không gian 128-bit File ID; API cũ `BY_HANDLE_FILE_INFORMATION` chỉ trả về 64-bit bị cắt ngắn hoặc không ổn định. Do đó, trên ReFS **BẮT BUỘC** sử dụng cấu trúc 128-bit `FILE_ID_INFO` (`GetFileInformationByHandleEx(h, FileIdInfo, &info, sizeof(info))`).
+     * Trên **NTFS**: Sử dụng `FILE_ID_INFO` (128-bit `FileId` + `VolumeSerialNumber`) qua `GetFileInformationByHandleEx`.
+     * Trên **ReFS**: Bắt buộc sử dụng cấu trúc 128-bit `FILE_ID_INFO` (`GetFileInformationByHandleEx(h, FileIdInfo, &info, sizeof(info))`).
 
-3. **Phép Đối Chiếu Identity Trước và Sau `Store.Open()`**:
-   - **Trường hợp A: Database file ĐÃ TỒN TẠI trước `Store.Open()`**:
-     1. *Pre-Open*: Host mở handle DB file (`FILE_READ_ATTRIBUTES`, share all, `OPEN_EXISTING`). Giữ handle đủ lâu để:
-        - Kiểm tra hard links: Gọi `GetFileInformationByHandle`. Nếu `nNumberOfLinks > 1` (DB có hard link alias), daemon **FAIL-CLOSED NGAY LẬP TỨC** (`ERR_HARDLINK_ALIAS_UNSUPPORTED`).
-        - Trích xuất định danh vật lý: `(preVolume, preFileId128)` qua `GetFileInformationByHandleEx(FileIdInfo)`.
-        - Lấy canonical path: `GetFinalPathNameByHandleW(hDB, VOLUME_NAME_DOS)` làm cơ sở tạo lock key `<canonical_db_path>.owner.lock`.
-        - Đóng handle DB.
-     2. *Acquire Lock*: Mở `.owner.lock` bằng hợp đồng `CreateFileW` độc quyền.
-     3. *Post-Open Verification*: Ngay sau khi `Store.Open()` mở kết nối SQLite, host mở handle kiểm tra tới file DB mà SQLite đang giữ, gọi `GetFileInformationByHandleEx(FileIdInfo)` lấy `(postVolume, postFileId128)`.
-     4. *So sánh*: `postVolume == preVolume && postFileId128 == preFileId128`. Nếu có bất kỳ mismatch nào (do symlink swap, directory redirection, hoặc alias mismatch), host lập tức gọi `Store.Close()`, đóng lock handle, và **FAIL-CLOSED** ngay lập tức trước khi mở bất kỳ listener hay effect nào.
-   - **Trường hợp B: Database file CHƯA TỒN TẠI (DB Mới)**:
-     1. *Pre-Open*: Thư mục cha bắt buộc phải tồn tại. Host mở handle tới thư mục cha với cờ `FILE_FLAG_BACKUP_SEMANTICS`.
-        - Trích xuất `parentVolume` qua `GetFileInformationByHandleEx(FileIdInfo)`.
-        - Lấy canonical parent dir qua `GetFinalPathNameByHandleW`.
-        - Ghép canonical parent dir với lowercase base name thành `<canonical_db_path>`, suy ra `<canonical_db_path>.owner.lock`.
-        - Đóng handle thư mục cha.
-     2. *Acquire Lock*: Mở `.owner.lock` độc quyền.
-     3. *Post-Open Verification*: Sau khi `Store.Open()` tạo mới và mở file DB, host mở handle tới file DB mới tạo, kiểm tra:
-        - `dbVolume == parentVolume`.
-        - Đường dẫn canonical của file mới qua `GetFinalPathNameByHandleW` khớp chính xác với `<canonical_db_path>`.
-        - `nNumberOfLinks == 1`.
-        - Nếu mismatch hoặc hardlink xuất hiện: lập tức `Store.Close()` và **FAIL-CLOSED**.
-   - **Quy tắc Fail-Closed Tuyệt Đối**: Bất kỳ sự cố nào khi trích xuất handle/identity (GetFinalPathNameByHandleW lỗi, FileIdInfo lỗi, hard links > 1, network filesystem SMB/UNC) đều khiến daemon **FAIL-CLOSED NGAY LẬP TỨC**.
-
-4. **Cảnh Báo Về Alias & Ma Trận Kiểm Chứng Hai Tiến Trình (Two-Process Probe Matrix)**:
-   - Kiến trúc **không bao giờ khẳng định võ đoán** rằng subst drive, directory junction, hay casing luôn tự động hội tụ nếu chưa có kết quả probe thực nghiệm.
-   - Các trường hợp này được quy định thành các ca kiểm thử bắt buộc trong **Ma Trận Kiểm Chứng Hai Tiến Trình**:
-     * Contender A mở DB qua đường dẫn canonical gốc.
-     * Contender B mở DB qua đường dẫn alias (subst drive, junction, hoặc casing khác).
-     * Probe kiểm tra thực tế: Contender B bắt buộc phải nhận lỗi `ERROR_SHARING_VIOLATION` (32) vì cả hai giải quyết về cùng một `(Volume, FileId)` và cùng một canonical lock key.
-
-5. **Bảo Mật Metadata `.owner.json` & Phân Định Quyền Hạn**:
-   - File metadata `<canonical_db_path>.owner.json` chứa: `pid`, `owner_instance_id` (cryptographic UUIDv4), `pipe_name`, `started_at`, `canonical_db_path`.
-   - **Ghi Atomically**: Owner ghi vào `<canonical_db_path>.owner.json.tmp`, thiết lập DACL chỉ cho Owner SID, Administrators và SYSTEM; sau đó atomic rename qua `MoveFileExW(..., MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)`.
-   - **Xử lý Stale / Corrupt Metadata**: File metadata không đáng tin cậy nếu chưa xác thực. Nếu file thiếu, rỗng, corrupt JSON, hoặc mismatch `canonical_db_path`: contender coi metadata là invalid, **FAIL-CLOSED NGAY LẬP TỨC**; tuyệt đối không suy đoán PID để can thiệp.
-   - **Ghi đè Sau Crash**: Owner mới sau crash, sau khi đã **acquire thành công `.owner.lock`**, được phép ghi đè atomically metadata mới thay thế metadata stale cũ.
-
-6. **Xác Thực Named Pipe Takeover & Revert Context**:
-   - Named Pipe `\\.\pipe\<pipe_name>` có security descriptor chỉ cấp quyền cho current user SID (hoặc authorized operator principal).
-   - Khi nhận takeover request:
-     1. Owner gọi `ImpersonateNamedPipeClient(hPipe)` và kiểm tra lỗi trả về.
-     2. Lấy caller token (`OpenThreadToken`), đối chiếu caller SID có trùng khớp với owner SID hoặc authorized operator hay không.
-     3. Bắt buộc gọi `RevertToSelf()` trong khối cleanup/defer để hoàn nguyên security context của thread và kiểm tra lỗi của `RevertToSelf()`.
-     4. `owner_instance_id` truyền trong payload **CHỈ LÀ FRESHNESS MARKER** (chống replay stale request tới instance cũ), **KHÔNG PHẢI SECRET XÁC THỰC**.
-     5. Yêu cầu không đúng SID hoặc sai freshness marker bị từ chối; tuyệt đối **KHÔNG ĐƯỢC KHIẾN OWNER SHUTDOWN**.
-
-7. **Thứ Tự Shutdown Drain & Giải Phóng Lock Cuối Cùng**:
-   Khi Process A dừng (bình thường hoặc takeover hợp lệ):
-   1. Đóng Named Pipe listener để chặn request takeover mới.
-   2. Đóng listener admission (readiness probe).
-   3. Dừng Poller và TimeoutMonitor scheduler, drain/join toàn bộ callers.
-   4. Đóng kết nối cơ sở dữ liệu: `Store.Close()`.
-   5. Xóa file `.owner.json` **CHỈ KHI** `owner_instance_id` trong file vẫn khớp với instance ID của Process A (tránh xóa nhầm metadata của process khác).
-   6. **ĐÓNG LOCK HANDLE (`.owner.lock`) CUỐI CÙNG** sau khi Store đã đóng và sau khi đã dọn metadata.
-   7. Tuyệt đối **KHÔNG XÓA METADATA SAU KHI ĐÃ ĐÓNG LOCK HANDLE** (tránh race condition xóa nhầm metadata của owner mới vừa acquire lock).
+3. **Hai Đường Đi Khởi Tạo DB & Cơ Chế Host Pinned Handle**:
+   - **Đường đi 1: Database file ĐÃ TỒN TẠI (Existing DB)**:
+     1. *Pre-Open Pinned Handle & Identity*:
+        Host mở handle pin `hPinnedDB` trực tiếp qua Win32 `CreateFileW(canonicalDBPath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL)` (tuyệt đối không cấp `FILE_SHARE_DELETE`).
+        Lấy canonical path qua `GetFinalPathNameByHandleW(hPinnedDB, VOLUME_NAME_DOS)` làm cơ sở tạo lock key `<canonical_db_path>.owner.lock`.
+        Kiểm tra hard links: `GetFileInformationByHandle`. Nếu `nNumberOfLinks > 1` (DB có hard link alias), daemon **FAIL-CLOSED NGAY LẬP TỨC** (`ERR_HARDLINK_ALIAS_UNSUPPORTED`).
+        Trích xuất physical identity: `(preVolume, preFileId128)` qua `GetFileInformationByHandleEx(hPinnedDB, FileIdInfo)`.
+        **GIỮ HANDLE `hPinnedDB` LIÊN TỤC KHÔNG ĐÓNG**, qua acquire lock, `Store.Open()` và toàn bộ runtime của daemon.
+     2. *Acquire Lock*: Host mở `<canonical_db_path>.owner.lock` bằng hợp đồng `CreateFileW` độc quyền (share mode 0).
+     3. *Store Initialization*: Host truyền `canonicalDBPath` vào `store.NewStore()`. `Store.Open()` kết nối SQLite tới file database.
+     4. *Post-Open Verification*: Host kiểm tra `PRAGMA database_list` xác nhận SQLite kết nối tới đúng `canonicalDBPath`. Host gọi lại `GetFileInformationByHandleEx(hPinnedDB, FileIdInfo)` tái xác nhận physical identity `(postVolume, postFileId128) == (preVolume, preFileId128)`.
+     5. *Runtime Custody & Shutdown*: `hPinnedDB` được giữ xuyên suốt runtime, bảo đảm bằng cơ chế kernel Windows rằng không tiến trình nào có thể xóa/đổi tên file dưới chân SQLite. Khi shutdown: `Store.Close()` được gọi trước; sau khi Store đóng hoàn toàn, host mới đóng `hPinnedDB`, và cuối cùng đóng lock handle `.owner.lock` sau cùng.
+   - **Đường đi 2: Database file CHƯA TỒN TẠI (Brand New DB)**:
+     1. *Pre-Lock & Parent Canonicalization*: Thư mục cha bắt buộc phải tồn tại. Host mở handle tới thư mục cha với cờ `FILE_FLAG_BACKUP_SEMANTICS`. Lấy canonical path của thư mục cha qua `GetFinalPathNameByHandleW` và lấy `parentVolume` qua `GetFileInformationByHandleEx(FileIdInfo)`. Đóng handle thư mục cha.
+     2. *Acquire Lock*: Host acquire lock file `<canonical_db_path>.owner.lock` trước (share mode 0) dựa trên `filepath.Join(canonicalParentDir, dbBaseName)`.
+     3. *Exclusive-Create & Pin TRƯỚC `Store.Open()`*:
+        Host tạo file bằng cơ chế exclusive-create: `CreateFileW(canonicalDBPath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL)` (không cấp `FILE_SHARE_DELETE`).
+        Nếu file đã tồn tại hoặc không tạo được: `CREATE_NEW` trả về lỗi `ERROR_FILE_EXISTS` (80) -> host đóng lock handle và **FAIL-CLOSED NGAY LẬP TỨC**.
+        Nếu tạo thành công: Host sở hữu `hPinnedDB` trên file 0-byte vừa tạo. Xác thực canonical path qua `GetFinalPathNameByHandleW(hPinnedDB)` khớp chính xác với `canonicalDBPath`. Lấy `FILE_ID_INFO`, kiểm tra volume trùng `parentVolume` và `nNumberOfLinks == 1`.
+        **GIỮ HANDLE `hPinnedDB` LIÊN TỤC KHÔNG ĐÓNG**.
+     4. *Store.Open() & Migrations*: Host truyền `canonicalDBPath` vào `store.NewStore()`. `Store.Open()` kết nối SQLite vào file 0-byte đã được pin, tự động khởi tạo database, schema migrations, WAL mode và bảng dữ liệu. (Đã probe chứng minh thực tế SQLite hoạt động bình thường, hỗ trợ đầy đủ migration, transaction commit và rollback trên file 0-byte được pin).
+     5. *Runtime Custody & Shutdown*: `hPinnedDB` được giữ liên tục trong suốt runtime. Shutdown: `Store.Close()` trước -> đóng `hPinnedDB` -> đóng `.owner.lock` cuối cùng.
+   - **Ranh giới Store**: Toàn bộ cơ chế pin và đối chiếu nằm trọn trong `internal/host`; không sửa đổi bất kỳ dòng code nào trong `internal/store`.
 
 ### 2.4. Phân biệt Wire Effect Mới vs. Outcome Đã phát Chưa biết
 1. **Bản chất Bằng chứng**:

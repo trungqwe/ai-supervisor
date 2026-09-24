@@ -139,8 +139,8 @@ This document establishes immutable operational directives for all AI coding age
    - `TASK_P03_003D_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED`
    - `TASK_P03_003D_MERGE = MERGED` (merge commit `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea`; `internal/` tree `a91fcdc207116bff3a40a58beea5021de98392eb`; `docs/audits/P03_TASK_003D_MERGE_INTEGRATION_AUDIT.md`; erratum 002 `a59e55f3fbe0a341f5d8ac54334962110c4842f4`).
    - `P03_CODE = COMPLETED_PENDING_SUPERVISOR_HANDOFF`
-   - `ACTIVE_GATE = TASK_P03_004_CONTRACT_PLANNING` (chờ re-audit gói thiết kế Revision 6, audit record 005 và DRAFT Task Contract 004 JSON cho TASK-P03-004)
-   - `ADR_017 = REVISION_6_PENDING_EXTERNAL_AUDIT`
+   - `ACTIVE_GATE = TASK_P03_004_CONTRACT_PLANNING` (chờ re-audit gói thiết kế Revision 7, audit record 006 và DRAFT Task Contract 004 JSON cho TASK-P03-004)
+   - `ADR_017 = REVISION_7_PENDING_EXTERNAL_AUDIT`
    - `TASK_P03_004 = NOT_RELEASED`
    - `P03_CODE = HELD_PENDING_TASK_P03_004_CONTRACT_RELEASE`
    - `HOST_QUIESCENCE_INTEGRATION = OPEN`

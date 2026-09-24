@@ -1,6 +1,6 @@
 # PROPOSAL-P03-005 — Host Quiescence & Daemon Bootstrap Integration (TASK-P03-004)
 
-> **Status: PROPOSED / REVISION_6_PENDING_EXTERNAL_AUDIT (Audit: docs/audits/P03_ADR_017_EXTERNAL_REAUDIT_005.md)
+> **Status: PROPOSED / REVISION_7_PENDING_EXTERNAL_AUDIT (Audit: docs/audits/P03_ADR_017_EXTERNAL_REAUDIT_006.md)
 > **Authority:** `docs/24_CHANGE_GOVERNANCE.md` (Level 3 Canonical Architecture / Level 5 Roadmap Alignment)
 > **Active Gate:** `TASK_P03_003D_HANDOFF_VERIFICATION`
 > **Proposed Phase Allocation:** Phase P03 subtask `TASK-P03-004`
