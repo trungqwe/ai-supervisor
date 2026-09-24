@@ -1,6 +1,6 @@
 # DRAFT ADR-017 — Host Quiescence & Daemon Lifecycle Architecture
 
-> **Status: SUPERSEDED_BY_ACCEPTED_ADR_017 (See docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md)
+> **Status: ACCEPTED (Audited SHA: 583f0db545fcf2a902305f811c22d9dd116e9728, Decision: docs/audits/P03_ADR_017_EXTERNAL_APPROVAL_DECISION.md)
 > **Authority:** `docs/24_CHANGE_GOVERNANCE.md` (Level 2 Approved ADR)
 > **Liên quan:** ADR-001, ADR-007, ADR-016 (D8, D9, D11, D12, D13), ADR-016 Addenda, `PROPOSAL-P03-005`.
 > **Phạm vi:** Kiến trúc Host Quiescence, Windows Exclusivity, Daemon Lifecycle và ranh giới Phase P03/P04.

@@ -27,8 +27,8 @@
 | **Open Implementation Decisions** | **8 UNRESOLVED OPERATIONAL POLICIES (VALUE = UNSET)**: (1) `SUPERVISOR_HTTP_TIMEOUT`, (2) `SUPERVISOR_HEALTH_PROBE_TIMEOUT`, (3) `SUPERVISOR_SPAWN_TIMEOUT`, (4) `SUPERVISOR_SEND_TIMEOUT`, (5) `SUPERVISOR_ACTIVITY_POLL_INTERVAL`, (6) `SUPERVISOR_EXECUTION_DEADLINE`, (7) `SUPERVISOR_KILL_STOP_TIMEOUT`, (8) `SUPERVISOR_WORKSPACE_READ_TIMEOUT`. (Core directions of PROPOSAL-P03-001 are EXTERNAL_APPROVED; `UPSTREAM_AO_REQUEST_TIMEOUT = 60s` is an upstream server fact). |
 | **Documentation Baseline Versions** | AO `v0.13.0` (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`), Agy `1.2.7` (`7bb195acaec9e7788df5210d0dc3e15f3cefc6b3`), `tunnel-client` `v0.0.14`. |
 | **Upstream Runtime Proofs (P01)** | Track P01-A (`EXTERNAL_AUDIT_APPROVED`), Track P01-B (`EXTERNAL_AUDIT_APPROVED`), Track P01-C (`EXTERNAL_AUDIT_APPROVED_WITH_ADR_011`), Track P01-D (`TRANSPORT_PROVEN_EXTERNAL_AUDIT_APPROVED`). Phase P01 proof activity is **COMPLETE**. |
-| **Next Approved Action** | External Supervisor re-audit 008 of design package (`PROPOSAL-P03-005 Revision 8`, `DRAFT-ADR-017 Revision 8`, `DRAFT_TASK_CONTRACT_P03_004` JSON). Stop pending re-audit. |
-| **Active Gate** | `TASK_P03_004_CONTRACT_PLANNING` |
+| **Next Approved Action** | External Supervisor release audit of Candidate Task Contract `CONTRACT-TASK-P03-004-01` (`docs/tasks/CANDIDATE_TASK_CONTRACT_P03_004.md`). Stop pending release audit. |
+| **Active Gate** | `TASK_P03_004_RELEASE_AUDIT` |
 | **P01 Execution Status** | `COMPLETE` |
 
 ---
@@ -146,6 +146,7 @@
 | [`P03_ADR_017_EXTERNAL_REAUDIT_005.md`](audits/P03_ADR_017_EXTERNAL_REAUDIT_005.md) | External Supervisor re-audit 005: R5-001/002 CLOSED; go-test-p03-004 profile validated; ADR-017 Rev 6 pending audit; Contract 004 NOT_RELEASED. | 2026-09-24 |
 | [`P03_ADR_017_EXTERNAL_REAUDIT_006.md`](audits/P03_ADR_017_EXTERNAL_REAUDIT_006.md) | External Supervisor re-audit 006: R5-001/002 CLOSED; const flags validated; ADR-017 Rev 7 pending audit; Contract 004 NOT_RELEASED. | 2026-09-24 |
 | [`P03_ADR_017_EXTERNAL_REAUDIT_007.md`](audits/P03_ADR_017_EXTERNAL_REAUDIT_007.md) | External Supervisor re-audit 007: Integration boundary & 4 invariants reconciled; real store.Open probe passed; ADR-017 Rev 8 pending audit; Contract 004 NOT_RELEASED. | 2026-09-24 |
+| [`P03_ADR_017_EXTERNAL_APPROVAL_DECISION.md`](audits/P03_ADR_017_EXTERNAL_APPROVAL_DECISION.md) | `ADR_017 = EXTERNAL_APPROVED`, `ADR_017_ACCEPTANCE = GRANTED`, `PROPOSAL_P03_005 = EXTERNAL_APPROVED`; candidate contract prepared for release audit. | 2026-09-24 |
 | [`PROPOSAL-P03-005`](../proposals/PROPOSAL-P03-005-host-quiescence-and-daemon-bootstrap-integration.md) | Revision 5: Đề xuất TASK-P03-004 phân biệt lock key vs physical file identity, 128-bit FileIdInfo trên ReFS, post-Store.Open verify, two-process probe matrix cho alias | 2026-09-24 |
 | [`DRAFT-ADR-017`](../adr/DRAFT-ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md) | Revision 5: Kiến trúc Host Quiescence (phân biệt lock key vs physical file identity, 128-bit FileIdInfo ReFS, post-Store.Open verify, two-process probe matrix cho alias, probe readiness) | 2026-09-24 |
 | [`PLAN-HOST-INTEGRATION-DEPENDENCY.md`](plans/PLAN-HOST-INTEGRATION-DEPENDENCY.md) | Revision 7: Kế hoạch host quiescence integration phân biệt lock key vs physical file identity, 128-bit FileIdInfo ReFS, đối chiếu post-Store.Open, two-process probe matrix | 2026-09-24 |

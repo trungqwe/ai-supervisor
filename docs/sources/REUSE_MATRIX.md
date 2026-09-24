@@ -1,6 +1,6 @@
 # REUSE MATRIX — ANTI-REINVENTION MAP
 
-> **Authority**: Binding Capability Mapping & Anti-Reinvention Constraints  
+> **Authority**: Binding Capability Mapping & Anti-Reinvention Constraints
 > **Status**: Literal Evidence Corrected (Post-Re-Audit #4 Patch)
 
 ---
@@ -37,3 +37,10 @@ For code evidence in this matrix and all source dossiers, prefer `file path` + `
 ## Execution budget reuse decision
 
 Runtime timeout monitor tái sử dụng `stop.Coordinator` và `Store.ReserveStopOperation` của 3C cho one-use `/kill`, D11/D12 closure và atomic double quarantine; startup `Run` không effect. Supervisor bổ sung v5 budget/policy provenance vì pinned AO không lưu dữ liệu này. Trusted host boundary hiện có được mở thành maintenance scope độc quyền, không dựng admission thứ hai hoặc suy cross-process ownership từ mutex. Legacy `DISPATCHED` không được ép `RUNNING` để gọi stop. Contract revision 3 đã RELEASED; implementation 3D EXTERNAL_AUDIT_APPROVED và code đã MERGED tại `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea`. Không đổi classification của upstream trong bảng trên.
+
+
+## Host Bootstrap & Daemon Lifecycle Reuse Decision (ADR-017)
+
+- **Windows Win32 Kernel APIs**: Tái sử dụng `CreateFileW` (share mode 0 cho sidecar lock, và share READ|WRITE không DELETE cho pinned DB handle), `GetFinalPathNameByHandleW` (chuẩn hóa đường dẫn), `GetFileInformationByHandleEx` (`FILE_ID_INFO` 128-bit trên ReFS/NTFS).
+- **Store SQLite Layer**: Tái sử dụng trọn vẹn `internal/store` và `store.Open(ctx, store.Config{DBPath, BusyTimeoutMs})` mà không viết lại kết nối SQLite hay duplicate migrations.
+- **Domain & Lifecycle Engines**: Tái sử dụng `recovery.Runner`, `stop.Coordinator`, `audit.Store` cho integration harness của Phase P03 mà không tạo mới test surfaces dư thừa.

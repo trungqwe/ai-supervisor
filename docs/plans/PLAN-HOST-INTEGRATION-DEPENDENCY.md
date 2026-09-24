@@ -103,7 +103,7 @@ sequenceDiagram
     Note over Lock: Machine-wide exclusive lock ACQUIRED
     Host->>Host: Atomic write metadata vào .owner.json (pid, instance_id, pipe)
     Host->>Store: Open() & RunMigrations()
-    Host->>Store: Verify DB file identity matches lock key (Mismatch => Store.Close() & FAIL-CLOSED)
+    Host->>Store: Verify physical identity across pinned OS handles (Mismatch => Store.Close() & FAIL-CLOSED)
     Host->>Host: Đóng toàn bộ Listener Admission tiếp nhận request
     end
 
@@ -178,8 +178,8 @@ sequenceDiagram
 | **Case Differences Probe** | `D:\data\db.sqlite` vs `d:\DATA\DB.SQLITE` | Probe xác nhận hai tiến trình quy về cùng volume + file ID và lock path |
 | **Subst Drive Probe** | `X:\db.sqlite` (với `subst X: D:\data`) vs `D:\data\db.sqlite` | Probe kernel handle resolve về cùng volume + file ID; process 2 nhận violation |
 | **Directory Junction Probe** | `D:\junction\db.sqlite` -> `D:\real\db.sqlite` | Probe `GetFinalPathNameByHandleW` resolve về cùng physical identity |
-| **DB Mới (Chưa tồn tại)** | File chưa có trên đĩa | Pre-open parent dir volume check; post-open verify volume + file ID match lock key |
-| **Post-Open Identity Check** | Handle file DB sau `Store.Open()` đối chiếu canonical lock key | Khớp -> Tiếp tục; Mismatch -> `Store.Close()` & FAIL-CLOSED |
+| **DB Mới (Chưa tồn tại)** | File chưa có trên đĩa | Pre-open parent dir volume check; post-open verify opened DB volume matches parent volume and file ID is verified between OS handles |
+| **Post-Open Identity Check** | Handle file DB sau `Store.Open()` đối chiếu pinned OS handle identity | Khớp -> Tiếp tục; Mismatch -> `Store.Close()` & FAIL-CLOSED |
 | **Hard Link Detection** | File có `nNumberOfLinks > 1` | Bị từ chối ngay lập tức: **FAIL-CLOSED** (`ERR_HARDLINK_ALIAS_UNSUPPORTED`) |
 
 ### 5.4. Ranh giới Tooling P03/P04/P05 & An ninh SEC-003

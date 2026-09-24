@@ -88,3 +88,17 @@ Authority: `docs/adr/ADR-016-CLARIFICATION-administrative-stop-risk-acceptance.m
 | EXEC-R1-003 migrate-to-current assertion, không sửa fixture v4/rollback | ADR §3; docs/22 §5 | AC-3D-15; `internal/store/migrations_v4_test.go` và `migrations_v5_test.go` |
 
 Contract revision 3 đã RELEASED; implementation 3D EXTERNAL_AUDIT_APPROVED tại `7513f1b9f39fa459be15e0abc836c6258a610d8b`; `3D-R1-001..005` và `3D-R2-001..002` đã CLOSED ở library scope; code đã MERGED tại `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea`. Host principal, `HOST_QUIESCENCE_INTEGRATION=OPEN` và startup wiring (`DESIGN_BLOCKER_3D_STARTUP_WIRING=PRESERVED`) tiếp tục là dependency runtime.
+
+
+## TASK-P03-004 Host Bootstrap & Lifecycle Coverage (ADR-017)
+
+| Requirement / Invariant | Architecture & Design Reference | Acceptance Criteria |
+|---|---|---|
+| Machine-wide Exclusivity | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md#sec-2.3` | `AC-004-01` |
+| Alias Proof & Fail-Closed | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md#sec-6.5` | `AC-004-02` |
+| Host Pinned DB Handle & 4 Invariants | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md#sec-6.4` | `AC-004-03` |
+| Shutdown Drain & Order | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md#sec-8` | `AC-004-04` |
+| Named Pipe Takeover & SID Check | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md#sec-7` | `AC-004-05` |
+| Startup Readiness Probe | `docs/plans/PLAN-HOST-INTEGRATION-DEPENDENCY.md#sec-4` | `AC-004-06` |
+| P03 Integration Harness | `docs/plans/PLAN-HOST-INTEGRATION-DEPENDENCY.md#sec-5` | `AC-004-07` |
+| Zero Effectful HTTP & UNSET Policy | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md#sec-9` | `AC-004-08` |

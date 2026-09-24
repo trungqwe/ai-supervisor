@@ -32,3 +32,15 @@ Lịch sử 3B candidate gồm v4 durable restore authorization/operation, Pair 
 ## 5. Execution budget design bổ sung cho 3D
 
 Addendum ADR-016 execution budget phê duyệt origin `dispatch_operations.confirmed_at`, immutable policy/deadline v5, startup zero timeout effect và runtime monitor dùng shared host admission + 3C one-use stop. Tx R atomic stop intent/double quarantine/audit; sau reservation observation không admissible thì giữ `STOP_REQUESTED/IN_FLIGHT`, không replay kill. Legacy Run incomplete dùng trusted maintenance độc quyền; historical policy binding và manual stop khác authority, manual stop chỉ exact open `RUNNING`, không ép `DISPATCHED`. Contract revision 3 đã RELEASED tại `68194f739fc5a514cd1f7850027771a77a866d47`; implementation 3D EXTERNAL_AUDIT_APPROVED tại commit `7513f1b9f39fa459be15e0abc836c6258a610d8b`; `3D-R1-001..005` và `3D-R2-001..002` đã CLOSED ở library scope; code đã MERGED tại `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea`. Handoff dependencies (`HOST_QUIESCENCE_INTEGRATION=OPEN`, verified host principal chưa có bằng chứng runtime, `DESIGN_BLOCKER_3D_STARTUP_WIRING=PRESERVED`, `AUTOMATIC_RESTORE=DISABLED`) tiếp tục duy trì đến khi có host bootstrap integration.
+
+
+## 6. Host Bootstrap, Daemon Lifecycle & Integration Harness (TASK-P03-004, ADR-017)
+
+Pursuant to approved PROPOSAL-P03-005 and accepted ADR-017, subtask `TASK-P03-004` is formally incorporated into Phase P03 to close the exit gate without Phase P04/P05 dependencies:
+- **Exclusivity**: Windows machine-wide single instance exclusivity via sidecar lock handle (`<canonical_db_path>.owner.lock`, share mode 0, `OPEN_ALWAYS`, no inherit).
+- **Pinned DB Custody**: Host opens and holds `hPinnedDB` (omitting `FILE_SHARE_DELETE`) preventing file substitution or rename during Store lifetime.
+- **Two DB Paths**: Existing DB pinned handle vs Brand New DB exclusive-create (`CREATE_NEW`) with pre-Store.Open pinning.
+- **Store Integration Boundary**: Host validates local DOS volume path and invokes `store.Open(ctx, store.Config{DBPath, BusyTimeoutMs})`; governed by 4 Invariants without private Store DB inspection.
+- **Readiness & Shutdown**: Startup-before-serve readiness probe; graceful shutdown drain order (close pipe -> drain callers -> Store.Close() -> close hPinnedDB -> clean metadata -> close lock last).
+- **P03 Integration Harness**: Pure library test harness in `test/integration/ao_harness_test.go` asserting 5 exit gate steps via approved internal library APIs without effectful HTTP routes.
+- **Handoff Clearance**: Closes `HOST_QUIESCENCE_INTEGRATION` and `DESIGN_BLOCKER_3D_STARTUP_WIRING` within Phase P03.

@@ -177,7 +177,18 @@ sequenceDiagram
 
 # 3. Adapter Boundaries & Integration Realism
 
-### 3.1 AOAdapter Boundary
+### 2.5 Host Quiescence và Daemon Lifecycle (ADR-017)
+
+ADR-017 (Accepted) thiết lập kiến trúc host bootstrap và quản lý vòng đời daemon trên Windows:
+- **ProcessOwnerLease**: Khóa độc quyền toàn máy sử dụng Windows Exclusive Sidecar Lock File Handle (`<canonical_db_path>.owner.lock`, share mode 0, `OPEN_ALWAYS`, không kế thừa handle) nắm giữ liên tục từ trước khi mở DB đến sau shutdown drain.
+- **Host Pinned DB Handle**: Host nắm giữ handle `hPinnedDB` trực tiếp ở tầng OS (không cấp `FILE_SHARE_DELETE`), kernel Windows bảo đảm không thể xóa hoặc đổi tên file trong suốt thời gian Store hoạt động.
+- **Hai Đường Đi Khởi Tạo DB**:
+  1. *DB Hiện Hữu*: Mở handle pin pre-open -> kiểm tra `nNumberOfLinks == 1` & `FILE_ID_INFO` -> acquire lock -> gọi `store.Open` với DOS path đã xác thực.
+  2. *DB Mới*: Chuẩn hóa thư mục cha -> acquire lock -> tạo file bằng Win32 `CREATE_NEW` và pin trước `store.Open` -> gọi `store.Open` khởi tạo file 0-byte -> kiểm tra volume cha.
+- **Ranh Giới Tích Hợp Store & 4 Invariants**: Host chuyển đổi `\\?\<Drive>:\...` thành `<Drive>:\...` khi đã chứng minh local DOS volume (UNC/device fail-closed); gọi `store.Open` thực tế; thay thế việc đọc `PRAGMA database_list` bằng 4 Invariants.
+- **Takeover Hợp Tác & Shutdown**: Named Pipe xác thực caller token SID; shutdown đóng listener -> drain -> `Store.Close()` -> đóng `hPinnedDB` -> đóng lock cuối cùng.
+
+## 3.1 AOAdapter Boundary
 All execution interactions flow strictly through `AOAdapter`. The adapter encapsulates:
 - Daemon health checks (`GET /healthz`, `GET /readyz`);
 - Harness inventory & readiness probes (`GET /api/v1/agents`, `GET /api/v1/agents/readiness`);
