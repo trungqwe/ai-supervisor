@@ -256,7 +256,7 @@ func TestNamedPipeTakeoverAndStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RequestPipeTakeover failed: %v", err)
 	}
-	if takeoverResp.Status != "DRAINED" {
+	if takeoverResp.Status != "STOP_ACKNOWLEDGED" {
 		t.Fatalf("unexpected takeover response: %+v", takeoverResp)
 	}
 	if !stopCalled {

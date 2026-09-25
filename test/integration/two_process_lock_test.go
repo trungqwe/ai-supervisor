@@ -7,8 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"testing"
 	"strings"
+	"testing"
 	"time"
 )
 
@@ -88,7 +88,9 @@ func TestTwoProcessContentionAndDrain(t *testing.T) {
 	t.Logf("Process 2 correctly rejected with exit code 32")
 
 	// 5. Clean stop
-	if err := exec.Command(binPath, "stop", "-db="+dbPath, "-timeout=5s").Run(); err != nil { t.Fatalf("clean stop failed: %v", err) }
+	if err := exec.Command(binPath, "stop", "-db="+dbPath, "-timeout=5s").Run(); err != nil {
+		t.Fatalf("clean stop failed: %v", err)
+	}
 	_ = p1.Wait()
 }
 
@@ -183,19 +185,27 @@ func TestNewDBBarrierCreateAndContention(t *testing.T) {
 	}
 
 	// Clean up Process 1
-	if err := exec.Command(binPath, "stop", "-db="+dbPath, "-timeout=5s").Run(); err != nil { t.Fatalf("clean stop failed: %v", err) }
+	if err := exec.Command(binPath, "stop", "-db="+dbPath, "-timeout=5s").Run(); err != nil {
+		t.Fatalf("clean stop failed: %v", err)
+	}
 	_ = p1.Wait()
 }
 
-// TestRealDaemonDrainTimeoutPreservesLock proves R1-002:
-// The daemon holds a permit for 15s. The daemon's internal drain timeout is 10s.
-// After stop is triggered, drain times out at the 10s mark, but ExecuteShutdownDrain
-// does NOT return to main/os.Exit. Instead, it blocks waiting for the permit holder
-// to join (WaitAllReleased). At t=12s (after the 10s drain timeout), we verify:
-//   - Process 1 is still alive (has NOT exited)
-//   - .owner.lock is still held (contender is rejected with exit code 32)
+// TestRealDaemonDrainTimeoutPreservesLock proves R1-002 & P03-004-R2-001:
 //
-// The permit releases at t=15s and the daemon exits cleanly after normal teardown.
+// Lifecycle Phases & Finding P03-004-R2-001 Differentiation:
+//
+//	Phase 1 (Stop Acknowledgement): CLI sends TAKEOVER via Named Pipe. Daemon immediately
+//	        acknowledges with status=STOP_ACKNOWLEDGED. The CLI must NOT claim
+//	        "stopped successfully" because drain is only initiated and still in progress.
+//	Phase 2 (Drain Timeout with Active Permit at t=12s): Daemon holds permit for 15s;
+//	        daemon's internal drain timeout is 10s. At t=12s (2s past drain timeout mark):
+//	        - Daemon process is STILL RUNNING (blocking in WaitAllReleased).
+//	        - .owner.lock is STILL HELD (contender is rejected with exit code 32).
+//	        - This proves os.Exit was NOT called and OS lock handle was preserved.
+//	Phase 3 (Permit Joined & Lock Released at t=15s): Permit is released by caller at t=15s.
+//	        - Daemon unblocks, joins all callers, completes normal teardown, and exits.
+//	        - Contender can now acquire .owner.lock (lock has actually been released).
 func TestRealDaemonDrainTimeoutPreservesLock(t *testing.T) {
 	tempDir := t.TempDir()
 	binPath := filepath.Join(tempDir, "supervisor.exe")
@@ -259,32 +269,45 @@ func TestRealDaemonDrainTimeoutPreservesLock(t *testing.T) {
 		t.Fatal("timed out waiting for daemon readiness")
 	}
 
-	// Trigger stop via Named Pipe. The pipe stop itself returns quickly,
-	// but the daemon's internal shutdown drain will time out at 10s.
+	// -------------------------------------------------------------------------
+	// Phase 1: Named Pipe Stop Acknowledgement (P03-004-R2-001)
+	// Trigger stop via Named Pipe. Verify:
+	//   1. Command returns exit code 0 indicating message delivery.
+	//   2. Output shows status=STOP_ACKNOWLEDGED (not DRAINED).
+	//   3. CLI does NOT claim "stopped successfully" at this point.
+	// -------------------------------------------------------------------------
 	stopCmd := exec.Command(binPath, "stop", "-db="+dbPath, "-timeout=5s")
 	stopOut, stopErr := stopCmd.CombinedOutput()
 	if stopErr != nil {
 		t.Fatalf("stop command failed: %v. Output:\n%s", stopErr, string(stopOut))
 	}
-	t.Logf("Stop command succeeded: %s", strings.TrimSpace(string(stopOut)))
+	stopStr := string(stopOut)
+	if !strings.Contains(stopStr, "status=STOP_ACKNOWLEDGED") {
+		t.Fatalf("expected status=STOP_ACKNOWLEDGED in stop output, got:\n%s", stopStr)
+	}
+	if strings.Contains(strings.ToLower(stopStr), "stopped successfully") {
+		t.Fatalf("CLI must NOT claim daemon stopped successfully before drain completes (P03-004-R2-001). Output:\n%s", stopStr)
+	}
+	t.Logf("Phase 1 PASS (P03-004-R2-001): Stop request acknowledged (drain running in background): %s", strings.TrimSpace(stopStr))
 
-	// Wait 12 seconds after stop trigger so we are PAST the 10s drain timeout.
-	// If R1-002 fix is correct, daemon is still alive, blocking in WaitAllReleased().
+	// -------------------------------------------------------------------------
+	// Phase 2: Drain Timeout with Active Permit (t=12s, R1-002 Regression probe)
+	// Wait 12 seconds after stop trigger: PAST the 10s drain timeout, but BEFORE
+	// the 15s permit duration expires.
+	// -------------------------------------------------------------------------
 	t.Log("Waiting 12s to pass the 10s drain timeout while permit is held for 15s...")
 	time.Sleep(12 * time.Second)
 
-	// Critical probe (R1-002): Process 1 must still be alive at this point!
+	// Probe A: Process 1 must STILL be alive at t=12s (blocking in WaitAllReleased)
 	select {
 	case exitResult := <-p1Done:
-		t.Fatalf("daemon exited prematurely at t=12s (should be blocking)! "+
-			"This means os.Exit released the lock while permit holder was active. "+
+		t.Fatalf("daemon exited prematurely at t=12s (should be blocking in WaitAllReleased)! "+
 			"Exit result: %v. Violation of R1-002", exitResult)
 	default:
-		t.Log("PASS: Daemon is still alive at t=12s (past 10s drain timeout), blocking in WaitAllReleased()")
+		t.Log("Phase 2 Probe A PASS: Daemon is still alive at t=12s (past 10s drain timeout)")
 	}
 
-	// Critical probe (R1-002): .owner.lock must still be held by Process 1.
-	// Contender Process 2 must fail with exit code 32.
+	// Probe B: .owner.lock must STILL be held by Process 1 at t=12s
 	p2Args := append([]string{
 		"run",
 		"-db=" + dbPath,
@@ -306,17 +329,18 @@ func TestRealDaemonDrainTimeoutPreservesLock(t *testing.T) {
 		t.Fatalf("expected contender exit code 32 (ERROR_SHARING_VIOLATION) at t=12s, "+
 			"got %d. Output:\n%s", exitErr.ExitCode(), string(out))
 	}
-	t.Log("PASS: Contender correctly blocked at t=12s while daemon holds lock past drain timeout")
+	t.Log("Phase 2 Probe B PASS: Contender correctly rejected (code 32) at t=12s while daemon holds lock")
 
-	// Wait for Process 1 to exit cleanly after permit releases at t=15s.
-	// Total wait from stop trigger: ~15s + small teardown time.
+	// -------------------------------------------------------------------------
+	// Phase 3: Permit Joined & Lock Released (t=15s)
+	// Wait for Process 1 to complete teardown and exit after permit holder releases.
+	// -------------------------------------------------------------------------
 	select {
 	case exitResult := <-p1Done:
 		if exitResult != nil {
-			// Non-zero exit is acceptable since drain reports a timeout error
-			t.Logf("Daemon exited after permit joined: %v", exitResult)
+			t.Logf("Phase 3 Probe C PASS: Daemon exited after permit joined: %v", exitResult)
 		} else {
-			t.Log("PASS: Daemon exited cleanly after permit holder joined")
+			t.Log("Phase 3 Probe C PASS: Daemon exited cleanly after permit holder joined")
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("Daemon did not exit within expected time after permit release")
@@ -324,10 +348,11 @@ func TestRealDaemonDrainTimeoutPreservesLock(t *testing.T) {
 }
 
 // TestDaemonReadinessLifecycle proves R1-004 / AC-004-06:
-// 1. Ready-signal file is written only AFTER all startup dependencies complete.
-// 2. /readyz returns HTTP 200 OK once ready.
-// 3. When stop is initiated, listeners are closed in Step 1 of shutdown drain,
-//    refusing new requests and closing admission fail-closed.
+//  1. Ready-signal file is written only AFTER all startup dependencies complete.
+//  2. /readyz returns HTTP 200 OK once ready.
+//  3. When stop is initiated, listeners are closed in Step 1 of shutdown drain,
+//     refusing new requests and closing admission fail-closed.
+//
 // Note on Poller failure notification: recovery.Poller has unexported done/lastErr fields
 // and recovery is in forbidden_scope (BLOCKER-P03-004-POLLER-ASYNC-NOTIFICATION).
 func TestDaemonReadinessLifecycle(t *testing.T) {

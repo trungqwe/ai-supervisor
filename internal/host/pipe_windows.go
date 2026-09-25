@@ -232,8 +232,10 @@ func (s *NamedPipeServer) handleClient(h windows.Handle) {
 				return
 			}
 		}
+		// Return STOP_ACKNOWLEDGED to accurately reflect that the stop signal was received
+		// and shutdown drain initiated, rather than claiming drain is already complete (P03-004-R2-001).
 		resp := PipeMessageResponse{
-			Status:     "DRAINED",
+			Status:     "STOP_ACKNOWLEDGED",
 			InstanceID: s.InstanceID,
 			PID:        s.PID,
 		}
