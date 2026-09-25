@@ -6,7 +6,7 @@
 > **Supersedes Contract ID**: `CONTRACT-TASK-P03-004-01`
 > **Phase ID**: `P03`
 > **Base SHA**: `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea`
-> **Status**: `PROPOSED` (Du thao phuc vu Change Governance theo PROPOSAL-P03-006)
+> **Status**: `PROPOSED` (Dự thảo phục vụ Change Governance theo PROPOSAL-P03-006)
 > **Authority**: Formulated pursuant to accepted `ADR-017`, `ADR-016`, approved `PROPOSAL-P03-005`, and proposed `PROPOSAL-P03-006`.
 > **Implementation Scope**: Authorized strictly within `allowed_scope` on branch `codex/p03-004` upon formal release.
 > **Runtime Invariants**: `AUTOMATIC_RESTORE = DISABLED`; verified host principal remains `OPEN` dependency at trusted boundary; zero Phase P04/P05 dependencies.
@@ -34,13 +34,14 @@
   ],
   "architecture_refs": [
     "docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md",
-    "docs/adr/ADR-016-lifecycle-reconciliation-and-session-binding.md",
+    "docs/adr/ADR-016-durable-dispatch-session-binding-and-lifecycle-reconciliation.md",
     "docs/proposals/PROPOSAL-P03-005-host-quiescence-and-daemon-bootstrap-integration.md",
     "docs/proposals/PROPOSAL-P03-006-seam-scope-reconciliation-and-contract-revision.md",
     "docs/plans/PLAN-HOST-INTEGRATION-DEPENDENCY.md",
     "docs/04_ARCHITECTURE.md",
     "docs/05_DOMAIN_MODEL.md",
     "docs/08_TASK_CONTRACT.md",
+    "docs/11_CHATGPT_TOOL_SURFACE.md",
     "docs/14_FAILURE_RECOVERY.md",
     "docs/21_TRACEABILITY_MATRIX.md",
     "docs/22_MODULE_PROVENANCE.md"
@@ -63,48 +64,139 @@
     "internal/recovery/integration_test.go",
     "internal/recovery/timeout_monitor_test.go",
     "internal/recovery/scanner_test.go",
+    "internal/ao/probes.go",
+    "internal/ao/projects.go",
+    "internal/ao/sessions.go",
+    "internal/ao/session_commands.go",
+    "internal/ao/session_commands_test.go",
+    "internal/ao/wire_types.go",
     "internal/dispatch/**",
     "internal/domain/**",
     "internal/stop/**",
     "internal/store/**",
     "internal/evidence/**",
-    "internal/review/**",
-    "internal/tools/**",
-    "docs/adr/**",
-    "docs/02_REQUIREMENTS.md",
-    "docs/04_ARCHITECTURE.md",
-    "docs/05_DOMAIN_MODEL.md",
-    "docs/06_WORKFLOW_STATE_MACHINE.md",
-    "docs/08_TASK_CONTRACT.md",
-    "docs/11_CHATGPT_TOOL_SURFACE.md",
-    "docs/12_UPSTREAM_INTEGRATION.md",
-    "docs/14_FAILURE_RECOVERY.md",
-    "docs/17_ROADMAP.md",
-    "docs/18_CURRENT_STATE.md",
-    "docs/21_TRACEABILITY_MATRIX.md",
-    "docs/22_MODULE_PROVENANCE.md",
-    "docs/phases/**",
-    "AGENTS.md"
+    "internal/review/**"
   ],
   "constraints": [
     "Exclusive sidecar lock handle contract on Windows: CreateFileW on <canonical_db_path>.owner.lock with GENERIC_READ|GENERIC_WRITE, dwShareMode=0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, bInheritHandle=FALSE",
+    "Canonical DB path via GetFinalPathNameByHandleW(VOLUME_NAME_DOS); hard links (nNumberOfLinks > 1) rejected fail-closed with ERR_HARDLINK_ALIAS_UNSUPPORTED",
     "Post-Store.Open identity validation: verify VolumeSerialNumber and FileId of opened DB matches pre-open pinned OS handle identity (and volume matches parent volume for new DB); mismatch triggers immediate Store.Close() and fail-closed",
-    "Shutdown order: close Named Pipe listener -> drain callers (if drain times out, wait for all active callers to join before releasing lock) -> Store.Close() -> remove .owner.json ONLY IF owner_instance_id matches -> CloseHandle(.owner.lock) LAST",
-    "Named Pipe security: authenticate caller SID via ImpersonateNamedPipeClient and token check, verify return errors, revert context via RevertToSelf(); TAKEOVER response returns STOP_ACKNOWLEDGED; CLI must NOT claim stopped successfully before drain finishes",
+    "Shutdown order: close Named Pipe listener -> drain callers -> Store.Close() -> remove .owner.json ONLY IF owner_instance_id matches -> CloseHandle(.owner.lock) LAST",
+    "Named Pipe security: authenticate caller SID via ImpersonateNamedPipeClient and token check, verify return errors, revert context via RevertToSelf(); owner_instance_id is strictly a freshness marker",
     "Binary readiness probe on cmd/supervisor proves socket refused before Run, and 200 OK only after Run Complete; zero Pair HTTP routes or effectful Supervisor API on daemon listener",
-    "Poller async notification: recovery.Poller must export Done() <-chan struct{} and Err() error; host watcher must monitor Done() and transition /readyz to 503 and auth.SetUnavailable() fail-closed upon observation error",
-    "Typed AO workspace read: ao.Client must provide GetWorkspaceFile with URL query path encoding, context cancellation, bounded read cutoff (io.LimitReader maxBytes+1 returning ErrPayloadTooLarge), and guaranteed body closure",
     "Pair hold and 5 AO exit gate steps proven via P03 Integration Test Harness directly invoking approved library APIs without P04/P05 dependencies",
-    "All 8 operational policies remain UNSET in documentation, failing closed at runtime if missing; AUTOMATIC_RESTORE remains DISABLED"
+    "All 8 operational policies remain UNSET in documentation, failing closed at runtime if missing; AUTOMATIC_RESTORE remains DISABLED",
+    "Poller error notification constraint: recovery.Poller must expose Done() <-chan struct{} and Err() error; background failure in PollOnce closes done within 1 tick; host watcher observes closed channel and marks admission unavailable fail-closed via SetUnavailable() without crashing daemon or releasing lock",
+    "AO workspace read constraint: ao.Client.GetWorkspaceFile must enforce context cancellation, close response body on all paths, limit payload consumption to opts.MaxBytes+1, and reject payloads exceeding limit with ErrPayloadTooLarge fail-closed"
   ],
   "acceptance_criteria": [
     "AC-004-01: cmd/supervisor implements Windows exclusive sidecar lock file handle (.owner.lock) with share mode 0, failing closed on contention",
-    "AC-004-02: DB post-open verification confirms opened SQLite physical file matches pre-open pinned handle identity",
-    "AC-004-03: ExecuteShutdownDrain blocks until all active callers join via Authority.WaitAllReleased() on timeout, preserving lock ownership until clean exit",
-    "AC-004-04: Named Pipe TAKEOVER returns status=STOP_ACKNOWLEDGED; CLI stop does not claim stopped successfully before drain completes",
-    "AC-004-05: recovery.Poller exports Done() and Err(); host watcher transitions /readyz to 503 and closes admission immediately on background failure",
-    "AC-004-06: ao.Client.GetWorkspaceFile cleanly reads workspace files, rejects oversized payloads with ErrPayloadTooLarge, obeys context cancellation, and closes body",
-    "AC-004-07: P03 integration test harness verifies 5 AO exit gate steps via approved library APIs without P04/P05 dependencies"
+    "AC-004-02: Path lock key derivation is strictly distinguished from physical file ID; aliases (subst, junctions, casing) are only admitted upon runtime probe proof of convergence to identical canonical lock key, otherwise fail-closed without unconditional support promises",
+    "AC-004-03: Host holds pinned DB handle (no FILE_SHARE_DELETE) preventing file substitution during entire Store lifecycle; converts validated Win32 DOS path to Store DBPath while UNC/device paths fail-closed; invokes store.Open(ctx, store.Config{DBPath, BusyTimeoutMs}) without inspecting private DB pragmas; physical identity validations compare VolumeSerialNumber and 128-bit FileId between OS handles and parent volume, closing Store and failing closed on any mismatch",
+    "AC-004-04: Shutdown drain sequence closes pipe listener, drains callers, closes Store, cleans metadata if instance matches, and closes lock handle LAST",
+    "AC-004-05: Named Pipe takeover verifies caller SID via Impersonation and token check, reverts context via RevertToSelf(), and treats owner_instance_id as freshness marker",
+    "AC-004-06: Binary readiness probe proves port closed before Run and open after Complete; Pair hold proven via Store/admission guards in harness",
+    "AC-004-07: P03 Integration Test Harness verifies 5 AO exit gate steps (session create, dispatch, observation reconciliation, raw file read, teardown) via internal library APIs",
+    "AC-004-08: Zero effectful HTTP routes on daemon; 8 policies remain UNSET and fail closed; AUTOMATIC_RESTORE remains DISABLED; test suite passes with -race",
+    "AC-004-09: recovery.Poller exports Done() <-chan struct{} and Err() error; host poller watcher observes background PollOnce failure and transitions /readyz probe to HTTP 503 Service Unavailable and marks admission unavailable without process crash",
+    "AC-004-10: ao.Client provides GetWorkspaceFile with context cancellation, body closure, bounded LimitReader reading, and ErrPayloadTooLarge rejection; P03 integration test harness invokes Client.GetWorkspaceFile directly in Step 4"
+  ],
+  "verification_requests": [
+    {
+      "id": "VR-P03-004-HOST-TESTS",
+      "profile_id": "go-test-p03-004",
+      "parameters": {
+        "package": "./internal/host/...",
+        "flags": [
+          "-v",
+          "-race",
+          "-count=1"
+        ]
+      },
+      "cwd": ".",
+      "timeout_seconds": 300
+    },
+    {
+      "id": "VR-P03-004-CMD-TESTS",
+      "profile_id": "go-test-p03-004",
+      "parameters": {
+        "package": "./cmd/supervisor/...",
+        "flags": [
+          "-v",
+          "-race",
+          "-count=1"
+        ]
+      },
+      "cwd": ".",
+      "timeout_seconds": 300
+    },
+    {
+      "id": "VR-P03-004-INTEGRATION-TESTS",
+      "profile_id": "go-test-p03-004",
+      "parameters": {
+        "package": "./test/integration/...",
+        "flags": [
+          "-v",
+          "-race",
+          "-count=1"
+        ]
+      },
+      "cwd": ".",
+      "timeout_seconds": 300
+    }
+  ],
+  "required_evidence": [
+    "git_diff",
+    "git_diff_check",
+    "test_exit_code_zero",
+    "race_detector_zero_warnings",
+    "windows_cross_session_lock_evidence",
+    "startup_before_serve_probe_evidence",
+    "shutdown_drain_cleanup_evidence",
+    "db_identity_post_open_match_evidence",
+    "pair_hold_admission_guard_evidence",
+    "ao_integration_harness_pass_evidence",
+    "poller_async_error_notification_evidence",
+    "ao_workspace_file_typed_client_evidence"
+  ],
+  "worker_profile": "antigravity-standard",
+  "report_contract": "docs/schemas/worker-report.schema.json",
+  "stop_conditions": [
+    "Attempting to modify files outside allowed_scope or touching forbidden_scope",
+    "Windows filesystem fails to support mandatory exclusive file locking or GetFinalPathNameByHandleW",
+    "Hard link alias detected on database file (nNumberOfLinks > 1)",
+    "Post-Store.Open physical DB file identity does not match pre-open pinned OS handle identity or parent volume",
+    "Attempting to introduce effectful HTTP routes, arbitrary shell execution, or automatic restore into P03",
+    "Operational policies assigned default fallback values instead of failing closed when UNSET",
+    "Modifying recovery or ao files outside the specifically allowed files (poller.go, poller_test.go, client.go, types.go, client_test.go)"
   ]
 }
 ```
+
+---
+
+## 2. Revision Delta (Contract 01 vs Revision 2 Draft)
+
+| Field / Section | Contract 01 (Baseline) | Revision 2 Draft (Proposed) | Governance Rationale |
+|---|---|---|---|
+| `contract_id` | `CONTRACT-TASK-P03-004-01` | `CONTRACT-TASK-P03-004-02` | Monotonic revision identifier |
+| `revision_number` | `1` | `2` | Linear revision progression |
+| `supersedes_contract_id` | `null` | `CONTRACT-TASK-P03-004-01` | Explicit supersedes lineage link |
+| `allowed_scope` | `cmd/supervisor/**`, `internal/host/**`, `test/integration/**` | + `internal/recovery/poller.go`, `internal/recovery/poller_test.go`, `internal/ao/client.go`, `internal/ao/types.go`, `internal/ao/client_test.go` | Narrowest whitelist expansion to resolve Seams 1 & 2 per PROPOSAL-P03-006 |
+| `forbidden_scope` | Broad subsystem globs | Fine-grained file-level exclusions for all non-whitelisted files in `recovery` and `ao` | Enforces Task Scope Immutability on untouched files |
+| `constraints` | 8 baseline constraints | 8 baseline + 2 new (Poller error notification & AO workspace read) | Formalizes asynchronous signal & bounded read guards |
+| `acceptance_criteria` | `AC-004-01` .. `AC-004-08` | `AC-004-01` .. `AC-004-08` + `AC-004-09` + `AC-004-10` | Distinct IDs for new verifiable acceptance criteria |
+| `required_evidence` | 10 baseline evidence items | 10 baseline + 2 new (`poller_async_error_notification_evidence`, `ao_workspace_file_typed_client_evidence`) | Verifiable claims required in worker report |
+| `stop_conditions` | 6 baseline stop conditions | 6 baseline + 1 new (Prohibits modifying recovery/ao outside 5 specific files) | Fail-closed guard against unintended scope creep |
+
+---
+
+## 3. Pre-Release Invariants & Guardrails
+
+1. **Pre-Release Code Hold**:
+   - No modifications to `internal/recovery/**` or `internal/ao/**` may be committed on `codex/p03-004` until this contract is formally reviewed, approved, and released by External Supervisor.
+2. **Deterministic Validation**:
+   - The JSON object in Section 1 passes full schema validation against `docs/schemas/task-contract.schema.json` and semantic validation against `internal/contract/validator.go`.
+3. **Runtime Invariants**:
+   - `AUTOMATIC_RESTORE = DISABLED`.
+   - Verified host principal remains `OPEN` dependency at trusted boundary.
