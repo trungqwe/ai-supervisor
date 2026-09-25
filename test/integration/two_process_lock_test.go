@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"strings"
 	"time"
 )
 
@@ -87,7 +88,7 @@ func TestTwoProcessContentionAndDrain(t *testing.T) {
 	t.Logf("Process 2 correctly rejected with exit code 32")
 
 	// 5. Clean stop
-	_ = exec.Command(binPath, "stop", "-db="+dbPath, "-timeout=5s").Run()
+	if err := exec.Command(binPath, "stop", "-db="+dbPath, "-timeout=5s").Run(); err != nil { t.Fatalf("clean stop failed: %v", err) }
 	_ = p1.Wait()
 }
 
@@ -182,7 +183,7 @@ func TestNewDBBarrierCreateAndContention(t *testing.T) {
 	}
 
 	// Clean up Process 1
-	_ = exec.Command(binPath, "stop", "-db="+dbPath, "-timeout=5s").Run()
+	if err := exec.Command(binPath, "stop", "-db="+dbPath, "-timeout=5s").Run(); err != nil { t.Fatalf("clean stop failed: %v", err) }
 	_ = p1.Wait()
 }
 
@@ -261,7 +262,11 @@ func TestRealDaemonDrainTimeoutPreservesLock(t *testing.T) {
 	// Trigger stop via Named Pipe. The pipe stop itself returns quickly,
 	// but the daemon's internal shutdown drain will time out at 10s.
 	stopCmd := exec.Command(binPath, "stop", "-db="+dbPath, "-timeout=5s")
-	_ = stopCmd.Run()
+	stopOut, stopErr := stopCmd.CombinedOutput()
+	if stopErr != nil {
+		t.Fatalf("stop command failed: %v. Output:\n%s", stopErr, string(stopOut))
+	}
+	t.Logf("Stop command succeeded: %s", strings.TrimSpace(string(stopOut)))
 
 	// Wait 12 seconds after stop trigger so we are PAST the 10s drain timeout.
 	// If R1-002 fix is correct, daemon is still alive, blocking in WaitAllReleased().

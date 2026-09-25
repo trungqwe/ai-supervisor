@@ -378,10 +378,16 @@ func TestP03IntegrationHarness5StepsViaLibrarySaga(t *testing.T) {
 		t.Fatalf("expected HTTP 200 for workspace read, got %d", resp.StatusCode)
 	}
 
-	// Bounded reading via io.LimitReader prevents unbounded memory consumption (R1-005)
-	reportBytes, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	// Harness-level bounded read guard (reads up to limit+1, rejects if payload > limit).
+	// NOTE (R1-005): This harness check is strictly a defensive client-side guard, NOT
+	// an approved solution for the missing upstream typed seam API.
+	maxWorkspaceBytes := int64(10 << 20) // 10MB limit
+	reportBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxWorkspaceBytes+1))
 	if err != nil {
 		t.Fatalf("Step 4 read body failed: %v", err)
+	}
+	if int64(len(reportBytes)) > maxWorkspaceBytes {
+		t.Fatalf("Step 4 payload exceeded size limit of %d bytes", maxWorkspaceBytes)
 	}
 	if string(reportBytes) != mockServer.workspaceFile {
 		t.Fatalf("report bytes mismatch: got %q, want %q", string(reportBytes), mockServer.workspaceFile)
