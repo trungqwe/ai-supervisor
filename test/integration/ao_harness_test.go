@@ -378,7 +378,8 @@ func TestP03IntegrationHarness5StepsViaLibrarySaga(t *testing.T) {
 		t.Fatalf("expected HTTP 200 for workspace read, got %d", resp.StatusCode)
 	}
 
-	reportBytes, err := io.ReadAll(resp.Body)
+	// Bounded reading via io.LimitReader prevents unbounded memory consumption (R1-005)
+	reportBytes, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		t.Fatalf("Step 4 read body failed: %v", err)
 	}
@@ -396,6 +397,15 @@ func TestP03IntegrationHarness5StepsViaLibrarySaga(t *testing.T) {
 	}
 	if parsedReport.TaskID != "TASK-P03-004" || parsedReport.Status != "COMPLETED" {
 		t.Fatalf("unexpected parsed report contents: %+v", parsedReport)
+	}
+
+	// Verify context cancellation contract (R1-005): cancelled context must fail closed
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cancelReq, _ := http.NewRequestWithContext(cancelledCtx, http.MethodGet, ts.URL+fmt.Sprintf("/api/v1/sessions/%s/workspace/file?path=%s", sessionID, reportPath), nil)
+	if cancelResp, err := ts.Client().Do(cancelReq); err == nil {
+		cancelResp.Body.Close()
+		t.Fatal("expected request with cancelled context to fail, but succeeded")
 	}
 
 	// Step 5: Teardown / Stop Session via stop.Coordinator.Start

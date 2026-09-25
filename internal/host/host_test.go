@@ -293,7 +293,7 @@ func TestDrainTimeoutPreservesLockAndStore(t *testing.T) {
 	auth := host.NewAuthority("principal")
 	ctx := context.Background()
 
-	// Acquire in-flight permit that is NOT released
+	// Acquire in-flight permit that will be held for 100ms
 	permit, err := auth.AcquireExclusiveScope(ctx, "active-pair", "IN_FLIGHT_CALLER")
 	if err != nil {
 		t.Fatal(err)
@@ -311,38 +311,97 @@ func TestDrainTimeoutPreservesLockAndStore(t *testing.T) {
 		OwnerLease: lease,
 	}
 
-	// Execute drain with very short timeout
+	// Release permit after 100ms in a goroutine
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		_ = permit.Release()
+	}()
+
+	// Probe contender lock contention during the timeout period (at 40ms, while drain timeout is 20ms)
+	contenderChecked := make(chan struct{})
+	go func() {
+		time.Sleep(40 * time.Millisecond)
+		// Contender trying to acquire .owner.lock must be rejected with ErrSharingViolation
+		// because ExecuteShutdownDrain has NOT released the lock!
+		_, contenderErr := host.AcquireProcessOwnerLease(pinned.CanonicalDBPath, "contender-inst")
+		if !errors.Is(contenderErr, host.ErrSharingViolation) {
+			t.Errorf("expected contender to fail with ErrSharingViolation while lock preserved at 40ms, got %v", contenderErr)
+		}
+		close(contenderChecked)
+	}()
+
+	// Execute drain with 20ms timeout.
+	// Drain times out at 20ms, but ExecuteShutdownDrain blocks until 100ms when permit joins (R1-002).
+	start := time.Now()
 	err = host.ExecuteShutdownDrain(20*time.Millisecond, comps)
+	elapsed := time.Since(start)
+
 	if err == nil {
-		t.Fatal("expected ExecuteShutdownDrain to fail with timeout when permit held, got nil")
+		t.Fatal("expected ExecuteShutdownDrain to report drain completed with timeout, got nil")
 	}
-	if !strings.Contains(err.Error(), "drain timeout") {
+	if !strings.Contains(err.Error(), "drain completed after timeout") && !strings.Contains(err.Error(), "drain timeout") {
 		t.Fatalf("expected drain timeout error, got %v", err)
 	}
 
-	// Invariant (R1-002): Store and PinnedDB must NOT be closed, and owner lock must NOT be released
-	if storeCloser.closed {
-		t.Fatal("Store was closed despite drain timeout! Violation of R1-002")
-	}
-	if pinnedCloser.closed {
-		t.Fatal("PinnedDB was closed despite drain timeout! Violation of R1-002")
+	<-contenderChecked
+
+	// Must have waited at least ~80ms (proving it blocked until permit holder joined)
+	if elapsed < 80*time.Millisecond {
+		t.Fatalf("ExecuteShutdownDrain returned too early (%v), did not wait for permit holder to join (R1-002)", elapsed)
 	}
 
-	// Contender trying to acquire .owner.lock must be rejected with ErrSharingViolation
-	_, contenderErr := host.AcquireProcessOwnerLease(pinned.CanonicalDBPath, "contender-inst")
-	if !errors.Is(contenderErr, host.ErrSharingViolation) {
-		t.Fatalf("expected contender to fail with ErrSharingViolation while lock preserved, got %v", contenderErr)
-	}
-
-	// Now release the held permit
-	_ = permit.Release()
-
-	// Subsequent drain succeeds cleanly
-	err = host.ExecuteShutdownDrain(1*time.Second, comps)
-	if err != nil {
-		t.Fatalf("expected successful drain after permit released, got %v", err)
-	}
+	// Invariant (R1-002): After all permit holders joined, normal teardown completed:
 	if !storeCloser.closed {
-		t.Fatal("expected Store to be closed after clean drain")
+		t.Fatal("Store was not closed after permit holder joined")
+	}
+	if !pinnedCloser.closed {
+		t.Fatal("PinnedDB was not closed after permit holder joined")
+	}
+	if !schedCloser.closed {
+		t.Fatal("Schedulers were not closed after permit holder joined")
+	}
+
+	// Subsequent contender can now acquire .owner.lock because normal teardown closed the handle
+	contenderLease, err := host.AcquireProcessOwnerLease(pinned.CanonicalDBPath, "contender-after-clean")
+	if err != nil {
+		t.Fatalf("expected contender to succeed after clean teardown, got %v", err)
+	}
+	_ = contenderLease.CloseLockHandle()
+}
+
+func TestAuthorityDrainTimeoutClosesAdmissionAndBlocks(t *testing.T) {
+	auth := host.NewAuthority("principal")
+	ctx := context.Background()
+
+	// Acquire in-flight permit
+	permit, err := auth.AcquireExclusiveScope(ctx, "pair-adm", "WORKER_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Drain times out with 20ms
+	err = auth.Drain(20 * time.Millisecond)
+	if !errors.Is(err, host.ErrDrainTimeout) {
+		t.Fatalf("expected ErrDrainTimeout, got %v", err)
+	}
+
+	// Admission is closed: new permits are rejected
+	_, err = auth.AcquireExclusiveScope(ctx, "pair-adm-2", "WORKER_2")
+	if err == nil || !strings.Contains(err.Error(), "draining") {
+		t.Fatalf("expected admission closed error, got %v", err)
+	}
+
+	// Background release after 60ms
+	go func() {
+		time.Sleep(60 * time.Millisecond)
+		_ = permit.Release()
+	}()
+
+	start := time.Now()
+	auth.WaitAllReleased()
+	elapsed := time.Since(start)
+
+	if elapsed < 50*time.Millisecond {
+		t.Fatalf("WaitAllReleased returned too early (%v), expected >= 50ms", elapsed)
 	}
 }

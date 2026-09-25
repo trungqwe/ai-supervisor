@@ -172,6 +172,8 @@ func (a *Authority) AcquireEffect(ctx context.Context, pairID, caller string) (s
 }
 
 // Drain blocks until all in-flight scopes have been released or timeout occurs.
+// After Drain returns (whether success or timeout), admission is closed (draining=true)
+// and no new permits can be acquired.
 func (a *Authority) Drain(timeout time.Duration) error {
 	a.mu.Lock()
 	a.draining = true
@@ -189,4 +191,13 @@ func (a *Authority) Drain(timeout time.Duration) error {
 	case <-time.After(timeout):
 		return ErrDrainTimeout
 	}
+}
+
+// WaitAllReleased blocks indefinitely until all in-flight scopes/permits have been released.
+// CRITICAL (R1-002): This is the fail-closed join mechanism. When Drain() times out because
+// an effect caller still holds a permit, the daemon calls WaitAllReleased() instead of
+// returning to main/os.Exit, which would release the OS lock handle. Admission is already
+// closed from the preceding Drain() call, so no new permits can be acquired.
+func (a *Authority) WaitAllReleased() {
+	a.activeOps.Wait()
 }

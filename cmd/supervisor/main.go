@@ -105,7 +105,6 @@ func runDaemon(args []string) error {
 	testHoldPermitDuration := fs.Duration("test-hold-permit-duration", 0, "Test hook: hold an active permit to test drain timeout")
 	testPauseBeforeCreateDuration := fs.Duration("test-pause-before-create-duration", 0, "Test hook: pause after lock acquisition before CREATE_NEW")
 	testLockAcquiredSignal := fs.String("test-lock-acquired-signal", "", "Test hook: write file when owner lock is acquired before CREATE_NEW")
-	testFailPoller := fs.Bool("test-fail-poller", false, "Test hook: inject failure after startup to verify readiness closes fail-closed")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -320,22 +319,11 @@ func runDaemon(args []string) error {
 		}
 	}()
 
-	// Poller fault injection / health check loop (R1-004)
-	go func() {
-		ticker := time.NewTicker(policies.SupervisorActivityPollInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-pollerCtx.Done():
-				return
-			case <-ticker.C:
-				if *testFailPoller {
-					setUnhealthy("Poller (Injected)", errors.New("injected background poller failure"))
-					return
-				}
-			}
-		}
-	}()
+	// Note on Poller failure notification (R1-004 / BLOCKER-P03-004-POLLER-ASYNC-NOTIFICATION):
+	// recovery.Poller runs in a background goroutine launched by poller.Start(ctx).
+	// Because recovery.Poller's done channel and lastErr are unexported and recovery is in
+	// forbidden_scope, the host does not have an asynchronous notification channel while
+	// running. The host joins poller during shutdown drain via poller.Stop().
 
 	pollerCloser := &fnCloser{fn: func() error {
 		cancelPoller()
@@ -453,9 +441,10 @@ func runDaemon(args []string) error {
 	}
 
 	if drainErr != nil {
-		// When drain times out, resources were intentionally NOT closed to preserve ownership (R1-002).
-		// Return error fail-closed without touching lease/store.
-		return fmt.Errorf("shutdown drain failed: %w", drainErr)
+		// R1-002: When drain timed out, ExecuteShutdownDrain blocked until all active
+		// permit holders joined, then completed normal teardown (Store, PinnedDB, lock).
+		// Resources have been properly released. Return the drain error for logging.
+		return fmt.Errorf("shutdown drain completed with timeout: %w", drainErr)
 	}
 
 	return nil

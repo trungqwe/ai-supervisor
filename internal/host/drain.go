@@ -20,8 +20,10 @@ type ShutdownComponents struct {
 // ExecuteShutdownDrain enforces the immutable teardown protocol:
 //  1. Close listeners (Named Pipe, HTTP probe) so no new requests enter.
 //  2. Wait/drain in-flight operations with drainTimeout.
-//     CRITICAL (R1-002): If drain times out or fails, fail-closed immediately!
-//     DO NOT close Store, DO NOT close PinnedDB, and DO NOT release .owner.lock.
+//     CRITICAL (R1-002): If drain times out because an effect caller still holds a permit,
+//     keep admission closed and ownership held. Block until ALL permits are released
+//     (join the caller), then proceed with normal teardown. NEVER return to main/os.Exit
+//     while a permit holder is still active, because process exit releases the OS lock.
 //  3. Stop background schedulers (poller, TimeoutMonitor) and join (R1-004).
 //  4. Clean .owner.json metadata file IF AND ONLY IF instance ID matches.
 //  5. Store.Close() to flush WAL and close SQLite connection.
@@ -46,9 +48,19 @@ func ExecuteShutdownDrain(timeout time.Duration, c ShutdownComponents) error {
 	// Step 2: Drain active callers/operations
 	if c.Authority != nil {
 		if err := c.Authority.Drain(timeout); err != nil {
-			// CRITICAL (R1-002): If drain times out or fails because active permits are still held,
-			// fail-closed immediately. DO NOT close Store, DO NOT close PinnedDB, and DO NOT release .owner.lock.
-			return fmt.Errorf("host: shutdown drain timeout (active operations still held): %w", err)
+			// CRITICAL (R1-002): Drain timed out - an effect caller still holds a permit.
+			// Admission is already closed (Authority.draining = true from Drain()).
+			// We MUST NOT return to main/os.Exit because process exit would release the
+			// OS lock handle, allowing a contender to acquire it while the permit holder
+			// is still active. Instead, wait indefinitely for ALL permits to join.
+			//
+			// This is the ADR-permitted fail-closed mechanism: keep admission closed,
+			// keep lock ownership, and block until the active caller finishes.
+			fmt.Printf("host: drain timeout exceeded, blocking until all active permits are released (R1-002)...\n")
+			c.Authority.WaitAllReleased()
+			// After all permits joined, record the original timeout error but proceed
+			// with normal teardown (schedulers, Store, PinnedDB, lock).
+			recordErr(fmt.Errorf("host: drain completed after timeout (active callers joined late): %w", err))
 		}
 	}
 
