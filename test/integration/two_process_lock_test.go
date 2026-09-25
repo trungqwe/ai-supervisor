@@ -334,6 +334,7 @@ func TestRealDaemonDrainTimeoutPreservesLock(t *testing.T) {
 	// -------------------------------------------------------------------------
 	// Phase 3: Permit Joined & Lock Released (t=15s)
 	// Wait for Process 1 to complete teardown and exit after permit holder releases.
+	// Then actually probe that a new contender acquires .owner.lock and starts up.
 	// -------------------------------------------------------------------------
 	select {
 	case exitResult := <-p1Done:
@@ -345,6 +346,61 @@ func TestRealDaemonDrainTimeoutPreservesLock(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("Daemon did not exit within expected time after permit release")
 	}
+
+	// Probe D: Verify that a new contender process can actually acquire the lock now that Process 1 has exited.
+	p3ReadyFile := filepath.Join(tempDir, "ready_p3.txt")
+	p3Args := append([]string{
+		"run",
+		"-db=" + dbPath,
+		"-http-addr=127.0.0.1:0",
+		"-instance-id=proc-drain-contender-p3",
+		"-ready-signal-file=" + p3ReadyFile,
+	}, policyArgs...)
+
+	p3 := exec.Command(binPath, p3Args...)
+	if err := p3.Start(); err != nil {
+		t.Fatalf("failed to start contender Process 3 after daemon exit: %v", err)
+	}
+	defer func() {
+		if p3.Process != nil {
+			_ = p3.Process.Kill()
+		}
+	}()
+
+	var p3Ready bool
+	for start := time.Now(); time.Since(start) < 10*time.Second; time.Sleep(100 * time.Millisecond) {
+		if data, err := os.ReadFile(p3ReadyFile); err == nil && len(data) > 0 {
+			p3Ready = true
+			break
+		}
+	}
+	if !p3Ready {
+		t.Fatal("contender Process 3 failed to acquire lock and achieve readiness after daemon exit")
+	}
+	t.Log("Phase 3 Probe D PASS: Contender Process 3 successfully acquired lock and achieved readiness after Process 1 exit")
+}
+
+func TestCLIStopNegativeCases(t *testing.T) {
+	tempDir := t.TempDir()
+	binPath := filepath.Join(tempDir, "supervisor.exe")
+	nonExistentDB := filepath.Join(tempDir, "nonexistent.db")
+
+	buildCmd := exec.Command("go", "build", "-o", binPath, "../../cmd/supervisor")
+	if err := buildCmd.Run(); err != nil {
+		t.Fatalf("failed to build supervisor binary: %v", err)
+	}
+
+	// Case 1: Stop against non-existent db / missing metadata fails with non-zero exit code
+	cmd := exec.Command(binPath, "stop", "-db="+nonExistentDB, "-timeout=1s")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected supervisor stop to fail for non-existent db, got success. Output:\n%s", string(out))
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() == 0 {
+		t.Fatalf("expected non-zero exit code from failed stop, got %v", err)
+	}
+	t.Logf("CLI stop negative test PASS: Non-zero exit code (%d) on missing metadata: %s", exitErr.ExitCode(), strings.TrimSpace(string(out)))
 }
 
 // TestDaemonReadinessLifecycle proves R1-004 / AC-004-06:

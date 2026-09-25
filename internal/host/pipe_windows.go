@@ -291,11 +291,29 @@ func RequestPipeStatus(pipeName string, timeout time.Duration) (*PipeMessageResp
 }
 
 // RequestPipeTakeover connects to the Named Pipe and requests graceful shutdown drain.
+// Only STOP_ACKNOWLEDGED is considered a successful takeover acknowledgement.
+// ERROR, UNAUTHORIZED, or any unexpected status returns a non-nil error.
 func RequestPipeTakeover(pipeName, callerInstanceID string, timeout time.Duration) (*PipeMessageResponse, error) {
-	return sendPipeRequest(pipeName, PipeMessageRequest{
+	resp, err := sendPipeRequest(pipeName, PipeMessageRequest{
 		Action:           "TAKEOVER",
 		CallerInstanceID: callerInstanceID,
 	}, timeout)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.New("host: nil pipe response received")
+	}
+	if resp.Status != "STOP_ACKNOWLEDGED" {
+		if resp.Status == "ERROR" {
+			return nil, fmt.Errorf("host: takeover rejected with error: %s", resp.Error)
+		}
+		if resp.Status == "UNAUTHORIZED" {
+			return nil, fmt.Errorf("%w: %s", ErrUnauthorizedCaller, resp.Error)
+		}
+		return nil, fmt.Errorf("host: unexpected takeover response status %q (expected STOP_ACKNOWLEDGED)", resp.Status)
+	}
+	return resp, nil
 }
 
 func sendPipeRequest(pipeName string, req PipeMessageRequest, timeout time.Duration) (*PipeMessageResponse, error) {

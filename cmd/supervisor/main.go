@@ -480,6 +480,9 @@ func stopDaemon(args []string) error {
 	if err != nil {
 		return fmt.Errorf("pipe takeover failed: %w", err)
 	}
+	if resp == nil || resp.Status != "STOP_ACKNOWLEDGED" {
+		return fmt.Errorf("pipe takeover rejected: status=%v", resp)
+	}
 
 	fmt.Printf("Stop request acknowledged: status=%s, instance=%s\n", resp.Status, resp.InstanceID)
 	return nil

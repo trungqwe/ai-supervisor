@@ -4,6 +4,7 @@ package host_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/trungqwe/ai-supervisor/internal/host"
+	"golang.org/x/sys/windows"
 )
 
 func TestPolicyValidation(t *testing.T) {
@@ -262,6 +264,136 @@ func TestNamedPipeTakeoverAndStatus(t *testing.T) {
 	if !stopCalled {
 		t.Fatal("expected stop callback to have been invoked")
 	}
+}
+
+func TestRequestPipeTakeoverNegativeCases(t *testing.T) {
+	tempDir := t.TempDir()
+	dbFile := filepath.Join(tempDir, "negative_pipe_test.sqlite")
+	_ = os.WriteFile(dbFile, []byte("d"), 0600)
+
+	pinned, err := host.PrepareExistingDB(dbFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pinned.Close()
+
+	_, _, pipeName := host.DeriveSidecarPaths(pinned.CanonicalDBPath)
+
+	t.Run("server error returns non-nil error", func(t *testing.T) {
+		server, err := host.StartNamedPipeServer(pipeName, "inst-server-err", func() error {
+			return errors.New("simulated internal drain hook failure")
+		})
+		if err != nil {
+			t.Fatalf("StartNamedPipeServer failed: %v", err)
+		}
+		defer server.Close()
+
+		resp, err := host.RequestPipeTakeover(pipeName, "inst-client", 2*time.Second)
+		if err == nil {
+			t.Fatalf("expected error from RequestPipeTakeover on server ERROR, got nil (resp=%+v)", resp)
+		}
+		if !strings.Contains(err.Error(), "simulated internal drain hook failure") {
+			t.Fatalf("expected error to contain hook failure message, got: %v", err)
+		}
+	})
+
+	t.Run("unauthorized status returns ErrUnauthorizedCaller", func(t *testing.T) {
+		unauthPipe := "\\\\.\\pipe\\test-unauth-pipe-" + filepath.Base(tempDir)
+		pipeUTF16, err := windows.UTF16PtrFromString(unauthPipe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h, err := windows.CreateNamedPipe(
+			pipeUTF16,
+			windows.PIPE_ACCESS_DUPLEX,
+			windows.PIPE_TYPE_MESSAGE|windows.PIPE_READMODE_MESSAGE|windows.PIPE_WAIT,
+			1,
+			4096,
+			4096,
+			0,
+			nil,
+		)
+		if err != nil {
+			t.Fatalf("CreateNamedPipe failed: %v", err)
+		}
+		defer windows.CloseHandle(h)
+
+		go func() {
+			if err := windows.ConnectNamedPipe(h, nil); err != nil && !errors.Is(err, windows.ERROR_PIPE_CONNECTED) {
+				return
+			}
+			defer windows.DisconnectNamedPipe(h)
+
+			buf := make([]byte, 4096)
+			var bytesRead uint32
+			_ = windows.ReadFile(h, buf, &bytesRead, nil)
+
+			respData, _ := json.Marshal(host.PipeMessageResponse{
+				Status: "UNAUTHORIZED",
+				Error:  "Caller SID mismatch; access denied fail-closed",
+			})
+			var bytesWritten uint32
+			_ = windows.WriteFile(h, respData, &bytesWritten, nil)
+			_ = windows.FlushFileBuffers(h)
+		}()
+
+		resp, err := host.RequestPipeTakeover(unauthPipe, "inst-client", 2*time.Second)
+		if err == nil {
+			t.Fatalf("expected error on UNAUTHORIZED status, got resp=%+v", resp)
+		}
+		if !errors.Is(err, host.ErrUnauthorizedCaller) {
+			t.Fatalf("expected ErrUnauthorizedCaller, got: %v", err)
+		}
+	})
+
+	t.Run("unexpected status returns non-nil error", func(t *testing.T) {
+		unexpectedPipe := "\\\\.\\pipe\\test-unexpected-pipe-" + filepath.Base(tempDir)
+		pipeUTF16, err := windows.UTF16PtrFromString(unexpectedPipe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h, err := windows.CreateNamedPipe(
+			pipeUTF16,
+			windows.PIPE_ACCESS_DUPLEX,
+			windows.PIPE_TYPE_MESSAGE|windows.PIPE_READMODE_MESSAGE|windows.PIPE_WAIT,
+			1,
+			4096,
+			4096,
+			0,
+			nil,
+		)
+		if err != nil {
+			t.Fatalf("CreateNamedPipe failed: %v", err)
+		}
+		defer windows.CloseHandle(h)
+
+		go func() {
+			if err := windows.ConnectNamedPipe(h, nil); err != nil && !errors.Is(err, windows.ERROR_PIPE_CONNECTED) {
+				return
+			}
+			defer windows.DisconnectNamedPipe(h)
+
+			buf := make([]byte, 4096)
+			var bytesRead uint32
+			_ = windows.ReadFile(h, buf, &bytesRead, nil)
+
+			respData, _ := json.Marshal(host.PipeMessageResponse{
+				Status:     "DRAINED",
+				InstanceID: "rogue-daemon",
+			})
+			var bytesWritten uint32
+			_ = windows.WriteFile(h, respData, &bytesWritten, nil)
+			_ = windows.FlushFileBuffers(h)
+		}()
+
+		resp, err := host.RequestPipeTakeover(unexpectedPipe, "inst-client", 2*time.Second)
+		if err == nil {
+			t.Fatalf("expected error on unexpected status DRAINED, got resp=%+v", resp)
+		}
+		if !strings.Contains(err.Error(), "unexpected takeover response status") {
+			t.Fatalf("expected unexpected status error message, got: %v", err)
+		}
+	})
 }
 
 type trackingCloser struct {
