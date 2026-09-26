@@ -1,15 +1,15 @@
 # PROPOSAL-P04-002: ReviewBundle Latency Measurement Semantics (NFR-008 Reconciliation)
 
 > **Proposal ID**: `PROPOSAL-P04-002`
-> **Revision**: 4
+> **Revision**: 5
 > **Title**: Formal Latency Measurement Semantics for ReviewBundle Compilation & Pipeline Reconciliation
 > **Author**: AI Engineering Supervisor Team
 > **Status**: `PENDING_EXTERNAL_REVIEW`
 > **Date**: 2026-09-26
 > **Target Requirement**: `docs/02_REQUIREMENTS.md` (NFR-008)
 > **Related Architecture**: `docs/04_ARCHITECTURE.md` (Section 7), `docs/10_REVIEW_BUNDLE.md`, `docs/adr/DRAFT-ADR-018-evidence-review-and-verification-isolation.md`
-> **Audited Baseline**: `6dbd7e26d59e22171271921b86c01bd6f215e59a`
-> **External Audit Tracking**: Remediates Finding `P04-ARCH-R9-002` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_008.md`).
+> **Audited Baseline**: `cd0417e641468abfac254cc57cca29be54d1e8e1`
+> **External Audit Tracking**: Remediates Finding `P04-ARCH-R10-003` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_009.md`).
 
 ---
 
@@ -22,9 +22,9 @@ At the same time, functional requirement **FR-008** and canonical **Architecture
 
 Running real-world test suites (e.g., `go test -race ./...`, `npm test`, `pytest`) legitimately requires durations ranging from tens of seconds to several minutes, inherently exceeding 3 seconds. If NFR-008's 3-second clock begins at worker report submission and includes external test execution, every realistic engineering task will breach NFR-008 regardless of Supervisor Control Plane efficiency. Conversely, omitting test execution from the ReviewBundle violates audit integrity.
 
-Furthermore, External Re-Audit 008 recorded that previously proposed DDL constraints (`compilation_latency_ms <= 3000`) caused an unrecoverable database deadlock: if a daemon crashed between evidence finalization (Transaction B) and bundle persistence (Transaction C), or if compilation experienced transient scheduling delay exceeding 3.0 seconds, Transaction C was permanently aborted by SQLite, trapping the task forever in `EVIDENCE_READY`.
+Furthermore, External Re-Audit 009 identified that calling pre-commit timestamps "commit completion" created semantic ambiguity, while previous CHECK constraints risked deadlocking SQLite persistence upon daemon crash or delay.
 
-This proposal establishes a rigorous, crash-safe measurement model that reconciles NFR-008 without weakening audit guarantees, guarantees crash recovery, and defines the change governance process required before canonical `docs/02_REQUIREMENTS.md` or ADR-018 can be formally adopted.
+This proposal establishes a rigorous, crash-safe measurement model that reconciles NFR-008 without weakening audit guarantees, eliminates database deadlocks, explicitly defines the pre-commit assembly boundary, and defines the change governance process required before canonical `docs/02_REQUIREMENTS.md` or ADR-018 can be formally adopted.
 
 ---
 
@@ -37,40 +37,54 @@ This proposal establishes a rigorous, crash-safe measurement model that reconcil
    - Compiling and executing test suites in Windows AppContainers with explicit handle inheritance and network denial is bounded by project build times, external toolchain performance, and test complexity.
    - For real projects, verification tests typically run between 5 and 60 seconds.
 
-### 2.2. Timestamp Semantics & Crash Recovery Flaw
-Previous drafts failed to distinguish between in-process monotonic intervals and durable timestamps across restarts:
-1. **Monotonic timers cannot bridge process restarts**: A Go `time.Since()` timer initialized during Transaction B is lost if the daemon process terminates or crashes before Transaction C.
-2. **Permanent Deadlock under CHECK <= 3000**: If `compilation_latency_ms <= 3000` is enforced as a SQLite CHECK constraint, any post-restart recovery attempt (where wall-clock elapsed time naturally exceeds 3,000 ms) will fail SQL constraint validation. The task becomes permanently unfinalizable in `EVIDENCE_READY`.
-3. **Write Timestamp vs WAL Commit Completion**: The timestamp selected in application memory immediately prior to calling `tx.Commit()` differs slightly from the exact microsecond the SQLite WAL fsync completes.
-
-### 2.3. Governance Conflict
-Modifying the text or interpretation of NFR-008 unilaterally violates the 9-level decision hierarchy of `docs/24_CHANGE_GOVERNANCE.md` (Level 4 Requirement Specification cannot be implicitly altered by Level 6 Task Contracts or Level 8 Suggestions). Formal approval of this proposal by the External Supervisor is mandatory before modifying canonical documentation.
+### 2.2. Timestamp Semantics & Measurement Boundaries
+1. **Application Pre-Commit vs Actual Commit-Return**:
+   - The timestamp recorded inside the immutable `review_bundles` table is captured in application memory immediately upon successful assembly, canonicalization, and validation of the payload, *prior* to issuing SQLite `tx.Commit()`.
+   - The actual SQLite WAL commit completion occurs when the database engine completes disk writes and returns control to Go.
+   - Calling the pre-commit timestamp "commit completion" was inaccurate.
+2. **Monotonic Timers Cannot Bridge Restarts**:
+   - An in-process monotonic timer (`time.Since()`) initialized during Transaction B is lost if the daemon crashes or restarts before Transaction C.
+   - Post-restart recovery must rely on durable wall-clock timestamps (`evidence_finalized_at_epoch_ms` and `bundle_assembled_at_epoch_ms`) for diagnostic measurement.
+3. **SLA Breach Must Not Block Persistence**:
+   - If `compilation_latency_ms <= 3000` is enforced as a SQLite CHECK constraint, any restart recovery attempt (where elapsed time exceeds 3,000 ms) fails SQL validation, permanently stranding the task in `EVIDENCE_READY`.
+   - The SLA outcome must be recorded as durable diagnostic data (`nfr008_met = 0`), allowing Transaction C to commit and advance state to `REVIEWING`.
 
 ---
 
-## 3. Four-Tier Timestamp Taxonomy
+## 3. Formal Measurement Contract
 
-To eliminate ambiguity between in-process timers and durable records, this proposal formalizes four distinct timestamp and duration concepts:
+To eliminate ambiguity, this proposal defines a unified, non-conflicting measurement contract:
 
-1. **Transaction Pre-Commit Timestamp (`write_timestamp_epoch_ms`)**:
-   - Chosen in application Go code (`time.Now().UnixMilli()`) immediately before issuing `tx.Commit()`.
-   - Used as the deterministic durable column value in SQLite (`evidence_committed_at_epoch_ms`, `bundle_committed_at_epoch_ms`).
-2. **Actual WAL Commit Completion**:
-   - The exact point in time when SQLite WAL write and optional fsync return control to the application.
-   - Used for internal runtime telemetry and operational diagnostics.
-3. **Monotonic In-Process Duration (`monotonic_in_process_duration`)**:
-   - High-resolution measurement using `time.Now()` (monotonic clock reading) initialized immediately upon Transaction B commit and stopped immediately upon Transaction C commit.
-   - **Scope Invariant**: Valid *only* within a single running process lifecycle. Never serialized to persistent storage or assumed to survive daemon restart.
-4. **Durable Wall-Clock Diagnostic Interval (`compilation_latency_ms`)**:
-   - Calculated deterministically as `bundle_committed_at_epoch_ms - evidence_committed_at_epoch_ms`.
-   - Guaranteed monotonically non-negative (`CHECK (compilation_latency_ms >= 0)`).
-   - Persisted durably to SQLite to record whether the NFR-008 SLA was met, regardless of daemon crash/restart.
+### 3.1. Primary Immutable Measurement: Assembly & Validation Boundary
+The columns in `review_bundles` strictly measure the **ReviewBundle Assembly & Validation Interval** (Interval 2):
+1. **`evidence_finalized_at_epoch_ms`**: Epoch millisecond timestamp durably committed in Transaction B when verification evidence sets and artifacts are finalized.
+2. **`bundle_assembled_at_epoch_ms`**: Epoch millisecond timestamp captured when ReviewBundle JSON assembly, RFC 8785 JCS canonicalization, and schema validation succeed, immediately before initiating Transaction C commit.
+3. **`compilation_latency_ms`**: The deterministic difference:
+   `compilation_latency_ms = bundle_assembled_at_epoch_ms - evidence_finalized_at_epoch_ms`
+4. **`latency_measurement_status`**:
+   - `'MEASURED_IN_PROCESS'`: Measured during continuous execution without process restart.
+   - `'RECOVERED_AFTER_RESTART'`: Measured upon daemon restart recovery; records wall-clock recovery latency as a durable diagnostic.
+5. **`nfr008_met`**:
+   - `1` if `compilation_latency_ms <= 3000`.
+   - `0` if `compilation_latency_ms > 3000`.
+
+### 3.2. Secondary Telemetry: Actual Commit Return Duration
+Upon return from SQLite `tx.Commit()` in Transaction C, the orchestrator computes the actual commit duration using in-process monotonic measurement (`time.Since(commitStart)`) and records it in the proposed audit event `REVIEW_BUNDLE_GENERATED` (`commit_duration_ms`). This preserves the immutability of the `review_bundles` row while capturing full commit performance in the audit log.
+
+### 3.3. Measurement Truth Table & Invariants
+
+| `latency_measurement_status` | `compilation_latency_ms` | `nfr008_met` | Operational Meaning |
+| :--- | :--- | :--- | :--- |
+| `MEASURED_IN_PROCESS` | `0` to `3000` | `1` | Normal execution; NFR-008 SLA met. |
+| `MEASURED_IN_PROCESS` | `> 3000` | `0` | In-process execution delay; SLA missed (diagnostic recorded, no deadlock). |
+| `RECOVERED_AFTER_RESTART` | `0` to `3000` | `1` | Rapid restart recovery within 3s; SLA met. |
+| `RECOVERED_AFTER_RESTART` | `> 3000` | `0` | Normal restart recovery; SLA missed due to downtime (diagnostic recorded, no deadlock). |
+
+All other combinations (e.g. latency > 3000 with `nfr008_met = 1`, negative latency, or unrecognized status) are strictly rejected by SQLite CHECK constraints.
 
 ---
 
 ## 4. Proposed Measurement Model: Two-Interval Pipeline
-
-The verification pipeline is structured into two precisely bounded operational intervals:
 
 ### 4.1. Interval 1: Evidence Acquisition Window (Work Execution Phase)
 - **Start**: Worker signals report completion; Transaction A validates report against canonical schema, verifies clean worktree/index, stores structured `worker_claims` (Schema v6), and transitions `tasks.state`: `RUNNING -> REPORT_READY`.
@@ -80,12 +94,12 @@ The verification pipeline is structured into two precisely bounded operational i
   3. Supervisor executes hardened in-memory Git evidence collection (`P04B`).
   4. Supervisor executes verification test commands sequentially (`P04C`) inside isolated Windows AppContainers against the immutable snapshot.
   5. Supervisor stages, deduplicates, and flushes content-addressed artifacts to `artifacts/<first-two-hex>/<captured_sha256>`.
-  6. Transaction B commits durable `evidence_sets` and `review_artifacts(evidence_set_id)` (Schema v9), releases lease, and transitions `tasks.state`: `REPORT_READY -> EVIDENCE_READY`.
+  6. Transaction B (owned by `P04D`) commits durable `evidence_sets` and `review_artifacts`, releases verification lease, and transitions `tasks.state`: `REPORT_READY -> EVIDENCE_READY`.
 - **Governing SLA / Budget**:
   - Bound by TaskContract `verification_requests[].timeout_seconds` validated by Stage B, or profile `MaxTimeoutSeconds` from `VerificationPolicyCatalog`.
   - In v1, verification requests execute strictly sequentially; the total budget is the exact sum of request timeouts plus Git collector timeout (10s) and bounded orchestration overhead (15s).
   - Aggregate verification budget is strictly capped at `MAX_AGGREGATE_VERIFICATION_BUDGET_SECONDS = 600` (10 minutes) across at most 20 requests.
-- **Terminal Boundary**: Mark $T_0$ = `evidence_committed_at_epoch_ms` as the timestamp recorded in Transaction B.
+- **Terminal Boundary**: Mark $T_0$ = `evidence_finalized_at_epoch_ms` as the timestamp recorded in Transaction B.
 
 ### 4.2. Interval 2: ReviewBundle Compilation Window (Synthesis Phase)
 - **Start ($T_0$)**: Transaction B commit completion ($T_0$), marking all verification evidence and artifacts as durably persisted in SQLite WAL and disk.
@@ -94,12 +108,13 @@ The verification pipeline is structured into two precisely bounded operational i
   2. Pipeline orchestrator synthesizes RFC 8785 JCS canonical `ReviewBundle` JSON payload.
   3. Pipeline orchestrator validates payload against canonical `docs/schemas/review-bundle.schema.json`.
   4. Pipeline orchestrator computes SHA-256 bundle hash.
-  5. Transaction C inserts `review_bundles(evidence_set_id)` with persisted `bundle_committed_at_epoch_ms`, `compilation_latency_ms`, `latency_measurement_status`, and `nfr008_met`.
-  6. Inserts proposed audit event `REVIEW_BUNDLE_GENERATED`, and transitions `tasks.state`: `EVIDENCE_READY -> REVIEWING`.
-- **End ($T_1$)**: Transaction C commit completion ($T_1$).
+  5. Mark $T_1$ = `bundle_assembled_at_epoch_ms` immediately before initiating Transaction C.
+  6. Transaction C (owned by `P04D`) inserts `review_bundles` with persisted `bundle_assembled_at_epoch_ms`, `compilation_latency_ms`, `latency_measurement_status`, and `nfr008_met`.
+  7. Inserts proposed audit event `REVIEW_BUNDLE_GENERATED`, and transitions `tasks.state`: `EVIDENCE_READY -> REVIEWING`.
+- **End ($T_1$)**: Transaction C commit initiation and atomic persistence.
 - **Governing SLA & Deadlock Prevention**:
   - Bound by **NFR-008**:
-    `compilation_latency_ms = bundle_committed_at_epoch_ms - evidence_committed_at_epoch_ms`
+    `compilation_latency_ms = bundle_assembled_at_epoch_ms - evidence_finalized_at_epoch_ms`
   - In normal uninterrupted execution: `0 <= compilation_latency_ms <= 3000 ms` -> `nfr008_met = 1`, `latency_measurement_status = 'MEASURED_IN_PROCESS'`.
   - In post-crash restart or transient delay: `compilation_latency_ms > 3000 ms` -> `nfr008_met = 0`, `latency_measurement_status = 'RECOVERED_AFTER_RESTART'`.
   - **SLA Breach is NOT a Persistence Blocker**: When `nfr008_met = 0`, Transaction C commits successfully, advances state to `REVIEWING`, and logs a diagnostic audit finding. The task is never stranded in `EVIDENCE_READY`.
@@ -132,7 +147,7 @@ CREATE TABLE evidence_sets (
     unverified_claims_json TEXT NOT NULL CHECK (
         json_valid(unverified_claims_json) = 1
     ),
-    evidence_committed_at_epoch_ms INTEGER NOT NULL CHECK (evidence_committed_at_epoch_ms > 0),
+    evidence_finalized_at_epoch_ms INTEGER NOT NULL CHECK (evidence_finalized_at_epoch_ms > 0),
     collected_at TEXT NOT NULL CHECK (LENGTH(collected_at) > 0),
     FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT
 );
@@ -153,14 +168,14 @@ CREATE TABLE review_bundles (
         LENGTH(bundle_hash) = 64 AND
         NOT (bundle_hash GLOB '*[^0-9a-f]*')
     ),
-    evidence_committed_at_epoch_ms INTEGER NOT NULL CHECK (evidence_committed_at_epoch_ms > 0),
-    bundle_committed_at_epoch_ms INTEGER NOT NULL CHECK (bundle_committed_at_epoch_ms >= evidence_committed_at_epoch_ms),
+    evidence_finalized_at_epoch_ms INTEGER NOT NULL CHECK (evidence_finalized_at_epoch_ms > 0),
+    bundle_assembled_at_epoch_ms INTEGER NOT NULL CHECK (bundle_assembled_at_epoch_ms >= evidence_finalized_at_epoch_ms),
     compilation_latency_ms INTEGER NOT NULL CHECK (
         compilation_latency_ms >= 0 AND
-        compilation_latency_ms = (bundle_committed_at_epoch_ms - evidence_committed_at_epoch_ms)
+        compilation_latency_ms = (bundle_assembled_at_epoch_ms - evidence_finalized_at_epoch_ms)
     ),
     latency_measurement_status TEXT NOT NULL CHECK (
-        latency_measurement_status IN ('MEASURED_IN_PROCESS', 'RECOVERED_AFTER_RESTART', 'MEASUREMENT_TIMEOUT')
+        latency_measurement_status IN ('MEASURED_IN_PROCESS', 'RECOVERED_AFTER_RESTART')
     ),
     nfr008_met INTEGER NOT NULL CHECK (
         nfr008_met IN (0, 1) AND (
@@ -172,16 +187,31 @@ CREATE TABLE review_bundles (
     FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT
 );
 
-CREATE TRIGGER trg_review_bundles_evidence_time_guard
+CREATE TRIGGER trg_review_bundles_lineage_guard
 BEFORE INSERT ON review_bundles
 FOR EACH ROW
 BEGIN
-    SELECT RAISE(ABORT, 'evidence timestamp mismatch: evidence_committed_at_epoch_ms does not match evidence_sets')
+    SELECT RAISE(ABORT, 'lineage mismatch: evidence_set_id does not match task_id, attempt_id, contract_id in evidence_sets')
     WHERE NOT EXISTS (
         SELECT 1 FROM evidence_sets e
         WHERE e.evidence_set_id = NEW.evidence_set_id
-          AND e.evidence_committed_at_epoch_ms = NEW.evidence_committed_at_epoch_ms
+          AND e.task_id = NEW.task_id
+          AND e.attempt_id = NEW.attempt_id
+          AND e.contract_id = NEW.contract_id
+          AND e.evidence_finalized_at_epoch_ms = NEW.evidence_finalized_at_epoch_ms
     );
+END;
+
+CREATE TRIGGER trg_review_bundles_no_update
+BEFORE UPDATE ON review_bundles
+BEGIN
+    SELECT RAISE(ABORT, 'review_bundles is immutable');
+END;
+
+CREATE TRIGGER trg_review_bundles_no_delete
+BEFORE DELETE ON review_bundles
+BEGIN
+    SELECT RAISE(ABORT, 'review_bundles is immutable');
 END;
 ```
 
@@ -189,9 +219,9 @@ END;
 
 ## 6. Audit Event Governance
 
-The audit event types associated with ReviewBundle compilation are registered with status `PROPOSED_UNTIL_ADR_ACCEPTANCE`:
-1. `REVIEW_BUNDLE_GENERATED`: Recorded in Transaction C upon successful ReviewBundle synthesis and persistence. Details include `bundle_id`, `bundle_hash`, `compilation_latency_ms`, `latency_measurement_status`, `nfr008_met`, and `evidence_set_id`.
-2. `REVIEW_BUNDLE_COMPILATION_REJECTED`: Recorded in a separate fail-closed transaction if Transaction C fails due to clock regression ($T_1 < T_0$), schema validation failure, or bundle hash tampering conflict. Details include failure reason, timestamps, and error diagnostics.
+The audit event types associated with ReviewBundle compilation are registered under status `PROPOSED_UNTIL_ADR_ACCEPTANCE`:
+1. `REVIEW_BUNDLE_GENERATED`: Recorded in Transaction C upon successful ReviewBundle synthesis and persistence. Details include `bundle_id`, `bundle_hash`, `compilation_latency_ms`, `latency_measurement_status`, `nfr008_met`, and `commit_duration_ms` (monotonic telemetry upon commit return).
+2. `REVIEW_BUNDLE_COMPILATION_REJECTED`: Recorded in a separate fail-closed diagnostic transaction if compilation fails, schema validation fails, clock regresses ($T_1 < T_0$), or bundle hash conflicts with a pre-existing bundle. Details include failure reason, timestamps, and error diagnostics.
 
 Canonical event registry and domain constants reconciliation will occur only after formal External Supervisor approval of ADR-018.
 
@@ -205,7 +235,7 @@ Upon formal approval of this proposal, the text of **NFR-008** in `docs/02_REQUI
 > *"NFR-008: The Supervisor Control Plane shall generate a Review Bundle within 3 seconds of worker completion on repos up to 10,000 files."*
 
 ### Proposed Reconciled Text:
-> *"NFR-008: The Supervisor Control Plane shall synthesize, canonicalize (JCS RFC 8785), validate, and persist the attempt-scoped ReviewBundle within 3.0 seconds (Interval 2: T1 - T0 <= 3.0 seconds) of durable verification evidence finalization (Transaction B commit at T0) on repositories up to 10,000 files. Independent test execution and evidence collection duration (Interval 1) is governed by task contract verification budgets. If compilation latency exceeds 3.0 seconds due to restart recovery or system load, the ReviewBundle is durably persisted with nfr008_met = 0 and an audit diagnostic finding without deadlock."*
+> *"NFR-008: The Supervisor Control Plane shall synthesize, canonicalize (JCS RFC 8785), validate, and prepare for durable commit the attempt-scoped ReviewBundle within 3.0 seconds (Interval 2: bundle_assembled_at_epoch_ms - evidence_finalized_at_epoch_ms <= 3.0 seconds) of durable verification evidence finalization (Transaction B commit) on repositories up to 10,000 files. Independent test execution and evidence collection duration (Interval 1) is governed by task contract verification budgets. If assembly latency exceeds 3.0 seconds due to restart recovery or system load, the ReviewBundle is durably persisted with nfr008_met = 0 and an audit diagnostic finding without deadlock."*
 
 ---
 
