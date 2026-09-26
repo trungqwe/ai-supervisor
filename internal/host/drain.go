@@ -25,8 +25,8 @@ type ShutdownComponents struct {
 //     (join the caller), then proceed with normal teardown. NEVER return to main/os.Exit
 //     while a permit holder is still active, because process exit releases the OS lock.
 //  3. Stop background schedulers (poller, TimeoutMonitor) and join (R1-004).
-//  4. Clean .owner.json metadata file IF AND ONLY IF instance ID matches.
-//  5. Store.Close() to flush WAL and close SQLite connection.
+//  4. Store.Close() to flush WAL and close SQLite connection (ADR-017 §4.2, AC-004-04).
+//  5. Clean .owner.json metadata file IF AND ONLY IF instance ID matches.
 //  6. Close pinned DB OS handle.
 //  7. Close exclusive .owner.lock handle LAST.
 func ExecuteShutdownDrain(timeout time.Duration, c ShutdownComponents) error {
@@ -71,14 +71,14 @@ func ExecuteShutdownDrain(timeout time.Duration, c ShutdownComponents) error {
 		}
 	}
 
-	// Step 4: Remove .owner.json metadata file IF instance matches
-	if c.OwnerLease != nil {
-		c.OwnerLease.CleanMetadata()
-	}
-
-	// Step 5: Close Store
+	// Step 4: Close Store (flush WAL and close connection before releasing locks/cleaning metadata) (ADR-017 §4.2, AC-004-04)
 	if c.Store != nil {
 		recordErr(c.Store.Close())
+	}
+
+	// Step 5: Remove .owner.json metadata file IF instance matches
+	if c.OwnerLease != nil {
+		c.OwnerLease.CleanMetadata()
 	}
 
 	// Step 6: Close pinned DB handle

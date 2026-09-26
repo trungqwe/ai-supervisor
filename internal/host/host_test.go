@@ -3,6 +3,7 @@
 package host_test
 
 import (
+	"fmt"
 	"context"
 	"encoding/json"
 	"errors"
@@ -535,5 +536,162 @@ func TestAuthorityDrainTimeoutClosesAdmissionAndBlocks(t *testing.T) {
 
 	if elapsed < 50*time.Millisecond {
 		t.Fatalf("WaitAllReleased returned too early (%v), expected >= 50ms", elapsed)
+	}
+}
+
+type barrierStoreCloser struct {
+	enterClose chan struct{}
+	unblock    chan struct{}
+	closed     bool
+}
+
+func (b *barrierStoreCloser) Close() error {
+	close(b.enterClose)
+	<-b.unblock
+	b.closed = true
+	return nil
+}
+
+func TestShutdownDrainStoreCloseBarrierAndOrder(t *testing.T) {
+	tempDir := t.TempDir()
+	dbFile := filepath.Join(tempDir, "barrier_order.sqlite")
+	if err := os.WriteFile(dbFile, []byte("test-data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	pinned, err := host.PrepareExistingDB(dbFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pinned.Close()
+
+	instID := "inst-barrier-order"
+	lease, err := host.AcquireProcessOwnerLease(pinned.CanonicalDBPath, instID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.CloseLockHandle()
+
+	// Verify metadata file exists before drain
+	metaBytes, err := os.ReadFile(lease.MetadataPath)
+	if err != nil || !strings.Contains(string(metaBytes), instID) {
+		t.Fatalf("expected metadata file to exist with instance ID, err=%v", err)
+	}
+
+	storeCloser := &barrierStoreCloser{
+		enterClose: make(chan struct{}),
+		unblock:    make(chan struct{}),
+	}
+	schedCloser := &trackingCloser{}
+
+	comps := host.ShutdownComponents{
+		Store:      storeCloser,
+		PinnedDB:   pinned,
+		Schedulers: []io.Closer{schedCloser},
+		OwnerLease: lease,
+	}
+
+	drainDone := make(chan error, 1)
+	go func() {
+		drainDone <- host.ExecuteShutdownDrain(5*time.Second, comps)
+	}()
+
+	// Wait until Store.Close() is reached and entered
+	select {
+	case <-storeCloser.enterClose:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for Store.Close barrier entry")
+	}
+
+	// INVARIANT 1: Schedulers were stopped before Store.Close
+	if !schedCloser.closed {
+		t.Fatal("expected schedulers to be closed before Store.Close")
+	}
+
+	// INVARIANT 2: While Store.Close() is blocked, metadata file STILL exists (R4-001)
+	if _, err := os.Stat(lease.MetadataPath); os.IsNotExist(err) {
+		t.Fatal("metadata file was removed BEFORE Store.Close completed (violates ADR-017 §4.2 and AC-004-04)")
+	}
+
+	// INVARIANT 3: While Store.Close() is blocked, owner lock is STILL held by this process
+	_, contenderErr := host.AcquireProcessOwnerLease(pinned.CanonicalDBPath, "contender-during-store-close")
+	if !errors.Is(contenderErr, host.ErrSharingViolation) {
+		t.Fatalf("expected contender lock acquisition to fail with ErrSharingViolation while Store.Close is blocked, got %v", contenderErr)
+	}
+
+	// Unblock Store.Close()
+	close(storeCloser.unblock)
+
+	// Wait for ExecuteShutdownDrain to complete
+	select {
+	case drainErr := <-drainDone:
+		if drainErr != nil {
+			t.Fatalf("ExecuteShutdownDrain failed: %v", drainErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for ExecuteShutdownDrain to complete after unblocking Store.Close")
+	}
+
+	// INVARIANT 4: Store was closed
+	if !storeCloser.closed {
+		t.Fatal("Store was not marked closed")
+	}
+
+	// INVARIANT 5: Metadata file removed AFTER Store.Close completed
+	if _, err := os.Stat(lease.MetadataPath); !os.IsNotExist(err) {
+		t.Fatalf("expected metadata file to be cleaned up after Store.Close, err=%v", err)
+	}
+
+	// INVARIANT 6: Lock was released LAST - contender can now acquire lock
+	contenderLease, err := host.AcquireProcessOwnerLease(pinned.CanonicalDBPath, "contender-after-drain")
+	if err != nil {
+		t.Fatalf("expected contender to acquire owner lock after drain completed, got %v", err)
+	}
+	_ = contenderLease.CloseLockHandle()
+}
+
+func TestCleanMetadataOnlyRemovesMatchingInstanceID(t *testing.T) {
+	tempDir := t.TempDir()
+	dbFile := filepath.Join(tempDir, "mismatch_meta.sqlite")
+	if err := os.WriteFile(dbFile, []byte("test-data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	pinned, err := host.PrepareExistingDB(dbFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pinned.Close()
+
+	instID := "inst-owner-matching"
+	lease, err := host.AcquireProcessOwnerLease(pinned.CanonicalDBPath, instID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.CloseLockHandle()
+
+	// Simulate metadata belonging to a foreign instance ID
+	foreignMeta := `{"owner_instance_id":"foreign-instance-999","process_id":99999}`
+	if err := os.WriteFile(lease.MetadataPath, []byte(foreignMeta), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Calling CleanMetadata on lease with instID != "foreign-instance-999" must NOT remove the file
+	lease.CleanMetadata()
+
+	if _, err := os.Stat(lease.MetadataPath); os.IsNotExist(err) {
+		t.Fatal("CleanMetadata removed metadata file whose instance ID did not match!")
+	}
+
+	// Now restore matching metadata and verify CleanMetadata removes it
+	matchingMeta := fmt.Sprintf(`{"owner_instance_id":"%s","process_id":%d}`, instID, os.Getpid())
+	if err := os.WriteFile(lease.MetadataPath, []byte(matchingMeta), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	lease.CleanMetadata()
+
+	if _, err := os.Stat(lease.MetadataPath); !os.IsNotExist(err) {
+		t.Fatal("CleanMetadata failed to remove metadata file when instance ID matched!")
 	}
 }

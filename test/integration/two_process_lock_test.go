@@ -650,12 +650,12 @@ func TestDaemonPollerFailureMidRunProbe(t *testing.T) {
 		t.Fatal("timed out waiting for daemon to exit after stop command")
 	}
 
-	// 9b. Verify Store was closed and metadata cleaned up during teardown
+	// 9b. Verify owner metadata was cleaned up during teardown
 	metaPath := dbPath + ".owner.json"
 	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
 		t.Fatalf("expected owner metadata file to be cleaned up after daemon shutdown, err=%v", err)
 	}
-	t.Log("PASS: Owner metadata cleaned up, confirming Store.Close and OwnerLease.CleanMetadata completed")
+	t.Log("PASS: Owner metadata cleaned up by OwnerLease.CleanMetadata (metadata cleanup does not independently prove Store.Close; Store.Close order verified in unit regression barrier)")
 
 	// 10. Verify that now contender can acquire lock and start
 	contenderReadyFile := filepath.Join(tempDir, "contender_ready.txt")
@@ -686,5 +686,5 @@ func TestDaemonPollerFailureMidRunProbe(t *testing.T) {
 	if !contenderReady {
 		t.Fatal("contender could not acquire lock / start after daemon shutdown")
 	}
-	t.Log("PASS: New contender acquired lock and became ready after daemon shutdown")
+	t.Log("PASS: New contender acquired lock and signaled readiness via ready-signal file after daemon shutdown")
 }
