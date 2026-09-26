@@ -1,306 +1,145 @@
-# DRAFT-ADR-018: Evidence Review and Verification Isolation Architecture
+# DRAFT ADR-018: Evidence & Review Engine Architecture, Execution Isolation, and ReviewBundle Reconciliation
 
-- **ADR ID:** `DRAFT-ADR-018`
-- **Revision:** 3 (Remediation of External Re-Audit 001)
 - **Status:** `DRAFT_PENDING_EXTERNAL_APPROVAL`
-- **Author:** AI Engineering Supervisor Control Plane Team
+- **Revision:** 4 (Remediation of External Re-Audit 002)
+- **Deciders:** External Supervisor, Supervisor Core Architecture Team
 - **Date:** 2026-09-26
-- **Governance Authority:** [`docs/24_CHANGE_GOVERNANCE.md`](../24_CHANGE_GOVERNANCE.md), [`AGENTS.md`](../../AGENTS.md)
-- **Related Proposal:** [`PROPOSAL-P04-001`](../proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md) (Revision 3)
-- **Audit References:**
-  - [`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_001.md`](../audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_001.md) (`REVISION_2_REQUIRED`)
-  - [`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_AUDIT_001_ERRATUM_001.md`](../audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_AUDIT_001_ERRATUM_001.md) (`FORMALLY_RECORDED`)
-- **Source Provenance:** [`docs/sources/SOURCE_REGISTRY.md`](../sources/SOURCE_REGISTRY.md), [`docs/sources/REUSE_MATRIX.md`](../sources/REUSE_MATRIX.md), [`docs/22_MODULE_PROVENANCE.md`](../22_MODULE_PROVENANCE.md)
-- **Traceability:** FR-007, FR-008, FR-009, FR-010, SEC-003, NFR-004, NFR-008, REC-007, REC-008
+- **Technical Precedence:** Level 2 (Architecture Decision Record)
+- **Authority:** Approved pursuant to [`docs/24_CHANGE_GOVERNANCE.md`](../24_CHANGE_GOVERNANCE.md) and [`AGENTS.md`](../../AGENTS.md)
+- **Supercedes:** None
+- **Related ADRs:** [`ADR-006`](ADR-006-evidence-first-review.md), [`ADR-011`](ADR-011-worker-report-handoff-and-agy-invocation-boundary.md), [`ADR-012`](ADR-012-task-contract-revision-and-attempt-binding.md), [`ADR-013`](ADR-013-trusted-verification-command-spec.md), [`ADR-016`](ADR-016-durable-dispatch-session-binding-and-lifecycle-reconciliation.md), [`ADR-017`](ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md)
+- **Associated Proposal:** [`docs/proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md`](../proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md) (Revision 4)
+- **Associated Proof Plan:** [`docs/plans/PLAN-P04-WORKTREE-BINDING-PROOF.md`](../plans/PLAN-P04-WORKTREE-BINDING-PROOF.md) (Revision 2)
+- **Associated Draft Proof Contract:** [`docs/tasks/DRAFT_TASK_CONTRACT_P04_WORKTREE_BINDING_PROOF.md`](../tasks/DRAFT_TASK_CONTRACT_P04_WORKTREE_BINDING_PROOF.md) (`NOT_RELEASED`, Revision 2)
 
 ---
 
 ## 1. Context and Problem Statement
 
-Phase P04 Evidence & Review Engine must perform four functions that each require architectural clarity:
-1. **WorkerReport Ingestion** (`P04A`): Parse and validate the worker-produced `worker-report.json` using `GetWorkspaceFile`, extract `WorkerClaim` entities, and persist initial evidence records.
-2. **Independent Git Evidence Collection** (`P04B`): Without trusting the worker, independently collect diff patches, numstat, file list, and ancestry verification from the exact physical worktree.
-3. **Isolated Verification Command Execution** (`P04C`): Execute profile-constrained verification commands against the worker's committed code under full process isolation (AppContainer) without leaking secrets or allowing network/filesystem escape.
-4. **Atomic Evidence Synthesis** (`P04D`): Persist all evidence, policy findings, test results, artifact references, and the RFC 8785-hashed ReviewBundle in a single atomic CAS SQLite transaction.
+Phase P04 implements the Evidence & Review Engine, which processes worker reports, collects independent Git evidence, executes verification commands, evaluates contract compliance via policy rules, and synthesizes immutable review bundles for ChatGPT supervisor review.
 
-Two open questions remained from External Audit 001 and were re-evaluated in Re-Audit 001:
-- **Worktree Authority**: How does the Supervisor determine the exact physical filesystem path of the worker worktree without querying private AO databases or building custom worktree managers?
-- **Sandbox Contradiction**: How can the audited worktree be strictly read-only while verification toolchains require writable cache directories?
-
----
-
-## 2. Decision
-
-### Decision 1: Worktree Binding Model (`AttemptWorkspaceBinding`) — CONDITIONAL / OPEN_PENDING_BOUNDED_PROOF
-
-**Static Source Evidence (Factual, Proven):**
-
-Inspection of pinned Agent Orchestrator (`v0.13.0`, commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`) in `backend/internal/adapters/workspace/gitworktree/workspace.go` establishes as proven static facts:
-- `Workspace.managedPath` (line 1887): `filepath.Join(w.managedRoot, string(cfg.ProjectID), string(cfg.SessionID))`
-- `defaultSessionBranchName` (line 1918): `"ao/" + string(id)`
-- `Workspace.Create` (lines 276, 287): provisions worktree via `managedPath`
-- `Workspace.Restore` (lines 1142, 1150): validates worktree at `managedPath`
-- `Options.ManagedRoot` (line 105): host-configured base directory
-
-The naming formulas are:
-```text
-worktree_path = filepath.Join(managedRoot, projectID, sessionID)
-session_branch = "ao/" + sessionID
-```
-
-**Unproven Runtime Seams (Five Mandatory Items):**
-1. Host configuration source of `managedRoot` (CLI flag, environment variable, default path).
-2. Supervisor authority to read that configuration value.
-3. Shared physical filesystem namespace between AO and Supervisor.
-4. Daemon restart/restore preservation of worktree path identity.
-5. Junction, symlink, and tamper resistance.
-
-**Governed Resolution Plan:**
-- Dedicated bounded empirical proof plan: [`docs/plans/PLAN-P04-WORKTREE-BINDING-PROOF.md`](../plans/PLAN-P04-WORKTREE-BINDING-PROOF.md)
-- Dedicated draft TaskContract: [`docs/tasks/DRAFT_TASK_CONTRACT_P04_WORKTREE_BINDING_PROOF.md`](../tasks/DRAFT_TASK_CONTRACT_P04_WORKTREE_BINDING_PROOF.md) (`NOT_RELEASED`)
-- Three-track execution: static source proof, isolated disposable runtime proof, authority conclusion.
-
-**Prohibitions:**
-- Supervisor MUST NOT query private AO SQLite databases directly.
-- Supervisor MUST NOT build a custom, unapproved worktree manager.
-- `git worktree list --porcelain -z` MUST NOT be treated as sole binding authority; it is cross-check only.
-
-**Status:** `DECISION_1 = CONDITIONAL / OPEN_PENDING_BOUNDED_PROOF`
+During External Supervisor Audit 001 and Re-Audits 001 and 002, seven critical architectural seams were identified:
+1. **Worktree Authority**: Local worktree path authority was unproven across host environments, and symbol citations / signatures were inaccurate.
+2. **Relative Roots**: Sandbox and artifact paths used unsafe relative `.supervisor/...` directories.
+3. **Verification Authority & Inert Harness**: Workers lacked typed execution boundaries, and AO test mode inertness (zero LLM calls) was unproven.
+4. **Restore & Edge Cases**: Restore lifecycle was underspecified and treated expected probe outcomes as infrastructure crashes.
+5. **Artifact Store & Crash Consistency**: Artifact addressing used ambiguous hashes, and filesystem rename rollback was incorrectly attributed to SQLite.
+6. **TaskState CAS & Lease Schema Mismatch**: Pseudo-SQL targeted non-existent `task_attempts.status` column instead of `tasks.state`, and pre-command verification leases were undefined.
+7. **Governance Drift**: Governance documents retained outdated revision references.
 
 ---
 
-### Decision 2: Read-Only Git Evidence Collection Authority & Strict Descendant Policy
+## 2. Decision Drivers
 
-**Primary mechanism: Hardened, sanitized Git CLI invocations only.**
-
-**Injected Environment Variables:**
-- `GIT_TERMINAL_PROMPT=0` (MUST be injected, not stripped — prevents interactive prompts)
-- `LC_ALL=C`
-
-**Stripped Environment Variables:**
-- `GIT_ASKPASS`
-- `SSH_ASKPASS`
-- `GIT_EXTERNAL_DIFF`
-- `GIT_DIFF_OPTS`
-
-**Fixed CLI Subcommand Argument Vectors:**
-
-Each subcommand has exactly one fixed argument vector; no generic string substitution shared across subcommands:
-1. Ancestry check:
-   ```
-   git --no-optional-locks merge-base --is-ancestor <base_sha> <head_sha>
-   ```
-2. Merge commit check:
-   ```
-   git --no-optional-locks rev-list --merges <base_sha>..<head_sha>
-   ```
-3. Diff patch collection:
-   ```
-   git --no-optional-locks diff --no-ext-diff --no-textconv --ignore-submodules=none --full-index -U3 <base_sha>..<head_sha>
-   ```
-4. Status check:
-   ```
-   git --no-optional-locks status --porcelain=v1 --untracked-files=all --ignored=no
-   ```
-5. Object verification:
-   ```
-   git --no-optional-locks cat-file -e <sha>^{commit}
-   ```
-
-**Ancestry Policy:**
-- Name: **`DESCENDANT_OR_EQUAL_POLICY`**
-- Implementation: `git merge-base --is-ancestor <base_sha> <head_sha>`
-- Semantics: Passes if `base_sha` is an ancestor of `head_sha` OR if `base_sha == head_sha`.
-- Implication of equality: Zero commits added by worker; diff is expected to be empty.
-
-**Merge Commit Policy:**
-- Name: **`MERGE_COMMITS_FORBIDDEN`**
-- Implementation: `git rev-list --merges <base_sha>..<head_sha>`
-- Semantics: Result must contain exactly 0 commit hashes; any merge commit triggers `POLICY_MERGE_COMMITS_REJECTED`.
-
-**TOCTOU Mitigation:**
-- Step 1 (Pre-Check): Record `HEAD` SHA and worktree status.
-- Step 2 (Collection): Execute diff, ancestry, and file listing commands.
-- Step 3 (Post-Check): Re-record `HEAD` SHA and re-verify status.
-- Abort condition: If `HEAD` changed between steps 1 and 3, abort with `ERR_GIT_EVIDENCE_TOCTOU_MUTATION`.
-
-**Status:** `DECISION_2 = APPROVED_AT_DESIGN_LEVEL`
+- **Zero-Trust Worker Boundary**: Worker reports and claimed worktree paths are untrusted inputs requiring independent verification.
+- **Fail-Closed Execution**: Any policy violation, untrusted path traversal, or uncontainable command terminates the attempt into a blocked/failed state.
+- **Durable Crash Consistency**: System crashes during evidence generation must never corrupt WAL state or leave inconsistent metadata.
+- **Inspectable ReviewBundles**: Evidence must be permanently inspectable without raw filesystem traversal.
 
 ---
 
-### Decision 3: Two-Layer Verification Isolation Architecture
+## 3. Considered Options
 
-**Layer A — Command Specification & Authority:**
-- Verification command, arguments, environment, and cwd derived strictly from immutable TaskContract `verification_requests` validated against `VerificationPolicyCatalog`.
-- Worker has zero control over Layer A.
-
-**Layer B — Process & Environment Isolation:**
-- **Primary Mechanism:** Windows AppContainer Isolation + Job Object.
-- **Secondary Fallback (only when AppContainer not available):** Restricted Token with Low Integrity Level. Requires external WFP (Windows Filtering Platform) firewall rules for network isolation (Restricted Tokens provide zero network isolation by default; this fallback cannot be used in production without external firewall configuration).
-
-**Writable Sandbox Architecture:**
-The fatal contradiction between read-only source tree and writable toolchain is resolved by external attempt sandbox root:
-```
-.supervisor/sandboxes/<attempt_id>/
-  ├── tmp/            # TEMP, TMP redirect
-  ├── gocache/        # GOCACHE redirect
-  ├── gopath/         # GOPATH redirect
-  ├── scratch/        # general output scratch
-  └── source_snapshot/ # disposable read-write copy for tests requiring in-tree writes
-```
-
-**Audited Worktree:** Strictly `GENERIC_READ` (deny write, delete, append).
-- If a test tool requires writing to the source tree, it MUST execute against a source snapshot:
-  * Copied strictly from verified commit `HEAD` (tracked files only).
-  * Excludes all untracked worker files.
-  * Verified by SHA-256 content manifest.
-  * Placed in `.supervisor/sandboxes/<attempt_id>/source_snapshot/`.
-  * Destroyed atomically upon verification completion.
-
-**Window Station & Desktop Isolation:**
-- `CreateDesktopW` alone does NOT constitute window-station isolation.
-- Required lifecycle:
-  1. `CreateWindowStationW("SupervisorStation_...", 0, GENERIC_ALL, ...)` — create dedicated station.
-  2. `CreateDesktopW("SupervisorDesktop_...", 0, 0, 0, GENERIC_ALL, ...)` — create desktop within station.
-  3. Bind `STARTUPINFO.lpDesktop` to `"SupervisorStation_...\\SupervisorDesktop_..."`.
-  4. Grant AppContainer SID access only to the dedicated station and desktop.
-  5. Close and tear down upon process exit.
-
-**AppContainer SID ACL Lifecycle:**
-1. Create AppContainer via `CreateAppContainerProfile`.
-2. Grant: Read-only ACE for Go SDK and source paths.
-3. Grant: Read/write ACE for `.supervisor/sandboxes/<attempt_id>/` and subdirectories.
-4. Deny: All access to user profile, credentials, secrets.
-5. Verify: ACL probe before child process launch; fail-closed on probe error.
-6. Cleanup: `DeleteAppContainerProfile` and restore/cleanup ACLs upon sandbox teardown.
-
-**Compatibility Proof Matrix:**
-| Vector | Behavior | Mechanism | Failure Probe |
-| :--- | :--- | :--- | :--- |
-| Go toolchain | Compiles and runs tests | Read-only SDK + writable sandbox caches | Write attempt to worktree = `ERROR_ACCESS_DENIED` |
-| Subprocess spawning | Child processes within Job Object | Job Object hierarchy | Child exceeds resource limits = terminated |
-| Source file reading | Reads test code | `GENERIC_READ` ACL | — |
-| Network egress | Denied | AppContainer: zero network capabilities | Socket connect = `WSAEACCES` (10013) |
-| Secret access | Denied | Deny ACL on credentials paths | File read `%USERPROFILE%/.ssh/id_rsa` = `ERROR_ACCESS_DENIED` |
-| Source tree mutation | Zero pollution | Read-only worktree ACL | `git status` before/after verification must be byte-identical |
-
-**Status:** `DECISION_3 = APPROVED_AT_DESIGN_LEVEL; DESIGN_BLOCKER_P04_VERIFICATION_ISOLATION = OPEN`
+- **Option A (In-Tree Direct Execution & Incremental DB Writes)**: Allow verification commands to run directly in audited worktrees and write partial evidence rows. *Rejected*: Causes dirty worktree state, violates atomicity, and creates race conditions.
+- **Option B (Model 1 Pipeline Atomicity, External Absolute Sandbox & Content-Addressed Store)**: *Adopted*.
 
 ---
 
-### Decision 4: Deterministic PolicyEngine Semantics
+## 4. Decision Outcome
 
-**Finding Types and Mappings:**
-| PolicyEngine Finding | Trigger | Outcome |
-| :--- | :--- | :--- |
-| `POLICY_SCOPE_VIOLATION` | File changed outside `allowed_scope` | Mandatory rejection in ReviewBundle |
-| `POLICY_FORBIDDEN_SCOPE_VIOLATION` | File changed inside `forbidden_scope` | Mandatory rejection in ReviewBundle |
-| `POLICY_MERGE_COMMITS_REJECTED` | Merge commit found in `rev-list --merges` | Mandatory rejection |
-| `POLICY_BINARY_FILE_DETECTED` | Git diff reports binary content | Flagged for ChatGPT review |
-| `POLICY_SYMLINK_MUTATION_DETECTED` | Symlink or file mode change detected | Flagged for ChatGPT review |
-| `POLICY_TEST_EXECUTION_FAILED` | Verification exit code != 0 | Included in ReviewBundle as verified failure |
-| `POLICY_TOCTOU_MUTATION` | HEAD changed during evidence collection | Attempt retry; zero evidence committed |
+### Decision 1: Worktree Authority and Path Binding
+1. **Pinned Source Facts**: Inspection of `backend/internal/adapters/workspace/gitworktree/workspace.go` at pinned AO commit `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6` proves:
+   - `Options`: lines 64–73; `ManagedRoot` at line 68 (raw blob lines 71–80, line 75).
+     [`backend/internal/adapters/workspace/gitworktree/workspace.go#L71-L80`](https://github.com/trungqwe/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L71-L80)
+   - `Workspace.Create`: lines 230–262; invokes `w.managedPath(cfg)` at line 243 (raw blob lines 246–266, line 257).
+     [`backend/internal/adapters/workspace/gitworktree/workspace.go#L246-L266`](https://github.com/trungqwe/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L246-L266)
+   - `Workspace.Restore`: lines 1045–1112; invokes `w.restorePath(cfg)` at line 1055 (raw blob lines 1097–1140, line 1105).
+     [`backend/internal/adapters/workspace/gitworktree/workspace.go#L1097-L1140`](https://github.com/trungqwe/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L1097-L1140)
+   - `managedPath`: lines 1754–1762 (raw blob lines 1837–1846); signature `func (w *Workspace) managedPath(cfg ports.WorkspaceConfig) (string, error)`.
+     [`backend/internal/adapters/workspace/gitworktree/workspace.go#L1837-L1846`](https://github.com/trungqwe/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L1837-L1846)
+   - `restorePath`: lines 1764–1768 (raw blob lines 1848–1853); signature `func (w *Workspace) restorePath(cfg ports.WorkspaceConfig) (string, error)`.
+     [`backend/internal/adapters/workspace/gitworktree/workspace.go#L1848-L1853`](https://github.com/trungqwe/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L1848-L1853)
+   - `defaultSessionBranchName`: lines 1783–1785 (raw blob lines 1868–1870); signature `func defaultSessionBranchName(id domain.SessionID) string`.
+     [`backend/internal/adapters/workspace/gitworktree/workspace.go#L1868-L1870`](https://github.com/trungqwe/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L1868-L1870)
+2. **Server-Generated Session IDs**:
+   - `POST /api/v1/sessions` assigns server-generated session IDs (`resp.Session.ID`). Caller cannot inject custom session IDs.
+   - Expected path (`<managedRoot>/<projectID>/<sessionID>`) and branch (`ao/<sessionID>`) are computed dynamically at runtime from spawn response evidence.
+3. **Empirical Proof Gating**: Local worktree path authority is conditional upon the successful execution and approval of [`docs/plans/PLAN-P04-WORKTREE-BINDING-PROOF.md`](../plans/PLAN-P04-WORKTREE-BINDING-PROOF.md) (Revision 2).
 
-**Worker Report Identity Verification:**
-1. `report.task_id` must match `durable task.task_id` (from immutable task record).
-2. `report.attempt_id` must match `durable attempt.attempt_id`.
-3. `report.base_sha` must match `immutable contract.base_sha`.
-4. `report.head_sha` is a `WorkerClaim` until `GitEvidenceCollector` verifies the actual worktree HEAD.
-5. `report.branch` is a `WorkerClaim` until verified against worktree binding.
-6. WorkerReport schema does NOT contain `contract_id`; contract lineage is traced via `task_id` -> `attempt_id` -> `contract.base_sha`.
+### Decision 2: Hardened In-Memory Git Collector
+- Git evidence is collected in-memory without mutating the worktree.
+- Enforces `DESCENDANT_OR_EQUAL_POLICY` (`git merge-base --is-ancestor <base_sha> HEAD`) and `MERGE_COMMITS_FORBIDDEN` (`git rev-list --min-parents=2 <base_sha>..HEAD`).
+- Injects `GIT_TERMINAL_PROMPT=0` and 30-second timeout.
+- Compares claims against `git diff --name-only <base_sha>..HEAD` and `git status --porcelain -uall`.
 
-**Status:** `DECISION_4 = APPROVED_AT_DESIGN_LEVEL`
+### Decision 3: Windows AppContainer & Desktop Isolation
+1. **Absolute State Root Hierarchy:**
+   - `<SUPERVISOR_STATE_ROOT>\sandboxes\<attempt_id>\`
+   - All toolchain write targets (`TEMP`, `TMP`, `GOCACHE`, `GOPATH`) redirected into the external sandbox.
+2. **Containment & Safe Cleanup:**
+   - Pre-operation canonicalization and containment verification ensuring paths are strictly outside all Git worktrees, primary repository, AO live database, and recovery directory.
+   - Marker file `.supervisor-owner-marker.json` verified before recursive cleanup.
+   - Missing Windows privileges for junctions/AppContainers recorded as `UNVERIFIED_CAPABILITY` or `BLOCKED` (never `PASS`).
+3. **Window Station & Desktop Isolation:**
+   - Dedicated non-interactive Window Station via `CreateWindowStationW` + `CreateDesktopW`.
+4. **Disposable Source Snapshot:**
+   - Extracted from verified Git `HEAD` into sandbox for modifying tests; destroyed during cleanup.
 
----
+### Decision 4: Verification Execution Authority via VerificationPolicyCatalog
+- Verification commands are strictly mediated via typed profiles in `VerificationPolicyCatalog`.
+- Workers cannot supply raw executable paths, shell strings, endpoints, or roots.
+- Pinned AO harness mode must be proven inert (zero LLM calls, zero credentials, zero prompts) before execution (`DESIGN_BLOCKER_P04_INERT_AO_HARNESS = OPEN`).
+- Stage B policy check is recorded as `UNVERIFIED` until registered in live catalog.
 
-### Decision 5: Two-Phase Evidence State Progression & Persistence Transactions
+### Decision 5: Model 1 Pipeline Atomicity & Lease Reservation
+1. **In-Memory Collectors:** Subtasks P04B and P04C perform strictly zero SQLite writes.
+2. **Pre-Command Reservation Lease:** P04D acquires a lease in `task_verification_leases` (Schema v9) with an incremented `fencing_token`. Losers are denied execution (zero commands executed).
+3. **State Invariant:** The task remains in `state = 'REPORT_READY'` on `tasks` throughout execution.
+4. **Single Final Atomic SQLite CAS Transaction:** P04D executes a single transaction persisting all evidence, findings, test results, review artifacts, audit events, and updating `tasks.state`:
+   ```sql
+   UPDATE tasks
+   SET state = 'EVIDENCE_READY',
+       updated_at = ?
+   WHERE task_id = ?
+     AND state = 'REPORT_READY'
+     AND current_attempt = ?
+     AND EXISTS (
+         SELECT 1 FROM task_verification_leases l
+         WHERE l.task_id = tasks.task_id
+           AND l.attempt_id = ?
+           AND l.fencing_token = ?
+           AND l.expires_at > ?
+     );
+   ```
+5. **Stale Worker Protection:** Resumed crashed workers with expired/reclaimed leases cannot commit evidence.
 
-**Model 1 Pipeline: Pure Collectors + Single CAS Orchestrator**
-
-Phase P04B (`GitEvidenceCollector`, `PolicyEngine`) and Phase P04C (`VerificationRunner`) are **pure in-memory engines** with zero SQLite writes. Phase P04D is the sole SQLite persistence orchestrator.
-
-**Sequential Schema Migrations:**
-- Schema v6 (P04A): `worker_claims`, `attempt_workspace_bindings`
-- Schema v7 (P04B): `evidence`, `policy_findings` (tables present, production write APIs wired in P04D only)
-- Schema v8 (P04C): `actual_test_results` (table present, production write APIs wired in P04D only)
-- Schema v9 (P04D): `review_artifacts`, `review_bundles`
-
-**Task State Invariant During Collection:**
-Task remains in `REPORT_READY` throughout all P04B and P04C execution.
-
-**P04D Atomic CAS Transaction:**
-```sql
-BEGIN IMMEDIATE;
--- 1. CAS Check
-UPDATE task_attempts SET status = 'EVIDENCE_READY', updated_at = ?
-WHERE attempt_id = ? AND status = 'REPORT_READY';
--- 2. Insert Evidence, Policy Findings, Test Results, Artifact Metadata, ReviewBundle, Audit Event
-COMMIT;
-```
-If any step fails, transaction rolls back; zero partial rows committed.
-
-**One-Winner Reservation Lease:**
-- Attempt-scoped exclusive lease acquired before executing external commands.
-- Losing concurrent workers abort immediately with zero external command execution.
-- Expired leases recovered by crash-recovery monitor.
-
-**Normal Test Failure vs Infrastructure Failure:**
-- Normal test failure (exit code != 0): Valid verified outcome; recorded in `actual_test_results`; task reaches `EVIDENCE_READY`; ReviewBundle reports failure to ChatGPT.
-- Infrastructure failure (timeout, sandbox crash, OOM, tool not found): Attempt fails; task remains `REPORT_READY` for retry; zero evidence committed.
-
-**Status:** `DECISION_5 = APPROVED_AT_DESIGN_LEVEL; DESIGN_BLOCKER_P04_EVIDENCE_ATOMICITY = OPEN`
-
----
-
-### Decision 6: Reviewable Evidence Payload & Schema Reconciliation
-
-**Durable Artifact Store:**
-- Content-addressed filesystem: `.supervisor/artifacts/<sha256>`
-- SQLite metadata table: `review_artifacts`
-- Schema (fields): `artifact_id`, `attempt_id`, `kind`, `media_type`, `encoding`, `full_stream_sha256`, `captured_sha256`, `original_bytes`, `captured_bytes`, `is_truncated`, `durable_location`, `created_at`
-- Dual hashing: `full_stream_sha256` (computed over complete stream) and `captured_sha256` (hash of stored prefix); never conflated.
-- Atomic write-rename persistence: temp file -> SHA-256 verify -> rename to canonical path.
-- P05 retrieval: strictly via opaque `artifact_id`; raw paths never exposed to ChatGPT tools.
-
-**Canonical ReviewBundle Hashing:**
-- Algorithm: **RFC 8785 (JSON Canonicalization Scheme - JCS)**.
-- Input: RFC 8785 canonical byte representation of the ReviewBundle object **excluding** the `bundle_hash` field.
-- Hash output: SHA-256 of the JCS byte stream.
-
-**Schema Reconciliation (S1..S10):**
-- S1: `test_results` replaces `details` throughout all schemas.
-- S2: `review_artifacts` table added to Schema v9 (P04D).
-- S3: `patch_artifact_id` (opaque) referenced in Git evidence.
-- S4: `stdout_artifact_id`, `stderr_artifact_id` (opaque) referenced in `actual_test_results`.
-- S5: RFC 8785 (JCS) formalized as canonical hashing algorithm.
-- S6: `is_patch_truncated`, `is_stdout_truncated`, `is_stderr_truncated` flags mandated.
-- S7: Opaque artifact retrieval service API for P05.
-- S8: Binary file change manifest in ReviewBundle.
-- S9: Domain struct definitions (`internal/domain`) synchronized.
-- S10: Valid example JSON fixtures reconciled with Draft-07 schemas.
-
-**Status:** `DECISION_6 = APPROVED_AT_DESIGN_LEVEL; DESIGN_BLOCKER_P04_REVIEW_SCHEMA_RECONCILIATION = OPEN`
+### Decision 6: Durable Content-Addressed Artifact Store & Crash Consistency
+1. **Canonical Path Key:** Stored files containing captured prefix bytes use `captured_sha256`:
+   `<SUPERVISOR_STATE_ROOT>\artifacts\<captured_sha256>`
+2. **Dual Hashing:** `full_stream_sha256` is recorded as stream metadata in `review_artifacts`.
+3. **Crash Consistency Protocol:** Write staging (`.staging/<uuid>`) -> fsync file + parent directory -> atomic rename -> SQLite CAS metadata insert.
+4. **Crash Recovery:** Startup GC removes unreferenced staging/orphan files after a 24-hour grace period following containment verification.
+5. **Canonical Hashing:** `ReviewBundle` deterministic hashing is formalized using **RFC 8785 (JCS)**.
 
 ---
 
-## 3. Consequences
+## 5. Consequences
 
-### Positive Consequences
-- **Zero Private AO Database Access**: Binding formula is derived from public AO source facts, not private SQLite.
-- **Reproducible Evidence**: Deterministic formulas for path, branch, diff collection, and artifact hashing produce identical results across reproducible audit cycles.
-- **Fail-Closed Security**: AppContainer + Job Object + read-only source tree prevent source mutation, secret leakage, and network egress during verification.
-- **Atomic Evidence**: Model 1 guarantees zero partial evidence rows; a failed P04D transaction leaves the system in a retry-able state.
-- **P05 Isolation**: Opaque artifact IDs prevent raw filesystem traversal from being exposed to ChatGPT tools.
+### Positive
+- Zero risk of worktree mutation or credential prompt hanging.
+- Complete audit trail with durable, content-addressed verification logs.
+- Guaranteed atomicity: zero partial evidence rows in SQLite.
+- Strong containment: zero cross-worktree or repository pollution.
 
-### Negative / Trade-Off Consequences
-- **Bounded Proof Overhead**: Resolving Decision 1 requires executing the Worktree Binding Proof task before P04A can proceed.
-- **Latency**: AppContainer + sandbox setup introduces 100-500ms overhead per verification attempt.
-- **Disk I/O**: Content-addressed artifact store and sandbox teardown add disk operations beyond in-memory approaches.
+### Negative / Trade-offs
+- Additional disk I/O for staging and fsync of large artifacts.
+- Requires Windows host administrative privileges for AppContainer and Window Station allocation.
 
-### Invariants Preserved
-- **`AUTOMATIC_RESTORE = DISABLED`** until verified operator principal reaches trusted boundary.
-- **`LIVE_AO_INTEGRATION = UNVERIFIED_EVIDENCE_TRACK`**: Isolated disposable proof does not constitute live user AO evidence.
-- **`P04_TASK_CONTRACT = NOT_RELEASED`**: No implementation Task Contract is released until all five blockers are resolved.
-- **`P04_CODE = HELD_PENDING_APPROVED_ARCHITECTURE_AND_TASK_CONTRACT`**: Zero production Go code written until formal contract release.
-- **`P05_CODE = NOT_AUTHORIZED`**: Phase P05 ChatGPT Tool Interface implementation remains blocked.
-- **`STAGE_B_RUNTIME_CATALOG = DEFERRED_TO_P04_RUNTIME_INTEGRATION`**: Stage B runtime catalog deferred.
+---
+
+## 6. Migration and Schema Ownership
+
+- **Schema v6 (P04A)**: `claims` table.
+- **Schema v7 (P04B)**: `evidence`, `policy_findings` tables.
+- **Schema v8 (P04C)**: `actual_test_results` table.
+- **Schema v9 (P04D)**: `review_artifacts`, `review_bundles`, `task_verification_leases` tables.
