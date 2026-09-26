@@ -1,7 +1,7 @@
 # PROPOSAL-P04-002: ReviewBundle Latency Measurement Semantics (NFR-008 Reconciliation)
 
 > **Proposal ID**: `PROPOSAL-P04-002`
-> **Revision**: 2
+> **Revision**: 3
 > **Title**: Formal Latency Measurement Semantics for ReviewBundle Compilation & Pipeline Reconciliation
 > **Author**: AI Engineering Supervisor Team
 > **Status**: `PENDING_EXTERNAL_REVIEW`
@@ -30,7 +30,7 @@ This proposal establishes a rigorous, unambiguous measurement model that reconci
 1. **Canonical NFR-008**: Stipulates a hard performance budget of <= 3.0 seconds from worker completion on repositories up to 10,000 files.
 2. **Canonical FR-008 & ReviewBundle Schema**: Stipulates that `ReviewBundle.actual_test_evidence` must record the Supervisor's independently executed test commands and exit codes.
 3. **Execution Reality**:
-   - Compiling and executing test suites in Windows AppContainers with zero inherited handles and network denial is bounded by project build times, external toolchain performance, and test complexity.
+   - Compiling and executing test suites in Windows AppContainers with explicit handle inheritance and network denial is bounded by project build times, external toolchain performance, and test complexity.
    - For real projects, verification tests typically run between 5 and 60 seconds.
 
 ### 2.2. Governance Conflict
@@ -38,99 +38,124 @@ Modifying the text or interpretation of NFR-008 unilaterally violates the 9-leve
 
 ---
 
-## 3. Proposed Resolution: Two-Interval Latency Model
+## 3. Proposed Measurement Model: Two-Interval Latency Semantics
 
-We propose structuring the post-worker pipeline into two strictly separated, independently bounded intervals:
+To reconcile NFR-008 with FR-008 and real-world execution physics while maintaining strict auditability, the verification pipeline is structured into two precisely bounded operational intervals:
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Worker as Worker Session
-    participant Intake as Transaction A: Report Intake
-    participant Runner as Verification Runner (P04C)
-    participant Finalize as Transaction B: Evidence Finalization
-    participant Compiler as Transaction C: Bundle Compilation
-    participant Store as SQLite WAL (audit_events & review_bundles)
+### 3.1. Interval 1: Evidence Acquisition Window (Work Execution Phase)
+- **Start**: Worker signals report completion; Transaction A validates report, stores structured `worker_claims` (Schema v6), and transitions `tasks.state`: `RUNNING -> REPORT_READY`.
+- **Operations**:
+  1. Supervisor revalidates physical worktree handle identity (`FileIdInfo`).
+  2. Supervisor creates snapshot `<SUPERVISOR_STATE_ROOT>/snapshots/<attempt_id>/` from actual verified HEAD commit via Git `ls-tree -rz --full-tree` and `cat-file --batch`.
+  3. Supervisor executes hardened in-memory Git evidence collection (`P04B`).
+  4. Supervisor executes verification test commands sequentially (`P04C`) inside isolated Windows AppContainers against the immutable snapshot.
+  5. Supervisor stages, deduplicates, and flushes content-addressed artifacts to `artifacts/<first-two-hex>/<captured_sha256>`.
+  6. Transaction B commits durable `evidence_sets` and `review_artifacts(evidence_set_id)` (Schema v9), releases lease, and transitions `tasks.state`: `REPORT_READY -> EVIDENCE_READY`.
+- **Governing SLA / Budget**:
+  - Bound by TaskContract `verification_requests[].timeout_seconds` validated by Stage B, or profile `MaxTimeoutSeconds` from `VerificationPolicyCatalog`.
+  - In v1, verification requests execute strictly sequentially; the total budget is the exact sum of request timeouts plus Git collector timeout (10s) and bounded orchestration overhead (15s).
+  - Arbitrary unapproved verification budget tokens or ungrounded 60,000 ms defaults are strictly prohibited.
+- **Terminal Boundary**: Mark $T_0$ = `evidence_committed_at_epoch_ms` as the exact timestamp immediately before Transaction B commit succeeds.
 
-    Worker->>Intake: Submit WorkerReport
-    Intake->>Intake: Validate report & verify existing binding
-    Note over Intake: Task enters REPORT_READY (Worker Completion)
+### 3.2. Interval 2: ReviewBundle Compilation Window (Synthesis Phase)
+- **Start ($T_0$)**: Transaction B commit completion ($T_0$), marking all verification evidence and artifacts as durably persisted in SQLite WAL and disk.
+- **Operations**:
+  1. Pipeline orchestrator reads persisted `evidence_sets` and `review_artifacts` from SQLite.
+  2. Pipeline orchestrator synthesizes RFC 8785 JCS canonical `ReviewBundle` JSON payload.
+  3. Pipeline orchestrator validates payload against `docs/schemas/review-bundle.schema.json`.
+  4. Pipeline orchestrator computes SHA-256 bundle hash.
+  5. Transaction C inserts `review_bundles(evidence_set_id)` with persisted `bundle_committed_at_epoch_ms` and `compilation_latency_ms`, inserts proposed audit event `REVIEW_BUNDLE_GENERATED`, and transitions `tasks.state`: `EVIDENCE_READY -> REVIEWING`.
+- **End ($T_1$)**: Transaction C commit completion ($T_1$).
+- **Governing SLA**:
+  - Bound strictly by **NFR-008**:
+    `compilation_latency_ms = bundle_committed_at_epoch_ms - evidence_committed_at_epoch_ms`
+    `0 <= compilation_latency_ms <= 3000 ms (3.0 seconds)`
+  - Measured in-process using monotonic timer around the two commit completions; recorded durably in epoch milliseconds in `review_bundles`.
+  - Clock regression ($T_1 < T_0$) or latency violation (> 3000 ms) causes Transaction C to roll back via SQLite WAL. A separate fail-closed diagnostic transaction logs `REVIEW_BUNDLE_COMPILATION_REJECTED` into `audit_events` without transitioning TaskState to `REVIEWING`.
 
-    rect rgb(240, 240, 255)
-        Note over Intake,Finalize: Interval 1: Evidence Acquisition Window (Derived Contract Timeouts)
-        Intake->>Runner: Acquire Lease & Dispatch Verification
-        Runner->>Runner: Execute Git diff & AppContainer tests
-        Runner->>Finalize: Persist evidence_sets & review_artifacts
-        Finalize->>Finalize: Release lease & commit Transaction B (T0: evidence_committed_at)
-    end
+---
 
-    rect rgb(255, 240, 240)
-        Note over Compiler,Store: Interval 2: ReviewBundle Compilation Window (<= 3.0s per NFR-008)
-        Compiler->>Compiler: T0: Begin bundle synthesis from committed evidence_sets
-        Compiler->>Compiler: Generate RFC 8785 JCS canonical JSON & validate schema
-        Compiler->>Store: Insert review_bundles, audit_events & transition to REVIEWING (T1)
-        Note over Store: 0 <= T1 - T0 <= 3.0 seconds (NFR-008 Enforcement Point)
-    end
+## 4. Database Schema and DDL Constraints
+
+The latency invariants are enforced directly at the SQLite database layer:
+
+```sql
+-- Schema v9: evidence_sets
+CREATE TABLE evidence_sets (
+    evidence_set_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
+    attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+    contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
+    fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
+    git_evidence_json TEXT NOT NULL CHECK (LENGTH(git_evidence_json) > 0),
+    test_evidence_json TEXT NOT NULL CHECK (LENGTH(test_evidence_json) > 0),
+    policy_findings_json TEXT NOT NULL CHECK (LENGTH(policy_findings_json) > 0),
+    unverified_claims_json TEXT NOT NULL CHECK (LENGTH(unverified_claims_json) > 0),
+    evidence_committed_at_epoch_ms INTEGER NOT NULL CHECK (evidence_committed_at_epoch_ms > 0),
+    collected_at TEXT NOT NULL CHECK (LENGTH(collected_at) > 0),
+    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT
+);
+
+-- Schema v9: review_bundles
+CREATE TABLE review_bundles (
+    bundle_id TEXT PRIMARY KEY,
+    evidence_set_id TEXT NOT NULL UNIQUE REFERENCES evidence_sets(evidence_set_id) ON DELETE RESTRICT,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
+    attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+    contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
+    bundle_payload_json TEXT NOT NULL CHECK (LENGTH(bundle_payload_json) > 0),
+    bundle_hash TEXT NOT NULL CHECK (LENGTH(bundle_hash) = 64 AND NOT (bundle_hash GLOB '*[^0-9a-f]*')),
+    evidence_committed_at_epoch_ms INTEGER NOT NULL CHECK (evidence_committed_at_epoch_ms > 0),
+    bundle_committed_at_epoch_ms INTEGER NOT NULL CHECK (bundle_committed_at_epoch_ms > 0),
+    compilation_latency_ms INTEGER NOT NULL CHECK (compilation_latency_ms BETWEEN 0 AND 3000),
+    generated_at TEXT NOT NULL CHECK (LENGTH(generated_at) > 0),
+    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT,
+    CHECK (
+        bundle_committed_at_epoch_ms >= evidence_committed_at_epoch_ms AND
+        compilation_latency_ms = (bundle_committed_at_epoch_ms - evidence_committed_at_epoch_ms)
+    )
+);
+
+CREATE TRIGGER trg_review_bundles_evidence_time_guard
+BEFORE INSERT ON review_bundles
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'evidence timestamp mismatch: evidence_committed_at_epoch_ms does not match evidence_sets')
+    WHERE NOT EXISTS (
+        SELECT 1 FROM evidence_sets e
+        WHERE e.evidence_set_id = NEW.evidence_set_id
+          AND e.evidence_committed_at_epoch_ms = NEW.evidence_committed_at_epoch_ms
+    );
+END;
 ```
 
-### 3.1. Interval 1: Evidence Acquisition Window (Worker Completion to T0)
-- **Trigger**: Worker submits report; Transaction A validates report, verifies authoritative `attempt_workspace_bindings`, persists `worker_claims`, and transitions `tasks.state` to `REPORT_READY`.
-- **Scope**: Hardened in-memory Git diff/log collection (Subtask P04B) and Windows AppContainer verification runner execution (Subtask P04C).
-- **Governing Timeout (No Arbitrary Budget Tokens)**:
-  * The timeout for Interval 1 is derived strictly from the validated task contract's `verification_requests[].timeout_seconds`.
-  * If a request omits `timeout_seconds`, the default is taken from `MaxTimeoutSeconds` defined in the approved `VerificationPolicyCatalog` profile.
-  * Aggregation rules:
-    - **Sequential Execution**: Total timeout = sum(request.timeout_seconds).
-    - **Parallel Execution**: Total timeout = max(request.timeout_seconds).
-  * Arbitrary unapproved tokens (such as `unapproved verification budget tokens` or ungrounded 60,000 ms defaults) are strictly prohibited.
-- **Enforcement**: Hard timeout enforcement via Windows Job Object (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) and process-tree termination.
-- **Terminal Moment (T0)**: Defined as `evidence_committed_at`, the exact timestamp when Transaction B commits `evidence_sets` and `review_artifacts` to SQLite WAL, releases the verification lease, and transitions `tasks.state`: `REPORT_READY -> EVIDENCE_READY`.
+---
 
-### 3.2. Interval 2: ReviewBundle Compilation & Persistence Window (T0 to T1)
-- **Start (T0)**: The instant when `evidence_sets` is durably committed in SQLite (Transaction B commit timestamp).
-- **End (T1)**: The instant when:
-  1. The canonical RFC 8785 JSON Canonicalization Scheme (JCS) `ReviewBundle` payload is constructed in memory;
-  2. The payload is validated against `docs/schemas/review-bundle.schema.json`;
-  3. The `review_bundles` row is durably inserted;
-  4. The `audit_events` row (`event_type = 'AUDIT_EVENT_BUNDLE_GENERATED'`) is durably inserted;
-  5. The `tasks.state` CAS transition to `REVIEWING` is committed to SQLite WAL.
-- **Governing Requirement (NFR-008)**:
-  $$0 <= T1 - T0 <= 3.0 seconds$$
-  for repositories containing up to 10,000 files.
-- **Monotonic Duration & Clock Regression Invariant**:
-  - In-process execution measures compilation duration using monotonic clocks (`time.Since(t0)`).
-  - Persisted epoch timestamps must satisfy `T1 >= T0`. Any clock regression (`T1 < T0`) triggers an immediate fail-closed error and audit alert.
+## 5. Audit Event Governance
+
+The audit event types associated with ReviewBundle compilation are registered with status `PROPOSED_UNTIL_ADR_ACCEPTANCE`:
+1. `REVIEW_BUNDLE_GENERATED`: Recorded in Transaction C upon successful ReviewBundle synthesis and persistence. Details include `bundle_id`, `bundle_hash`, `compilation_latency_ms`, and `evidence_set_id`.
+2. `REVIEW_BUNDLE_COMPILATION_REJECTED`: Recorded in a separate fail-closed transaction if Transaction C fails due to clock regression, latency violation (> 3000 ms), schema validation failure, or hash conflict. Details include failure reason, timestamps, and error diagnostics.
+
+Canonical event registry and domain constants reconciliation will occur only after formal External Supervisor approval of ADR-018.
 
 ---
 
-## 4. Evaluation of Alternatives
+## 6. Proposed Wording for Canonical NFR-008 Reconciliation
 
-| Option | Description | Pros | Cons | Verdict |
-| :--- | :--- | :--- | :--- | :--- |
-| **A. Include test runtime in NFR-008** | Clock runs from worker report to ReviewBundle persistence including tests. | Strict literal reading of "worker completion". | Impossible for real projects; tests breach 3s constantly. | **Rejected** |
-| **B. Make test execution asynchronous** | Generate partial ReviewBundle in 3s without tests; enrich later. | Meets 3s trivially. | Violates audit integrity; reviewer receives incomplete audit data. | **Rejected** |
-| **C. Two-Interval Model (Proposed)** | Separate external test execution timeout from Control Plane compilation budget (T1 - T0 <= 3s). | Preserves audit integrity; holds Control Plane strictly accountable for compilation latency (<= 3s). | Requires explicit measurement definition in requirements. | **Recommended** |
+Upon formal approval of this proposal, the text of **NFR-008** in `docs/02_REQUIREMENTS.md` will be updated via single-pass canonical reconciliation:
 
----
+### Current Canonical Text (Level 4):
+> *"NFR-008: The Supervisor Control Plane shall generate a Review Bundle within 3 seconds of worker completion on repos up to 10,000 files."*
 
-## 5. Implementation & Verification Plan
-
-1. **Instrumentation**: Subtask P04D tracks:
-   - `evidence_committed_at` (T0, epoch ms)
-   - `bundle_committed_at` (T1, epoch ms)
-   - `compilation_latency_ms` = T1 - T0 (asserted <= 3000 ms)
-2. **Benchmark Test Suite**: Integration test in Subtask P04D tests a repository with 10,000 committed files, synthesizes a ReviewBundle from pre-computed evidence sets, and asserts that T1 - T0 <= 3000 ms.
-3. **Audit Log Metric**: Emits an audit event into canonical table `audit_events` with `event_type = 'AUDIT_EVENT_BUNDLE_GENERATED'`, recording T0, T1, and latency delta in `details_json`.
+### Proposed Reconciled Text:
+> *"NFR-008: The Supervisor Control Plane shall synthesize, canonicalize (JCS RFC 8785), validate, and persist the attempt-scoped ReviewBundle within 3.0 seconds (Interval 2: T1 - T0 <= 3.0 seconds) of durable verification evidence finalization (Transaction B commit at T0) on repositories up to 10,000 files. Independent test execution and evidence collection duration (Interval 1) is governed by task contract verification budgets."*
 
 ---
 
-## 6. Governance Next Steps
+## 7. Governance Process & Status Invariants
 
-1. This proposal is submitted as `PENDING_EXTERNAL_REVIEW`.
-2. Until formal approval by External Supervisor:
-   - Canonical `docs/02_REQUIREMENTS.md` remains **UNMODIFIED**.
-   - `docs/adr/DRAFT-ADR-018-evidence-review-and-verification-isolation.md` remains in **DRAFT** status.
-   - Task Contract for Phase P04 cannot be released.
-3. Upon approval:
-   - An approved ADR addendum or revision will record the two-interval model.
-   - `docs/02_REQUIREMENTS.md` will be reconciled in a governed canonical update pass.
+1. **PROPOSAL Status**: `PENDING_EXTERNAL_REVIEW`.
+2. **Canonical Spec Immutability**: Neither `docs/02_REQUIREMENTS.md` nor `docs/04_ARCHITECTURE.md` shall be modified prior to explicit External Supervisor approval of this proposal.
+3. **Draft ADR-018 Dependency**: `DRAFT-ADR-018` references this proposal; ADR-018 cannot be marked `ACCEPTED` until this proposal is formally approved.
+4. **Execution Graph Decoupling**: This proposal governs specification reconciliation and does not block Subtask P04A or P04B execution once architecture is approved.
