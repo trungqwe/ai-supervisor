@@ -23,6 +23,8 @@ Implement `AOAdapter` to connect the Supervisor Control Plane to the Untrivial A
 
 ## 3. Exit Gate
 - Automated integration tests successfully perform preflight health/readiness/agent probes, decoupled session provisioning, durable 3-stage dispatch saga, observation reconciliation across active/idle/waiting_input/blocked states, raw workspace artifact fetch, and purpose-aware termination/quarantine enforcement without P04 EvidenceCollector dependencies.
+- **Exit Gate Status:** `P03_EXIT_GATE = EXTERNAL_AUDIT_APPROVED` per [`P03_EXIT_GATE_EXTERNAL_REAUDIT_002.md`](../audits/P03_EXIT_GATE_EXTERNAL_REAUDIT_002.md).
+- **Phase Completion:** `PHASE_P03 = COMPLETE`.
 
 
 ## 4. ADR-016 addendum release boundaries
@@ -44,4 +46,4 @@ Pursuant to approved PROPOSAL-P03-005, accepted ADR-017, and released Task Contr
 - **Readiness & Shutdown**: Startup-before-serve readiness probe; graceful shutdown drain order per ADR-017 §4.2 and AC-004-04 (close listeners -> drain/join callers -> stop/join schedulers -> Store.Close() -> CleanMetadata nếu instance khớp -> close pinned DB handle -> close owner lock last).
 - **P03 Integration Harness**: Pure library test harness in `test/integration/ao_harness_test.go` asserting 5 exit gate steps via approved internal library APIs without effectful HTTP routes.
 - **Handoff Clearance**: Closes `HOST_QUIESCENCE_INTEGRATION` and `DESIGN_BLOCKER_3D_STARTUP_WIRING` at implementation scope within Phase P03.
-- **Gate Transition**: Active gate transitions to `P03_EXIT_GATE_AUDIT` (`P03_EXIT_GATE = READY_FOR_EXTERNAL_AUDIT`). Phase P03 is not declared COMPLETE until formal exit audit approval.
+- **Gate Transition**: Exit Gate formally approved (`P03_EXIT_GATE = EXTERNAL_AUDIT_APPROVED`, `PHASE_P03 = COMPLETE`). Active gate transitions to `P04_CONTRACT_PLANNING`. P04 code writing remains held pending Task Contract release (`P04_CODE = HELD_PENDING_TASK_CONTRACT_RELEASE`).
