@@ -345,9 +345,9 @@ func runDaemon(args []string) error {
 
 	pollerCloser := &fnCloser{fn: func() error {
 		cancelPoller()
-		err := poller.Stop()
+		_ = poller.Stop()
 		<-pollerWatcherDone
-		return err
+		return nil
 	}}
 	timeoutCloser := &fnCloser{fn: func() error {
 		cancelTimeout()

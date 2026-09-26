@@ -338,11 +338,14 @@ func TestRealDaemonDrainTimeoutPreservesLock(t *testing.T) {
 	// -------------------------------------------------------------------------
 	select {
 	case exitResult := <-p1Done:
-		if exitResult != nil {
-			t.Logf("Phase 3 Probe C PASS: Daemon exited after permit joined: %v", exitResult)
-		} else {
-			t.Log("Phase 3 Probe C PASS: Daemon exited cleanly after permit holder joined")
+		if exitResult == nil {
+			t.Fatal("expected daemon to exit with non-zero exit code on drain timeout, got nil")
 		}
+		exitErr, ok := exitResult.(*exec.ExitError)
+		if !ok || exitErr.ExitCode() != 2 {
+			t.Fatalf("expected daemon exit code 2 on drain timeout, got: %v", exitResult)
+		}
+		t.Logf("Phase 3 Probe C PASS: Daemon correctly exited with code 2 on drain timeout: %v", exitResult)
 	case <-time.After(15 * time.Second):
 		t.Fatal("Daemon did not exit within expected time after permit release")
 	}
@@ -636,17 +639,23 @@ func TestDaemonPollerFailureMidRunProbe(t *testing.T) {
 	}
 	t.Logf("PASS: Stop command succeeded: %s", strings.TrimSpace(string(stopOut)))
 
-	// 9. Verify daemon exits cleanly (shutdown joins watcher and stopped poller)
+	// 9. Verify daemon exits cleanly with code 0 (graceful shutdown joins watcher and stopped poller)
 	select {
 	case p1Err := <-p1Done:
 		if p1Err != nil {
-			t.Logf("daemon exited after stop (exit: %v)", p1Err)
-		} else {
-			t.Log("PASS: Daemon process exited cleanly with code 0")
+			t.Fatalf("expected daemon to exit cleanly with code 0 after graceful stop, got: %v", p1Err)
 		}
+		t.Log("PASS: Daemon process exited cleanly with code 0")
 	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for daemon to exit after stop command")
 	}
+
+	// 9b. Verify Store was closed and metadata cleaned up during teardown
+	metaPath := dbPath + ".owner.json"
+	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
+		t.Fatalf("expected owner metadata file to be cleaned up after daemon shutdown, err=%v", err)
+	}
+	t.Log("PASS: Owner metadata cleaned up, confirming Store.Close and OwnerLease.CleanMetadata completed")
 
 	// 10. Verify that now contender can acquire lock and start
 	contenderReadyFile := filepath.Join(tempDir, "contender_ready.txt")
