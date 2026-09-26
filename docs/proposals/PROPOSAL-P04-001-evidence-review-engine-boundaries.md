@@ -4,59 +4,61 @@
 > **Revision**: 14
 > **Title**: Evidence & Review Engine Architecture, Execution Isolation, and Verification Governance
 > **Author**: AI Engineering Supervisor Team
-> **Status**: `PENDING_EXTERNAL_REVIEW (REVISION 15)`
+> **Status**: `PENDING_EXTERNAL_REVIEW (REVISION 16)`
 > **Date**: 2026-09-26
-> **Audited Baseline**: `5fa0f5d291cb5f1952f688c971b8b047d3529bca`
+> **Audited Baseline**: `e349f32994edca259405465a2ecda576c29e62f2`
 > **Preservation Baseline Commit**: `6e1993da150031a9465901a7019c71257de44312` (Revision 11)
-> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_14`
+> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_15`
 > **Deciders**: AI Engineering Supervisor Architecture Council, External Supervisor
 > **Related Architecture**: `docs/04_ARCHITECTURE.md` (Section 7), `docs/05_DOMAIN_MODEL.md`, `docs/10_REVIEW_BUNDLE.md`
 > **Related Requirements**: `docs/02_REQUIREMENTS.md` (FR-008, NFR-008 via PROPOSAL-P04-002)
-> **Supersedes**: `PROPOSAL-P04-001` Revision 14
-> **External Audit Tracking**: Remediates Findings `P04-ARCH-R14-001` and `P04-ARCH-R14-002` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_013.md`).
+> **Supersedes**: `PROPOSAL-P04-001` Revision 15
+> **External Audit Tracking**: Remediates Findings `P04-ARCH-R15-001` and `P04-ARCH-R15-002` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_014.md`).
 
 ## 1. Context and Problem Statement
 
 Phase P04 implements the **Evidence & Review Engine**, providing independent, tamper-proof verification of AI worker outputs under canonical architecture (`docs/04_ARCHITECTURE.md` Section 7) and requirements (`docs/02_REQUIREMENTS.md`).
 
-External Re-Audit 013 (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_013.md`) evaluated Round 13 remediation at commit `5fa0f5d291cb5f1952f688c971b8b047d3529bca`, recording verdict `REVISION_14_REQUIRED`. It confirmed design-level closure on `P04-ARCH-R13-001` (TaskState preservation) and `P04-ARCH-R13-002` (foreign key audit references and principal constraints), partially closed `P04-ARCH-R13-003` and `P04-ARCH-R13-004`, and opened findings `P04-ARCH-R14-001` (canonical audit model alignment & replay semantics) and `P04-ARCH-R14-002` (diagnostic occurrence lifecycle).
+External Re-Audit 014 (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_014.md`) evaluated Round 14 remediation at commit `e349f32994edca259405465a2ecda576c29e62f2`, recording verdict `REVISION_15_REQUIRED`. It confirmed design-level closure on `P04-ARCH-R14-001` (canonical audit model alignment: actor column, `details_json.actor_role`, mandatory `pair_id`, sanitized replay comparison, and UNIQUE `event_id` conflict), partially closed `P04-ARCH-R14-002`, and opened findings `P04-ARCH-R15-001` (elimination of circular self-reference in `hold_id` derivation) and `P04-ARCH-R15-002` (resolution crash/replay semantics and concurrent caller race handling).
 
-Revision 15 establishes complete design-level resolution of findings `P04-ARCH-R14-001` and `P04-ARCH-R14-002` via surgical patches applied directly to the Revision 14 architecture:
-1. `P04-ARCH-R14-001`: Canonical Audit Model Alignment & Replay Semantics. Strict adherence to canonical `domain.AuditEvent` and `audit_events` schema (`actor TEXT NOT NULL`, role in `details_json.actor_role`, mandatory `pair_id`). System events use `actor = 'ai-supervisor-daemon'`, `details_json.actor_role = 'SUPERVISOR'`; operator resolution uses `actor = verified resolved_by_principal`, `details_json.actor_role = 'OPERATOR'`. Semantic replay upon duplicate key on UNIQUE `event_id` compares sanitized fields (`event_type`, `pair_id`, `task_id`, `contract_id`, `attempt_id`, `actor`, and canonical `details_json`), explicitly ignoring only `sequence`, `timestamp`, `prev_hash`, and `event_hash`. Incoming events are sanitized via `audit.SanitizeAuditEvent` before append and readback comparison; sanitization failure or sanitized-key collision fails closed.
-2. `P04-ARCH-R14-002`: Diagnostic Occurrence Lifecycle in `review_integrity_holds`. Added `occurrence_number INTEGER NOT NULL CHECK (typeof(occurrence_number) = 'integer' AND occurrence_number > 0)` and `UNIQUE(attempt_id, hold_reason, diagnostic_fingerprint, occurrence_number)`. Rejection audit event JCS identity descriptor includes `occurrence_number` and `hold_id`. Atomic creation algorithm assigns `occurrence_number = COALESCE(MAX(occurrence_number), 0) + 1` in `BEGIN IMMEDIATE` diagnostic transaction. If the same diagnostic recurs after occurrence N is RESOLVED, occurrence N+1 is created with a new distinct rejection audit event and new ACTIVE hold; hold N remains immutable; admission remains closed.
+Revision 16 establishes complete design-level resolution of findings `P04-ARCH-R15-001` and `P04-ARCH-R15-002` via surgical patches applied directly to the Revision 15 architecture:
+1. `P04-ARCH-R15-001`: Elimination of Circular Self-Reference in `hold_id` Derivation. Decoupled hold and rejection event derivation into two distinct RFC 8785 JCS descriptors: (A) `hold_identity_descriptor` containing `version=1`, `kind='review_integrity_hold'`, `pair_id`, `task_id`, `contract_id`, `attempt_id`, `hold_reason`, `diagnostic_fingerprint`, and `occurrence_number`, yielding `hold_id = 'hold-' + SHA256(RFC8785_JCS(hold_identity_descriptor))` without self-reference; (B) `rejection_event_identity_descriptor` containing `version=1`, `event_type`, `pair_id`, `task_id`, `contract_id`, `attempt_id`, `reason`, `diagnostic_fingerprint`, `sanitized_input_fingerprint`, `occurrence_number`, and pre-computed `hold_id`, yielding deterministic `rejection_event_id`. Prohibits UUID/random fallback; unified algorithm across all hold producers.
+2. `P04-ARCH-R15-002`: Resolution Crash/Replay & Concurrent Caller Race Handling. Defined deterministic `resolution_event_id` from RFC 8785 JCS descriptor including `version=1`, `kind='review_integrity_resolution_event'`, `event_type='REVIEW_INTEGRITY_HOLD_RESOLVED'`, exact lineage, `hold_id`, `occurrence_number`, verified operator principal, and `sanitized_resolution_rationale_fingerprint`. Formalized atomic resolution transaction: pre-transaction principal authentication and rationale sanitization (fail-closed on key collision); in-transaction CAS with `affected_rows == 1`; if already `RESOLVED`, exact semantic readback match succeeds idempotently without duplicate audit insert, while differing payload fails closed with `ALREADY_RESOLVED_CONFLICT`; if CAS rowcount is 0, losing caller rolls back completely, ensuring zero unlinked/orphan resolution audit events.
 
 ---
 
 ## 2. Summary of Architectural Resolutions & Preservation Matrix
 
-### 2.1. Architectural Resolutions in Revision 15
-| Finding ID | Core Architectural Resolution in Revision 15 | Target Section |
+### 2.1. Architectural Resolutions in Revision 16
+| Finding ID | Core Architectural Resolution in Revision 16 | Target Section |
 | :--- | :--- | :--- |
 | `P04-ARCH-R13-001` | Elimination of erroneous TaskState transitions to `BLOCKED`: preserve current TaskState on invariant mismatch; rollback active Tx; insert ACTIVE hold in separate diagnostic Tx; close admission and approval; require authenticated human reconciliation. | Section 4.1, Section 7.2, Section 7.4 |
 | `P04-ARCH-R13-002` | Foreign key audit references and principal constraints on `review_integrity_holds`: `rejection_audit_event_id UNIQUE REFERENCES audit_events(event_id) ON DELETE RESTRICT`, `resolution_audit_event_id UNIQUE REFERENCES audit_events(event_id) ON DELETE RESTRICT`, `LENGTH(TRIM(resolved_by_principal)) > 0`, atomic creation/resolution transactions, fail-closed runtime constraint on `VERIFIED_OPERATOR_PRINCIPAL`. | Section 7.2, Section 7.3, Section 8 |
 | `P04-ARCH-R13-003` | Multi-diagnostic hold tracking: `diagnostic_fingerprint` (64-char lowercase hex SHA-256); partial unique index `idx_review_integrity_holds_active_dedup` on `(attempt_id, hold_reason, diagnostic_fingerprint) WHERE hold_state = 'ACTIVE'`; pipeline fail-closed on `EXISTS` any ACTIVE hold; independent human resolution. | Section 7.2, Section 7.3 |
 | `P04-ARCH-R13-004` | Canonical audit event ID via RFC 8785 JCS (prohibiting colon concatenation); definition of `sanitized_input_fingerprint` (excluding secrets and raw host paths); duplicate key readback semantic comparison on `AppendAuditEvent`; formal registration of `REVIEW_INTEGRITY_CONFLICT` and `REVIEW_INTEGRITY_HOLD_RESOLVED`. | Section 4.1, Section 8 |
 | `P04-ARCH-R14-001` | Canonical audit model alignment: `actor TEXT NOT NULL`, role in `details_json.actor_role`, mandatory `pair_id`, sanitized replay comparison on UNIQUE `event_id` conflict, fail-closed on unnormalized data / key collision. | Section 4.1, Section 7.2, Section 8 |
-| `P04-ARCH-R14-002` | Diagnostic occurrence lifecycle: `occurrence_number INTEGER NOT NULL CHECK (typeof(occurrence_number) = 'integer' AND occurrence_number > 0)`, `UNIQUE(attempt_id, hold_reason, diagnostic_fingerprint, occurrence_number)`, JCS descriptor includes `occurrence_number` & `hold_id`, atomic MAX+1 creation, recurrence creates occurrence N+1 with distinct audit event. | Section 4.1, Section 7.2, Section 7.3, Section 8 |
+| `P04-ARCH-R14-002` | Diagnostic occurrence lifecycle: `occurrence_number INTEGER NOT NULL CHECK (typeof(occurrence_number) = 'integer' AND occurrence_number > 0)`, `UNIQUE(attempt_id, hold_reason, diagnostic_fingerprint, occurrence_number)`, recurrence creates occurrence N+1 with distinct audit event. | Section 4.1, Section 7.2, Section 7.3, Section 8 |
+| `P04-ARCH-R15-001` | Non-self-referencing two-step derivation: `hold_identity_descriptor` (`kind='review_integrity_hold'`, no `hold_id`) yields `hold_id = 'hold-' + SHA256(...)`; `rejection_event_identity_descriptor` includes pre-computed `hold_id`. | Section 4.1, Section 7.2, Section 8 |
+| `P04-ARCH-R15-002` | Resolution crash/replay and concurrent caller race handling: deterministic `resolution_event_id`, atomic in-transaction CAS and audit insert, idempotent retry on lost response, zero orphan audit events on lost CAS races. | Section 7.2, Section 8 |
 
-### 2.2. Revision 11 to Revision 15 Preservation Matrix
-| Revision 11 Section | Revision 15 Section & Location | Status & Surgical Changes |
+### 2.2. Revision 11 to Revision 16 Preservation Matrix
+| Revision 11 Section | Revision 16 Section & Location | Status & Surgical Changes |
 | :--- | :--- | :--- |
-| Section 1: Context & Problem Statement | Section 1: Context & Problem Statement | Preserved; updated with Re-Audit 013 findings and baseline tracking. |
-| Section 2: Summary of Architectural Resolutions | Section 2: Summary & Preservation Matrix | Preserved and updated with R14 resolutions and preservation matrix. |
+| Section 1: Context & Problem Statement | Section 1: Context & Problem Statement | Preserved; updated with Re-Audit 014 findings and baseline tracking. |
+| Section 2: Summary of Architectural Resolutions | Section 2: Summary & Preservation Matrix | Preserved and updated with R15 resolutions and preservation matrix. |
 | Section 3.1: Two-Transaction Workspace Lifecycle | Section 3.1: Two-Transaction Workspace Lifecycle | Preserved verbatim. |
 | Section 3.2: Schema v6 DDL (`attempt_workspace_bindings`, `worker_claims`) | Section 3.2: Schema v6 DDL | Preserved full Schema v6 (`terminal_generation TEXT`, canonical worktree, hex checks, triggers, integer typing, canonical WorkerClaim array checks). |
-| Section 4.1: Clean Worktree & Index Verification Policy | Section 4.1: Clean Worktree Policy | Preserved; updated with canonical audit model, `occurrence_number` & `hold_id` in JCS descriptor (`P04-ARCH-R14-001`, `R14-002`). |
+| Section 4.1: Clean Worktree & Index Verification Policy | Section 4.1: Clean Worktree Policy | Preserved; updated with two-step non-self-referencing descriptor derivation (`P04-ARCH-R15-001`). |
 | Section 4.2: Hardened Git Invocation Allowlist | Section 4.2: Hardened Git Invocation Allowlist | Preserved 10-command allowlist table verbatim. |
 | Section 5.1: Windows AppContainer & Sandbox DACL | Section 5.1: Windows AppContainer Isolation | Preserved explicit handle list, Job Object assignment, DACL denial, process-death proof requirement. |
 | Section 6.1: Immutable Snapshot Extraction Protocol | Section 6.1: Snapshot Extraction Protocol | Preserved `git ls-tree -rz --full-tree` and `git cat-file --batch` protocol verbatim. |
 | Section 6.2: TOCTOU & Crash Matrix | Section 6.2: TOCTOU & Crash Matrix | Preserved matrix verbatim. |
 | Section 7.1: Model 1 Persistence Ownership Discipline | Section 7.1: Model 1 Persistence Ownership | Preserved verbatim. |
-| Section 7.2: Lease Admission, Cross-Process Reclaim & Bounded TTL | Section 7.2: Lease Admission, Reclaim & Bounded TTL | Preserved linear lease chain; updated durable holds with multi-diagnostic occurrence lifecycle (`P04-ARCH-R14-002`). |
-| Section 7.3: Schema v9 DDL: Artifact Streaming & Review Schema | Section 7.3: Schema v9 DDL | Updated with occurrence lifecycle in `review_integrity_holds` DDL, constraints, and CAS triggers (`P04-ARCH-R14-002`). |
-| Section 7.4: ReviewBundle Replay & Conflict State Matrix | Section 7.4: Replay & Conflict Matrix | Preserved matrix (TaskState preserved, zero BLOCKED transitions). |
-| Section 8: Audit Event Registration & Failure Semantics | Section 8: Audit Event Registration | Aligned with canonical audit model (`actor`, `details_json.actor_role`, mandatory `pair_id`, UNIQUE `event_id` conflict, sanitized pipeline) (`P04-ARCH-R14-001`, `R14-002`). |
-| Section 9: Conclusion & Next Steps | Section 9: Conclusion & Next Steps | Updated governance status and active gate (`P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_14`). |
+| Section 7.2: Lease Admission, Cross-Process Reclaim & Bounded TTL | Section 7.2: Lease Admission, Reclaim & Bounded TTL | Preserved linear lease chain; updated durable holds with non-self-referencing `hold_id` (`P04-ARCH-R15-001`) and race-safe resolution algorithm (`P04-ARCH-R15-002`). |
+| Section 7.3: Schema v9 DDL: Artifact Streaming & Review Schema | Section 7.3: Schema v9 DDL | Preserved occurrence lifecycle in `review_integrity_holds` DDL, constraints, and CAS triggers. |
+| Section 7.4: ReviewBundle Replay & Conflict State Matrix | Section 7.4: ReviewBundle Replay Matrix | Preserved matrix (TaskState preserved, zero BLOCKED transitions). |
+| Section 8: Audit Event Registration & Failure Semantics | Section 8: Audit Event Registration | Defined all 3 descriptors (hold, rejection, resolution) via RFC 8785 JCS; resolution race rules (`P04-ARCH-R15-001`, `R15-002`). |
+| Section 9: Conclusion & Next Steps | Section 9: Conclusion & Next Steps | Updated governance status and active gate (`P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_15`). |
 
 ## 3. Worktree Authority, Immutable Bindings & Seam Integration
 
@@ -223,7 +225,7 @@ END;
 ### 4.1. Clean Worktree & Index Verification Policy (v1)
 To prevent workers from hiding changes in staged index entries, unstaged working copies, or untracked files:
 1. **Intake Policy**: The Supervisor Control Plane strictly enforces that the workspace worktree and index must be clean at report intake.
-2. **Rejection Semantics (P04-ARCH-R13-001, P04-ARCH-R13-002, P04-ARCH-R14-001, P04-ARCH-R14-002)**: If any uncommitted change or untracked file is detected, Transaction A rolls back immediately, preserving task state `RUNNING` (strictly zero blanket transitions to `BLOCKED`). In a separate diagnostic transaction executed after rollback: appends rejection audit event `EVIDENCE_COLLECTION_FAILED` to `audit_events` first (`actor = 'ai-supervisor-daemon'`, `details_json.actor_role = 'SUPERVISOR'`), then inserts an ACTIVE hold row into `review_integrity_holds` (`hold_reason = 'DIRTY_WORKTREE_DETECTED'`) in the same diagnostic transaction. Rejection audit event ID is computed deterministically via RFC 8785 JCS: `event_id = SHA256(RFC8785_JCS(identity_descriptor))` using `version=1`, `event_type='EVIDENCE_COLLECTION_FAILED'`, `pair_id`, `task_id`, `attempt_id`, `contract_id`, `reason='DIRTY_WORKTREE_DETECTED'`, `occurrence_number`, `hold_id`, and `sanitized_input_fingerprint` (strictly omitting raw host paths and secrets). If the diagnostic transaction rolls back, fail-closed without claiming the audit event or hold was recorded.
+2. **Rejection Semantics (P04-ARCH-R13-001, P04-ARCH-R13-002, P04-ARCH-R14-001, P04-ARCH-R14-002, P04-ARCH-R15-001)**: If any uncommitted change or untracked file is detected, Transaction A rolls back immediately, preserving task state `RUNNING` (strictly zero blanket transitions to `BLOCKED`). In a separate diagnostic transaction executed after rollback: (1) derives non-self-referencing `hold_id = 'hold-' + SHA256(RFC8785_JCS(hold_identity_descriptor))` using `kind='review_integrity_hold'`, `hold_reason='DIRTY_WORKTREE_DETECTED'`, and `occurrence_number`; (2) derives `rejection_event_id = SHA256(RFC8785_JCS(rejection_event_identity_descriptor))` including pre-computed `hold_id`; (3) appends rejection audit event `EVIDENCE_COLLECTION_FAILED` to `audit_events` first (`actor = 'ai-supervisor-daemon'`, `details_json.actor_role = 'SUPERVISOR'`); (4) inserts an ACTIVE hold row into `review_integrity_holds` (`hold_reason = 'DIRTY_WORKTREE_DETECTED'`) in the same diagnostic transaction. If any step fails, the entire diagnostic transaction rolls back.
 
 ### 4.2. Hardened Git Invocation Allowlist
 All Git commands execute under strict environment isolation (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_OPTIONAL_LOCKS=0`, clean system environment, no user config):
@@ -316,23 +318,76 @@ To preserve architectural boundaries and prevent concurrency bugs:
 3. **Authoritative Proof Requirement**:
    - TTL expiration alone is NOT sufficient for reclaim. If process death cannot be proven via handle join or post-restart exclusivity + kill-on-close, the supervisor fails closed and refuses to create a successor lease.
 
-#### Durable Integrity Hold Integration (P04-ARCH-R12-003, P04-ARCH-R13-002, P04-ARCH-R13-003, P04-ARCH-R14-002)
+#### Durable Integrity Hold Integration (P04-ARCH-R12-003, P04-ARCH-R13-002, P04-ARCH-R13-003, P04-ARCH-R14-002, P04-ARCH-R15-001, P04-ARCH-R15-002)
 - Table `review_integrity_holds` durably tracks intake rejections, worktree dirtiness, bundle hash conflicts, invariant mismatches, and unverified claims with exact attempt lineage.
-- **Multi-Diagnostic Hold Tracking**: Each diagnostic violation carries a deterministic `diagnostic_fingerprint` (64-character lowercase hex SHA-256). Multiple distinct `ACTIVE` holds on the same attempt are permitted when `hold_reason` or `diagnostic_fingerprint` differs, tracked via partial unique index `idx_review_integrity_holds_active_dedup` on `(attempt_id, hold_reason, diagnostic_fingerprint) WHERE hold_state = 'ACTIVE'`.
-- **Diagnostic Occurrence Lifecycle (P04-ARCH-R14-002)**: Column `occurrence_number INTEGER NOT NULL CHECK (typeof(occurrence_number) = 'integer' AND occurrence_number > 0)` and `UNIQUE(attempt_id, hold_reason, diagnostic_fingerprint, occurrence_number)` maintain an immutable occurrence history per diagnostic tuple. Both `occurrence_number` and `hold_id` participate in the JCS identity descriptor of the rejection audit event.
-- **Atomic Creation Algorithm**:
+- **Multi-Diagnostic Hold Tracking via Fingerprint**: Each diagnostic violation carries a deterministic `diagnostic_fingerprint` (64-character lowercase hex SHA-256). Multiple distinct `ACTIVE` holds on the same attempt are permitted when `hold_reason` or `diagnostic_fingerprint` differs, tracked via partial unique index `idx_review_integrity_holds_active_dedup` on `(attempt_id, hold_reason, diagnostic_fingerprint) WHERE hold_state = 'ACTIVE'`.
+- **Diagnostic Occurrence Lifecycle**: Column `occurrence_number INTEGER NOT NULL CHECK (typeof(occurrence_number) = 'integer' AND occurrence_number > 0)` and `UNIQUE(attempt_id, hold_reason, diagnostic_fingerprint, occurrence_number)` maintain an immutable occurrence history per diagnostic tuple.
+- **Non-Self-Referencing Two-Step Derivation (P04-ARCH-R15-001)**:
+  * **Descriptor A (`hold_identity_descriptor`)**:
+    ```json
+    {
+      "attempt_id": "<attempt_id>",
+      "contract_id": "<contract_id>",
+      "diagnostic_fingerprint": "<64_hex_hash>",
+      "hold_reason": "<hold_reason>",
+      "kind": "review_integrity_hold",
+      "occurrence_number": 1,
+      "pair_id": "<pair_id>",
+      "task_id": "<task_id>",
+      "version": 1
+    }
+    ```
+    `hold_id = "hold-" + SHA256(RFC8785_JCS(hold_identity_descriptor))` (Strictly zero self-reference; no UUID fallback).
+  * **Descriptor B (`rejection_event_identity_descriptor`)**:
+    ```json
+    {
+      "attempt_id": "<attempt_id>",
+      "contract_id": "<contract_id>",
+      "diagnostic_fingerprint": "<64_hex_hash>",
+      "event_type": "<event_type>",
+      "hold_id": "<hold_id_from_descriptor_a>",
+      "occurrence_number": 1,
+      "pair_id": "<pair_id>",
+      "reason": "<reason>",
+      "sanitized_input_fingerprint": "<64_hex_hash>",
+      "task_id": "<task_id>",
+      "version": 1
+    }
+    ```
+    `rejection_event_id = SHA256(RFC8785_JCS(rejection_event_identity_descriptor))`
+- **Atomic Hold Creation Algorithm**:
   a. `BEGIN IMMEDIATE` diagnostic transaction.
   b. Check if an `ACTIVE` hold already exists with the same `(attempt_id, hold_reason, diagnostic_fingerprint)`. If yes: exact replay returns the existing hold without duplicate insertion.
   c. If no `ACTIVE` hold exists: compute `occurrence_number = COALESCE(MAX(occurrence_number), 0) + 1` for that tuple.
-  d. Derive new distinct `hold_id` and rejection `event_id` from the JCS descriptor containing `occurrence_number`.
+  d. Derive `hold_id` from Descriptor A, then derive `rejection_event_id` from Descriptor B using `hold_id`.
   e. Append sanitized audit event to `audit_events` (`actor = 'ai-supervisor-daemon'`, `details_json.actor_role = 'SUPERVISOR'`).
   f. Insert `ACTIVE` hold row into `review_integrity_holds`.
   g. Commit transaction.
   h. On unique index or CAS race: read back the `ACTIVE` hold; exact tuple succeeds idempotently, differing tuple fails closed.
 - **Recurrence Lifecycle**: After occurrence N is `RESOLVED`, if the identical diagnostic is re-observed, occurrence N+1 is created with a new distinct rejection audit event and a new `ACTIVE` hold. Hold N and historical audit events remain immutable. Admission remains closed because an `ACTIVE` hold (occurrence N+1) exists.
 - **Audit References & Principal Constraints**: Rejection audit event is foreign-keyed via `rejection_audit_event_id TEXT NOT NULL UNIQUE REFERENCES audit_events(event_id) ON DELETE RESTRICT`. Resolution audit event is foreign-keyed via `resolution_audit_event_id TEXT NULL UNIQUE REFERENCES audit_events(event_id) ON DELETE RESTRICT`. Resolving principal must satisfy `LENGTH(TRIM(resolved_by_principal)) > 0` when resolved.
-- **Atomic Resolution Transaction**: Resolution requires authenticated human operator principal, appends resolution audit event `REVIEW_INTEGRITY_HOLD_RESOLVED` (`actor = verified resolved_by_principal`, `details_json.actor_role = 'OPERATOR'`), and performs CAS update (`hold_state = 'RESOLVED'`, `resolved_at_epoch_ms = now`, `resolution_audit_event_id = event_id`, `resolved_by_principal = principal` WHERE `hold_id = :hold_id AND hold_state = 'ACTIVE'`) in a single transaction. Each hold occurrence is resolved independently.
-- **Fail-Closed Runtime Dependency**: While `VERIFIED_OPERATOR_PRINCIPAL = OPEN_FAIL_CLOSED_DEPENDENCY`, runtime resolution fails closed; fake or test principals cannot resolve holds.
+- **Atomic Resolution Transaction & Race-Safe Recovery (P04-ARCH-R15-002)**:
+  a. Authenticate trusted human operator principal before `BEGIN`. While `VERIFIED_OPERATOR_PRINCIPAL = OPEN_FAIL_CLOSED_DEPENDENCY`, runtime resolution fails closed.
+  b. Sanitize and canonicalize resolution rationale; fail closed on key collision or sanitization error.
+  c. `BEGIN IMMEDIATE` resolution transaction.
+  d. Read hold by `hold_id` and exact lineage.
+  e. If hold is `ACTIVE`:
+     - Derive deterministic `resolution_event_id = SHA256(RFC8785_JCS(resolution_event_identity_descriptor))` using `kind='review_integrity_resolution_event'`, exact lineage, `hold_id`, `occurrence_number`, verified principal, and `sanitized_resolution_rationale_fingerprint`.
+     - Append audit event `REVIEW_INTEGRITY_HOLD_RESOLVED` (`actor = verified resolved_by_principal`, `details_json.actor_role = 'OPERATOR'`) or accept exact semantic replay if `event_id` already exists.
+     - CAS update: `SET hold_state = 'RESOLVED', resolved_at_epoch_ms = now, resolution_audit_event_id = resolution_event_id, resolved_by_principal = principal WHERE hold_id = :hold_id AND hold_state = 'ACTIVE'`.
+     - Require CAS `affected_rows == 1`.
+     - Commit transaction.
+  f. If hold is already `RESOLVED`:
+     - Read `resolution_audit_event_id` and corresponding audit event.
+     - Compare exact sanitized semantic payload, principal, lineage, `hold_id`, `occurrence_number`, and rationale fingerprint.
+     - Exact match => idempotent success, do NOT append duplicate audit event.
+     - Differing field => fail closed with `ALREADY_RESOLVED_CONFLICT`; do not alter hold and do not append orphan audit.
+  g. If CAS returns 0 affected rows (lost race to concurrent caller):
+     - Re-read hold in transaction.
+     - If exact persisted resolution matches caller => idempotent success.
+     - If differing resolution => rollback entire transaction of losing caller and fail closed (ensuring zero unlinked/orphan resolution audit events).
+  h. Audit append and hold CAS must reside within the same atomic transaction.
+  i. Commit success with lost response recovers safely and idempotently on exact retry.
 - **Fail-Closed Pipeline Gates**: All intake, verification (Tx B), compilation (Tx C), and review approval paths fail closed if `EXISTS (SELECT 1 FROM review_integrity_holds WHERE attempt_id = :attempt_id AND hold_state = 'ACTIVE')`.
 - **Startup Recovery**: Scans for `ACTIVE` holds on startup before opening admission.
 
@@ -760,26 +815,60 @@ The proposed audit events are registered under status `PROPOSED_UNTIL_ADR_ACCEPT
 5. `REVIEW_BUNDLE_COMPILATION_REJECTED`: Recorded in a separate fail-closed diagnostic transaction if compilation fails, clock regresses ($T_1 < T_0$), or bundle hash conflicts with a pre-existing bundle.
 6. `EVIDENCE_COLLECTION_FAILED`: Recorded in Subtask P04A or P04D if pre-intake checks fail (e.g. `DIRTY_WORKTREE_DETECTED`) or evidence extraction encounters unrecoverable errors.
 
-#### Canonical Event ID Derivation & Replay Semantics (P04-ARCH-R13-004, P04-ARCH-R14-001, P04-ARCH-R14-002)
+#### Canonical Event ID Derivation & Replay Semantics (P04-ARCH-R13-004, P04-ARCH-R14-001, P04-ARCH-R14-002, P04-ARCH-R15-001, P04-ARCH-R15-002)
 Because the canonical `audit_events` schema lacks a dedicated `idempotency_key` column, idempotency is mapped deterministically to `audit_events.event_id` using RFC 8785 JSON Canonicalization Scheme (JCS). String concatenation with colons is strictly prohibited.
 
-1. **RFC 8785 JCS Event ID Derivation**:
-   `event_id = SHA256(RFC8785_JCS(identity_descriptor))`
-   where `identity_descriptor` contains:
-   ```json
-   {
-     "attempt_id": "<attempt_id>",
-     "contract_id": "<contract_id>",
-     "event_type": "<event_type>",
-     "hold_id": "<hold_id>",
-     "occurrence_number": 1,
-     "pair_id": "<pair_id>",
-     "reason": "<reason>",
-     "sanitized_input_fingerprint": "<64_hex_hash>",
-     "task_id": "<task_id>",
-     "version": 1
-   }
-   ```
+1. **RFC 8785 JCS Derivation Architecture**:
+   - To eliminate circular self-references and distinguish entity types, three explicit descriptors are defined:
+     * **Descriptor A: `hold_identity_descriptor`** (for `hold_id`):
+       ```json
+       {
+         "attempt_id": "<attempt_id>",
+         "contract_id": "<contract_id>",
+         "diagnostic_fingerprint": "<64_hex_hash>",
+         "hold_reason": "<hold_reason>",
+         "kind": "review_integrity_hold",
+         "occurrence_number": 1,
+         "pair_id": "<pair_id>",
+         "task_id": "<task_id>",
+         "version": 1
+       }
+       ```
+       `hold_id = "hold-" + SHA256(RFC8785_JCS(hold_identity_descriptor))`
+     * **Descriptor B: `rejection_event_identity_descriptor`** (for rejection `event_id`):
+       ```json
+       {
+         "attempt_id": "<attempt_id>",
+         "contract_id": "<contract_id>",
+         "diagnostic_fingerprint": "<64_hex_hash>",
+         "event_type": "<event_type>",
+         "hold_id": "<hold_id_from_descriptor_a>",
+         "occurrence_number": 1,
+         "pair_id": "<pair_id>",
+         "reason": "<reason>",
+         "sanitized_input_fingerprint": "<64_hex_hash>",
+         "task_id": "<task_id>",
+         "version": 1
+       }
+       ```
+       `rejection_event_id = SHA256(RFC8785_JCS(rejection_event_identity_descriptor))`
+     * **Descriptor C: `resolution_event_identity_descriptor`** (for resolution `event_id`):
+       ```json
+       {
+         "attempt_id": "<attempt_id>",
+         "contract_id": "<contract_id>",
+         "event_type": "REVIEW_INTEGRITY_HOLD_RESOLVED",
+         "hold_id": "<hold_id>",
+         "kind": "review_integrity_resolution_event",
+         "occurrence_number": 1,
+         "pair_id": "<pair_id>",
+         "resolved_by_principal": "<verified_principal>",
+         "sanitized_resolution_rationale_fingerprint": "<64_hex_hash>",
+         "task_id": "<task_id>",
+         "version": 1
+       }
+       ```
+       `resolution_event_id = SHA256(RFC8785_JCS(resolution_event_identity_descriptor))`
 2. **Sanitized Input Fingerprint Definition**:
    - `sanitized_input_fingerprint` is a 64-character lowercase hex SHA-256 hash of the canonicalized (RFC 8785 JCS) diagnostic input payload.
    - Strictly uses canonical relative paths (e.g. `artifacts/ab/...` or `internal/foo.go`). Raw host-specific local paths (e.g. `C:\Users\...`, `/home/...`, drive letters, UNC shares, or temp directories) are strictly prohibited.
@@ -802,7 +891,7 @@ Because the canonical `audit_events` schema lacks a dedicated `idempotency_key` 
      * **Ignored Volatile / Chain Fields**: Explicitly ignore only `sequence`, `timestamp`, `prev_hash`, and `event_hash`.
      * **Exact Match -> Idempotent Success**: If all 7 semantic fields match, return existing audit record without inserting a duplicate.
      * **Mismatch -> Audit Integrity Conflict**: If any semantic field or lineage differs (e.g. `pair_id` mismatch or modified payload), fail closed! Do NOT overwrite or reuse the colliding `event_id`. Initiate an atomic diagnostic transaction:
-       a. Derive a NEW distinct `event_id` via RFC 8785 JCS using `event_type = 'REVIEW_INTEGRITY_CONFLICT'`, referencing the colliding event ID and mismatch details in `sanitized_input_fingerprint`.
+       a. Derive a NEW distinct `hold_id` and `event_id` via Descriptor A and B using `event_type = 'REVIEW_INTEGRITY_CONFLICT'`, referencing the colliding event ID and mismatch details in `sanitized_input_fingerprint`.
        b. Append `REVIEW_INTEGRITY_CONFLICT` to `audit_events` (`actor = 'ai-supervisor-daemon'`, `details_json.actor_role = 'SUPERVISOR'`).
        c. Insert an `ACTIVE` hold into `review_integrity_holds` with `hold_reason = 'INVARIANT_MISMATCH'`.
        d. Close admission and automated review approval for the attempt.
@@ -812,22 +901,22 @@ Because the canonical `audit_events` schema lacks a dedicated `idempotency_key` 
      - *Actor Authority*: System supervisor daemon (`actor = 'ai-supervisor-daemon'`, `details_json.actor_role = 'SUPERVISOR'`).
      - *Lineage*: `pair_id`, `task_id`, `contract_id`, `attempt_id`.
      - *Details Schema*: `colliding_event_id` (string), `attempted_event_type` (string), `attempted_reason` (string), `conflict_type` (`'PAYLOAD_MISMATCH'` | `'LINEAGE_MISMATCH'`), `sanitized_input_fingerprint` (64 hex), `diagnostic_fingerprint` (64 hex), `actor_role` (`'SUPERVISOR'`).
-     - *Transaction Boundary*: Atomic diagnostic transaction (distinct new `event_id`, appends audit event first, then inserts ACTIVE hold into `review_integrity_holds`).
+     - *Transaction Boundary*: Atomic diagnostic transaction (distinct new `event_id` and `hold_id`, appends audit event first, then inserts ACTIVE hold into `review_integrity_holds`).
    - **`REVIEW_INTEGRITY_HOLD_RESOLVED`**:
      - *Producer*: Operator Reconciliation Tool.
      - *Actor Authority*: Authenticated Human Operator Principal (`actor = verified resolved_by_principal`, `details_json.actor_role = 'OPERATOR'`). While `VERIFIED_OPERATOR_PRINCIPAL = OPEN_FAIL_CLOSED_DEPENDENCY`, runtime resolution fails closed; test/fake principals cannot resolve holds.
      - *Lineage*: `pair_id`, `task_id`, `contract_id`, `attempt_id`.
-     - *Details Schema*: `hold_id` (string), `hold_reason` (string), `diagnostic_fingerprint` (64 hex), `occurrence_number` (integer), `rejection_audit_event_id` (string), `resolved_by_principal` (non-empty, trimmed string), `resolution_rationale` (non-empty string), `actor_role` (`'OPERATOR'`).
-     - *Transaction Boundary*: Atomic resolution transaction (appends `REVIEW_INTEGRITY_HOLD_RESOLVED` to `audit_events`, CAS updates `review_integrity_holds` from `ACTIVE` to `RESOLVED`).
+     - *Details Schema*: `hold_id` (string), `hold_reason` (string), `diagnostic_fingerprint` (64 hex), `occurrence_number` (integer), `rejection_audit_event_id` (string), `resolved_by_principal` (non-empty, trimmed string), `sanitized_resolution_rationale_fingerprint` (64 hex), `actor_role` (`'OPERATOR'`).
+     - *Transaction Boundary*: Atomic resolution transaction (appends `REVIEW_INTEGRITY_HOLD_RESOLVED` to `audit_events`, CAS updates `review_integrity_holds` from `ACTIVE` to `RESOLVED` in same transaction with zero orphan audits on lost race).
 
 ---
 
 ## 9. Conclusion & Next Steps
 
-PROPOSAL-P04-001 Revision 15 fully resolves all findings (`P04-ARCH-R14-001` and `P04-ARCH-R14-002`), aligning with the canonical audit model (`actor`, `details_json.actor_role`, mandatory `pair_id`, sanitized replay comparison on UNIQUE `event_id` conflict) and establishing an immutable diagnostic occurrence lifecycle (`occurrence_number`, `UNIQUE(attempt_id, hold_reason, diagnostic_fingerprint, occurrence_number)`, atomic MAX+1 algorithm, and recurrence after resolution creating occurrence N+1 with a distinct audit event).
+PROPOSAL-P04-001 Revision 16 fully resolves all findings (`P04-ARCH-R15-001` and `P04-ARCH-R15-002`), eliminating circular self-reference in `hold_id` derivation through two distinct RFC 8785 JCS descriptors (Descriptor A for `hold_id`, Descriptor B for rejection event) and establishing race-safe atomic resolution semantics (Descriptor C for `resolution_event_id`, in-transaction CAS, idempotent lost-response retry, and zero orphan resolution audit events on lost CAS races).
 
 Following External Supervisor review:
-1. `DRAFT-ADR-018` is aligned to Revision 15.
+1. `DRAFT-ADR-018` is aligned to Revision 16.
 2. `PROPOSAL-P04-002` remains aligned to Revision 7 (latency semantics unchanged).
-3. `PLAN-P04-EVIDENCE-REVIEW` is updated to Revision 15.
-4. Active gate remains `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_14` pending External Supervisor Re-Audit 014 decision.
+3. `PLAN-P04-EVIDENCE-REVIEW` is updated to Revision 16.
+4. Active gate remains `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_15` pending External Supervisor Re-Audit 015 decision.

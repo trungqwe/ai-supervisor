@@ -1,16 +1,16 @@
 # PLAN-P04: Evidence & Review Engine Implementation & Governance Plan
 
 > **Plan ID**: `PLAN-P04-EVIDENCE-REVIEW`
-> **Revision**: 15
-> **Status**: `PLANNING_PENDING_EXTERNAL_AUDIT (REVISION 15)`
+> **Revision**: 16
+> **Status**: `PLANNING_PENDING_EXTERNAL_AUDIT (REVISION 16)`
 > **Date**: 2026-09-26
-> **Audited Baseline**: `5fa0f5d291cb5f1952f688c971b8b047d3529bca`
+> **Audited Baseline**: `e349f32994edca259405465a2ecda576c29e62f2`
 > **Preservation Baseline Commit**: `6e1993da150031a9465901a7019c71257de44312` (Revision 11)
-> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_14`
+> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_15`
 > **Author**: AI Engineering Supervisor Architecture Team
-> **Governing ADR**: `docs/adr/DRAFT-ADR-018-evidence-review-and-verification-isolation.md` (Revision 15)
-> **Related Proposals**: `docs/proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md` (Revision 15), `docs/proposals/PROPOSAL-P04-002-review-bundle-latency-semantics.md` (Revision 7)
-> **External Audit Tracking**: Remediates Findings `P04-ARCH-R14-001` and `P04-ARCH-R14-002` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_013.md`).
+> **Governing ADR**: `docs/adr/DRAFT-ADR-018-evidence-review-and-verification-isolation.md` (Revision 16)
+> **Related Proposals**: `docs/proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md` (Revision 16), `docs/proposals/PROPOSAL-P04-002-review-bundle-latency-semantics.md` (Revision 7)
+> **External Audit Tracking**: Remediates Findings `P04-ARCH-R15-001` and `P04-ARCH-R15-002` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_014.md`).
 
 ---
 
@@ -105,7 +105,7 @@ Phase P04 strictly maintains the two-track validation discipline:
 - **Scope**:
   - Implement Schema Migration v6 (`attempt_workspace_bindings`, `worker_claims`).
   - Implement pre-intake cleanliness probe: invoke `git status --porcelain=v1 -z --untracked-files=all` and `git diff-index --quiet HEAD --` with `GIT_OPTIONAL_LOCKS=0`.
-  - If dirty, roll back Transaction A, preserve task state `RUNNING` (strictly zero blanket transitions to `BLOCKED`). In a separate diagnostic transaction executed after rollback: appends rejection audit event `EVIDENCE_COLLECTION_FAILED` to `audit_events` first (`actor = 'ai-supervisor-daemon'`, `details_json.actor_role = 'SUPERVISOR'`), then inserts an ACTIVE hold row into `review_integrity_holds` (`hold_reason = 'DIRTY_WORKTREE_DETECTED'`) in the same diagnostic transaction. Rejection audit event ID is computed deterministically via RFC 8785 JCS: `event_id = SHA256(RFC8785_JCS(identity_descriptor))` using `version=1`, `event_type='EVIDENCE_COLLECTION_FAILED'`, `pair_id`, `task_id`, `attempt_id`, `contract_id`, `reason='DIRTY_WORKTREE_DETECTED'`, `occurrence_number`, `hold_id`, and `sanitized_input_fingerprint` (strictly omitting raw host paths and secrets). If the diagnostic transaction rolls back, fail-closed without claiming the audit event or hold was recorded.
+  - If dirty, roll back Transaction A, preserve task state `RUNNING` (strictly zero blanket transitions to `BLOCKED`). In a separate diagnostic transaction executed after rollback: (1) derives non-self-referencing `hold_id = 'hold-' + SHA256(RFC8785_JCS(hold_identity_descriptor))` using `kind='review_integrity_hold'`, `hold_reason='DIRTY_WORKTREE_DETECTED'`, and `occurrence_number`; (2) derives `rejection_event_id = SHA256(RFC8785_JCS(rejection_event_identity_descriptor))` including pre-computed `hold_id`; (3) appends rejection audit event `EVIDENCE_COLLECTION_FAILED` to `audit_events` first (`actor = 'ai-supervisor-daemon'`, `details_json.actor_role = 'SUPERVISOR'`); (4) inserts an ACTIVE hold row into `review_integrity_holds` (`hold_reason = 'DIRTY_WORKTREE_DETECTED'`) in the same diagnostic transaction. If any step fails, the entire diagnostic transaction rolls back.
   - Implement `WorkerReport` schema validation via Go JSON schema engine.
   - Implement RFC 8785 JCS canonicalization.
   - Store verbatim `reported_head_sha` (`CHECK (LENGTH BETWEEN 7 AND 40)`).
@@ -139,7 +139,7 @@ Phase P04 strictly maintains the two-track validation discipline:
   - Implement Schema Migration v9 with explicit integer typing (`CHECK (typeof(col) = 'integer')`) and arithmetic overflow guards (`acquired_at <= MaxInt64 - ttl*1000`, `fencing_token <= MaxInt64`, `hard_safety <= MaxInt64 - 1`).
   - Implement Linear Lease Chain: eliminate `RECLAIMED` mutation; predecessor leases remain permanently `EXPIRED`; each lease row references immutable predecessor via `predecessor_lease_id TEXT NULL UNIQUE`; token monotonicity (`token = pred.token + 1`); single active lease partial index.
   - Enforce authoritative process-death proof requirement for lease reclaim (joined Job Object/process handle within daemon or host exclusivity + kill-on-close across restart).
-  - Implement durable integrity holds: Schema v9 `review_integrity_holds` table with `diagnostic_fingerprint` (64-char lowercase hex SHA-256), `occurrence_number INTEGER NOT NULL CHECK (typeof(occurrence_number) = 'integer' AND occurrence_number > 0)`, `UNIQUE(attempt_id, hold_reason, diagnostic_fingerprint, occurrence_number)`, foreign key audit references (`rejection_audit_event_id UNIQUE REFERENCES audit_events(event_id) ON DELETE RESTRICT`, `resolution_audit_event_id UNIQUE REFERENCES audit_events(event_id) ON DELETE RESTRICT`), non-empty/non-whitespace principal check (`LENGTH(TRIM(resolved_by_principal)) > 0`), partial unique index `idx_review_integrity_holds_active_dedup` on `(attempt_id, hold_reason, diagnostic_fingerprint) WHERE hold_state = 'ACTIVE'`, atomic creation transaction (audit first with `occurrence_number` & `hold_id` in JCS descriptor, then hold), atomic resolution transaction (principal check, resolution audit, hold CAS to RESOLVED), recurrence lifecycle (after resolution, re-observation creates occurrence N+1 with distinct audit event, admission remains closed), fail-closed runtime constraint on `VERIFIED_OPERATOR_PRINCIPAL`, pipeline fail-closed on `EXISTS` any active hold, and startup recovery loading active holds before opening admission.
+  - Implement durable integrity holds: Schema v9 `review_integrity_holds` table with `diagnostic_fingerprint` (64-char lowercase hex SHA-256), `occurrence_number INTEGER NOT NULL CHECK (typeof(occurrence_number) = 'integer' AND occurrence_number > 0)`, `UNIQUE(attempt_id, hold_reason, diagnostic_fingerprint, occurrence_number)`, foreign key audit references (`rejection_audit_event_id UNIQUE REFERENCES audit_events(event_id) ON DELETE RESTRICT`, `resolution_audit_event_id UNIQUE REFERENCES audit_events(event_id) ON DELETE RESTRICT`), non-empty/non-whitespace principal check (`LENGTH(TRIM(resolved_by_principal)) > 0`), partial unique index `idx_review_integrity_holds_active_dedup` on `(attempt_id, hold_reason, diagnostic_fingerprint) WHERE hold_state = 'ACTIVE'`, two-step non-self-referencing descriptor derivation (Descriptor A for `hold_id`, Descriptor B for `rejection_event_id`), atomic creation transaction (audit first, then hold), atomic resolution transaction with deterministic `resolution_event_id` (Descriptor C), CAS `affected_rows == 1`, lost response idempotent retry, zero orphan audit events on lost CAS races, recurrence lifecycle (after resolution, re-observation creates occurrence N+1 with distinct audit event, admission remains closed), fail-closed runtime constraint on `VERIFIED_OPERATOR_PRINCIPAL`, pipeline fail-closed on `EXISTS` any active hold, and startup recovery loading active holds before opening admission.
   - Content-Addressed Store staging, deduplication, and atomic write-through to `artifacts/<first-two-hex>/<captured_sha256>`.
   - Execute Transaction B: exact CAS `(lease_id, worker_id, fencing_token, state='ACTIVE')`, commit `evidence_sets` and `review_artifacts`, release lease, transition `tasks.state`: `REPORT_READY -> EVIDENCE_READY`.
   - Synthesize RFC 8785 JCS canonical `ReviewBundle` JSON payload; compute SHA-256 bundle hash.
@@ -177,4 +177,4 @@ Phase P04 strictly maintains the two-track validation discipline:
 | **FR-008** | `docs/02_REQUIREMENTS.md` | Fully satisfied via independent in-memory Git and verification collectors. |
 | **NFR-008** | `docs/02_REQUIREMENTS.md` | Formally reconciled via PROPOSAL-P04-002 Revision 7 into assembly diagnostic latency semantics with crash-safe non-deadlocking persistence and UNVERIFIED compliance status. Canonical update pending approval. |
 | **P04 Schema v6** | `docs/adr/DRAFT-ADR-018` | Owned by Subtask P04A; introduces `attempt_workspace_bindings` and `worker_claims` (verbatim 7-40 hex SHA, integer typing). |
-| **P04 Schema v9** | `docs/adr/DRAFT-ADR-018` | Owned by Subtask P04D; introduces `task_verification_leases` (linear lease chain), `review_integrity_holds` (multi-diagnostic holds with occurrence lifecycle, audit FKs, principal trimming), `evidence_sets`, `review_artifacts`, and `review_bundles` with integer typing and overflow guards. |
+| **P04 Schema v9** | `docs/adr/DRAFT-ADR-018` | Owned by Subtask P04D; introduces `task_verification_leases` (linear lease chain), `review_integrity_holds` (multi-diagnostic holds with occurrence lifecycle, non-self-referencing hold derivation, audit FKs, principal trimming), `evidence_sets`, `review_artifacts`, and `review_bundles` with integer typing and overflow guards. |
