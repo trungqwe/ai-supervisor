@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -389,5 +390,311 @@ func TestStopDrainsPublicTickAndCancellation(t *testing.T) {
 	}
 	if err := p.PollOnce(func() context.Context { c, cancel := context.WithCancel(ctx); cancel(); return c }()); err == nil {
 		t.Fatal("cancelled PollOnce accepted")
+	}
+}
+func TestPollerDoneAndErrLifecycle_RealFailure(t *testing.T) {
+	ctx := context.Background()
+	s := newRecoveryStore(t)
+	stop, _, generation := seedLiveStopIntent(t, s, "stop-fail-lifecycle")
+	call := time.Now().UTC().Add(-2 * time.Second)
+	deadline := time.Now().UTC().Add(time.Minute)
+	if err := s.CommitStopCallAccepted(ctx, stop.OperationID, call, deadline); err != nil {
+		t.Fatal(err)
+	}
+
+	// Return a mismatched observation ID which triggers a fatal non-ignorable protocol failure in classifyStop
+	o := &testObserver{result: &ao.WorkerStatus{ID: "mismatched-session-id", TerminalGeneration: generation}}
+	owner := &Runner{Store: s, ready: true}
+	p := &Poller{Store: s, AO: o, Owner: owner, Interval: 5 * time.Millisecond, Actor: "test-supervisor"}
+
+	if err := p.Start(ctx); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	doneChan := p.Done()
+	if doneChan == nil {
+		t.Fatal("Done() returned nil channel")
+	}
+
+	select {
+	case <-doneChan:
+		err := p.Err()
+		if err == nil {
+			t.Fatal("expected non-nil Err() on real PollOnce failure, got nil")
+		}
+		if !strings.Contains(err.Error(), "stop observation identity invalid") {
+			t.Fatalf("unexpected Err message: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Done() channel on poller failure")
+	}
+
+	// Calling Stop() after failure should return the recorded error cleanly without blocking
+	stopErr := p.Stop()
+	if stopErr == nil {
+		t.Fatal("expected Stop() to return recorded failure error, got nil")
+	}
+}
+
+func TestPollerDoneAndErrLifecycle_CleanStop(t *testing.T) {
+	ctx := context.Background()
+	s := newRecoveryStore(t)
+	o := &testObserver{}
+	owner := &Runner{Store: s, ready: true}
+	p := &Poller{Store: s, AO: o, Owner: owner, Interval: 50 * time.Millisecond, Actor: "test-supervisor"}
+
+	if err := p.Start(ctx); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	doneChan := p.Done()
+	if err := p.Stop(); err != nil {
+		t.Fatalf("clean Stop failed: %v", err)
+	}
+
+	select {
+	case <-doneChan:
+		if err := p.Err(); err != nil {
+			t.Fatalf("expected nil Err() on clean Stop, got: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for Done() on clean Stop")
+	}
+}
+
+func TestPollerDoneAndErrLifecycle_ContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	s := newRecoveryStore(t)
+	o := &testObserver{}
+	owner := &Runner{Store: s, ready: true}
+	p := &Poller{Store: s, AO: o, Owner: owner, Interval: 50 * time.Millisecond, Actor: "test-supervisor"}
+
+	if err := p.Start(ctx); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	doneChan := p.Done()
+	cancel()
+
+	select {
+	case <-doneChan:
+		if err := p.Err(); err != nil {
+			t.Fatalf("expected nil Err() on context cancel, got: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for Done() on context cancel")
+	}
+}
+
+func TestPollerDoneAndErrLifecycle_Restart(t *testing.T) {
+	ctx := context.Background()
+	s := newRecoveryStore(t)
+	o := &testObserver{}
+	owner := &Runner{Store: s, ready: true}
+	p := &Poller{Store: s, AO: o, Owner: owner, Interval: 50 * time.Millisecond, Actor: "test-supervisor"}
+
+	// First cycle
+	if err := p.Start(ctx); err != nil {
+		t.Fatalf("Cycle 1 Start failed: %v", err)
+	}
+	done1 := p.Done()
+	if err := p.Stop(); err != nil {
+		t.Fatalf("Cycle 1 Stop failed: %v", err)
+	}
+	<-done1
+	if err := p.Err(); err != nil {
+		t.Fatalf("Cycle 1 Err() not nil: %v", err)
+	}
+
+	// Second cycle (restart)
+	if err := p.Start(ctx); err != nil {
+		t.Fatalf("Cycle 2 Start (restart) failed: %v", err)
+	}
+	done2 := p.Done()
+	if done1 == done2 {
+		t.Fatal("expected fresh Done channel on restart, got same channel")
+	}
+	if err := p.Stop(); err != nil {
+		t.Fatalf("Cycle 2 Stop failed: %v", err)
+	}
+	<-done2
+	if err := p.Err(); err != nil {
+		t.Fatalf("Cycle 2 Err() not nil: %v", err)
+	}
+}
+
+func TestPollerDoneAndErrLifecycle_Race(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := newRecoveryStore(t)
+	o := &testObserver{}
+	owner := &Runner{Store: s, ready: true}
+	p := &Poller{Store: s, AO: o, Owner: owner, Interval: 10 * time.Millisecond, Actor: "test-supervisor"}
+
+	if err := p.Start(ctx); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				_ = p.Done()
+				_ = p.Err()
+				time.Sleep(time.Millisecond)
+			}
+		}()
+	}
+
+	time.Sleep(30 * time.Millisecond)
+	_ = p.Stop()
+	wg.Wait()
+}
+func TestPollerDoneAndErrLifecycle_BarrierErrorAndRestart(t *testing.T) {
+	ctx := context.Background()
+	s := newRecoveryStore(t)
+	o := &testObserver{}
+	owner := &Runner{Store: s, ready: true}
+	p := &Poller{Store: s, AO: o, Owner: owner, Interval: 5 * time.Millisecond, Actor: "test-supervisor"}
+
+	// Barrier coordination for Cycle 1
+	hook1Triggered := make(chan struct{}, 1)
+	hook1Release := make(chan struct{})
+	p.TestFailHook = func() error {
+		select {
+		case hook1Triggered <- struct{}{}:
+		default:
+		}
+		<-hook1Release
+		return errors.New("deterministic barrier error in cycle 1")
+	}
+
+	// Start Cycle 1
+	if err := p.Start(ctx); err != nil {
+		t.Fatalf("Cycle 1 Start failed: %v", err)
+	}
+	done1 := p.Done()
+
+	// Wait deterministically for PollOnce to enter the hook
+	select {
+	case <-hook1Triggered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Cycle 1 hook trigger")
+	}
+
+	// Release the hook with failure
+	close(hook1Release)
+
+	// Wait deterministically for cycle 1 to close done1
+	select {
+	case <-done1:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for done1 to close")
+	}
+
+	// Stop cycle 1 (must join cleanly)
+	if err := p.Stop(); err == nil {
+		t.Fatal("expected Stop to return cycle 1 error, got nil")
+	}
+
+	// NOW: Before reading cycle 1 error, immediately start Cycle 2!
+	// This proves that starting Cycle 2 does NOT mask or delete Cycle 1 error for its watcher.
+	hook2Triggered := make(chan struct{}, 1)
+	hook2Release := make(chan struct{})
+	p.TestFailHook = func() error {
+		select {
+		case hook2Triggered <- struct{}{}:
+		default:
+		}
+		<-hook2Release
+		return nil
+	}
+
+	if err := p.Start(ctx); err != nil {
+		t.Fatalf("Cycle 2 Start failed: %v", err)
+	}
+	done2 := p.Done()
+	if done1 == done2 {
+		t.Fatal("expected fresh done channel for Cycle 2")
+	}
+
+	// Wait for Cycle 2 to actively run
+	select {
+	case <-hook2Triggered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Cycle 2 hook trigger")
+	}
+
+	// While Cycle 2 is actively running, verify Cycle 1 watcher can still read Cycle 1 error!
+	err1Bound := p.ErrFor(done1)
+	if err1Bound == nil || !strings.Contains(err1Bound.Error(), "deterministic barrier error in cycle 1") {
+		t.Fatalf("Cycle 1 error was masked/lost via ErrFor: %v", err1Bound)
+	}
+
+	err1Legacy := p.Err()
+	if err1Legacy == nil || !strings.Contains(err1Legacy.Error(), "deterministic barrier error in cycle 1") {
+		t.Fatalf("Cycle 1 error was masked/lost via Err: %v", err1Legacy)
+	}
+
+	// Now release Cycle 2 and stop cleanly
+	close(hook2Release)
+	if err := p.Stop(); err != nil {
+		t.Fatalf("Cycle 2 clean stop failed: %v", err)
+	}
+	<-done2
+	if err := p.ErrFor(done2); err != nil {
+		t.Fatalf("expected nil error for clean Cycle 2, got: %v", err)
+	}
+}
+
+func TestPollerDoneAndErrLifecycle_StopAlwaysJoinsGoroutine(t *testing.T) {
+	ctx := context.Background()
+	s := newRecoveryStore(t)
+	o := &testObserver{}
+	owner := &Runner{Store: s, ready: true}
+	p := &Poller{Store: s, AO: o, Owner: owner, Interval: 5 * time.Millisecond, Actor: "test-supervisor"}
+
+	hookEntered := make(chan struct{})
+	hookProceed := make(chan struct{})
+	p.TestFailHook = func() error {
+		close(hookEntered)
+		<-hookProceed
+		return errors.New("fatal hook error during stop")
+	}
+
+	if err := p.Start(ctx); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	done := p.Done()
+
+	// Wait until goroutine is inside PollOnce
+	<-hookEntered
+
+	// Concurrently call Stop while PollOnce is blocked
+	stopResult := make(chan error, 1)
+	go func() {
+		stopResult <- p.Stop()
+	}()
+
+	// Let PollOnce proceed with error
+	close(hookProceed)
+
+	// Stop must join the goroutine and return the error
+	select {
+	case err := <-stopResult:
+		if err == nil || !strings.Contains(err.Error(), "fatal hook error during stop") {
+			t.Fatalf("expected fatal hook error from Stop, got: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Stop to join")
+	}
+
+	// Verify done is closed
+	select {
+	case <-done:
+	default:
+		t.Fatal("expected done channel to be closed after Stop joined")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -249,4 +250,190 @@ func (c *Client) decodeError(req *http.Request, resp *http.Response) error {
 		Path:       req.URL.Path,
 		Reason:     "malformed or non-conforming AO error envelope",
 	}
+}
+
+// GetWorkspaceFile retrieves a workspace file from an active AO session using the canonical JSON envelope
+// endpoint GET /api/v1/sessions/{sessionId}/workspace/file?path={filePath}.
+//
+// Invariants enforced:
+// - MaxWireBytes and MaxBytes are independent, strictly positive (> 0), with integer overflow pre-checks.
+// - Bounded reading reads at most MaxWireBytes + 1; rejects wire overflow with ErrPayloadTooLarge fail-closed.
+// - Single JSON value decoded with trailing payload rejection (io.EOF check).
+// - Validates presence and types of all 15 required fields of WorkspaceFileResponse without zero-value masking.
+// - Validates sessionID and filePath match the requested values (ProtocolError on mismatch).
+// - Validates status is a valid enum value ("unmodified", "modified", "added", "deleted").
+// - Rejects binary files with ProtocolError.
+// - Rejects truncated content with ProtocolError.
+// - Rejects deleted files (deleted=true or status="deleted") returning ErrWorkspaceFileDeleted (never fake 404 APIError).
+// - Verifies decoded content byte length <= MaxBytes; rejects content overflow with ErrPayloadTooLarge.
+// - Preserves TransportError, APIError, ProtocolError error taxonomy without domain report parsing or task state mutation.
+func (c *Client) GetWorkspaceFile(ctx context.Context, sessionID, filePath string, opts WorkspaceReadOptions) ([]byte, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, fmt.Errorf("%w: sessionID cannot be empty", ErrBadRequest)
+	}
+	if strings.TrimSpace(filePath) == "" {
+		return nil, fmt.Errorf("%w: filePath cannot be empty", ErrBadRequest)
+	}
+	if opts.MaxWireBytes <= 0 || opts.MaxBytes <= 0 {
+		return nil, fmt.Errorf("%w: MaxWireBytes and MaxBytes must both be strictly positive (> 0)", ErrBadRequest)
+	}
+	if opts.MaxWireBytes >= math.MaxInt64 {
+		return nil, fmt.Errorf("%w: MaxWireBytes causes integer overflow", ErrBadRequest)
+	}
+	if opts.MaxBytes >= math.MaxInt64 {
+		return nil, fmt.Errorf("%w: MaxBytes causes integer overflow", ErrBadRequest)
+	}
+
+	reqURL := fmt.Sprintf("%s/api/v1/sessions/%s/workspace/file?path=%s",
+		c.baseURL.String(),
+		url.PathEscape(sessionID),
+		url.QueryEscape(filePath),
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create GET request failed: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, &TransportError{Op: http.MethodGet, URL: req.URL.String(), Err: err}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, c.decodeError(req, resp)
+		}
+		return nil, &ProtocolError{
+			StatusCode: resp.StatusCode,
+			Method:     req.Method,
+			Path:       req.URL.Path,
+			Reason:     fmt.Sprintf("expected HTTP 200, got %d", resp.StatusCode),
+		}
+	}
+
+	limit := opts.MaxWireBytes + 1
+	lr := io.LimitReader(resp.Body, limit)
+	wireBytes, err := io.ReadAll(lr)
+	if err != nil {
+		return nil, &TransportError{Op: http.MethodGet, URL: req.URL.String(), Err: err}
+	}
+	if int64(len(wireBytes)) > opts.MaxWireBytes {
+		return nil, ErrPayloadTooLarge
+	}
+
+	type rawWorkspaceEnvelope struct {
+		SessionID        *string `json:"sessionId"`
+		Path             *string `json:"path"`
+		Content          *string `json:"content"`
+		Binary           *bool   `json:"binary"`
+		Deleted          *bool   `json:"deleted"`
+		ContentTruncated *bool   `json:"contentTruncated"`
+		Size             *int64  `json:"size"`
+		Status           *string `json:"status"`
+		WorkspaceVersion *string `json:"workspaceVersion"`
+		Diff             *string `json:"diff"`
+		DiffTruncated    *bool   `json:"diffTruncated"`
+		Editable         *bool   `json:"editable"`
+		FileFingerprint  *string `json:"fileFingerprint"`
+		Additions        *int    `json:"additions"`
+		Deletions        *int    `json:"deletions"`
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(wireBytes))
+	var raw rawWorkspaceEnvelope
+	if err := dec.Decode(&raw); err != nil {
+		return nil, &ProtocolError{
+			StatusCode: resp.StatusCode,
+			Method:     req.Method,
+			Path:       req.URL.Path,
+			Reason:     "malformed JSON response payload",
+		}
+	}
+
+	var trailing json.RawMessage
+	if err := dec.Decode(&trailing); err != io.EOF {
+		return nil, &ProtocolError{
+			StatusCode: resp.StatusCode,
+			Method:     req.Method,
+			Path:       req.URL.Path,
+			Reason:     "unexpected trailing data after JSON envelope",
+		}
+	}
+
+	if raw.SessionID == nil || raw.Path == nil || raw.Content == nil ||
+		raw.Binary == nil || raw.Deleted == nil || raw.ContentTruncated == nil ||
+		raw.Size == nil || raw.Status == nil || raw.WorkspaceVersion == nil ||
+		raw.Diff == nil || raw.DiffTruncated == nil || raw.Editable == nil ||
+		raw.FileFingerprint == nil || raw.Additions == nil || raw.Deletions == nil {
+		return nil, &ProtocolError{
+			StatusCode: resp.StatusCode,
+			Method:     req.Method,
+			Path:       req.URL.Path,
+			Reason:     "missing required field in WorkspaceFileResponse envelope",
+		}
+	}
+
+	if *raw.SessionID != sessionID {
+		return nil, &ProtocolError{
+			StatusCode: resp.StatusCode,
+			Method:     req.Method,
+			Path:       req.URL.Path,
+			Reason:     fmt.Sprintf("envelope sessionId %q does not match requested %q", *raw.SessionID, sessionID),
+		}
+	}
+	if *raw.Path != filePath {
+		return nil, &ProtocolError{
+			StatusCode: resp.StatusCode,
+			Method:     req.Method,
+			Path:       req.URL.Path,
+			Reason:     fmt.Sprintf("envelope path %q does not match requested %q", *raw.Path, filePath),
+		}
+	}
+
+	switch *raw.Status {
+	case string(WorkspaceFileStatusUnmodified),
+		string(WorkspaceFileStatusModified),
+		string(WorkspaceFileStatusAdded),
+		string(WorkspaceFileStatusDeleted):
+		// valid status enum
+	default:
+		return nil, &ProtocolError{
+			StatusCode: resp.StatusCode,
+			Method:     req.Method,
+			Path:       req.URL.Path,
+			Reason:     fmt.Sprintf("invalid status value %q in workspace file envelope", *raw.Status),
+		}
+	}
+
+	if *raw.Binary {
+		return nil, &ProtocolError{
+			StatusCode: resp.StatusCode,
+			Method:     req.Method,
+			Path:       req.URL.Path,
+			Reason:     "binary workspace file is unsupported in text reader",
+		}
+	}
+
+	if *raw.ContentTruncated {
+		return nil, &ProtocolError{
+			StatusCode: resp.StatusCode,
+			Method:     req.Method,
+			Path:       req.URL.Path,
+			Reason:     "workspace file content truncated by upstream",
+		}
+	}
+
+	if *raw.Deleted || *raw.Status == string(WorkspaceFileStatusDeleted) {
+		return nil, ErrWorkspaceFileDeleted
+	}
+
+	contentBytes := []byte(*raw.Content)
+	if int64(len(contentBytes)) > opts.MaxBytes {
+		return nil, ErrPayloadTooLarge
+	}
+
+	return contentBytes, nil
 }
