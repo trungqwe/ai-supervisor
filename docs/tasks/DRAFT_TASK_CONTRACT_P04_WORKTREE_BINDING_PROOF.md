@@ -6,10 +6,10 @@
 > **Supersedes Contract ID**: `null`
 > **Phase ID**: `P04`
 > **Base SHA**: `06720c0a9eff4f83c8d1bca7b42a98bdcad4d278`
-> **Status**: `BLOCKED_NOT_RELEASEABLE` (Status invariant: `NOT_RELEASED`)
-> **Blocker Reference**: Finding `P04-ARCH-R5-001` (Pinned AO contains no user-selectable inert harness; disposable runtime AO sessions cannot be executed without upstream test seam; runtime physical binding transitioned to fail-closed Stage B validation on authorized sessions).
+> **Status**: `RETIRED_NON_EXECUTABLE_DRAFT` (Status invariant: `NOT_RELEASED`)
+> **Retirement & Historical Preservation Reference**: Finding `P04-ARCH-R6-002` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_005.md`). Pinned AO contains no user-selectable inert harness; disposable runtime AO sessions cannot be executed without upstream test seam; operational physical binding transitioned to fail-closed `WORKTREE_BINDING_RUNTIME_VALIDATION` on authorized sessions inside Subtasks P04A and P04D. This draft contract is retired as a non-executable historical artifact and does NOT block Subtask P04A.
 > **Draft Lineage Model**: Adopted Model A. Pre-contract editing rounds represent editorial draft iterations of an unreleased document. Pursuant to [`docs/08_TASK_CONTRACT.md`](../08_TASK_CONTRACT.md) and [`docs/24_CHANGE_GOVERNANCE.md`](../24_CHANGE_GOVERNANCE.md), formal immutable contract revision numbering commences only upon candidate release.
-> **Authority**: Formulated pursuant to accepted `docs/24_CHANGE_GOVERNANCE.md`, `AGENTS.md`, `PROPOSAL-P04-001` (Rev 6), `DRAFT-ADR-018` (Rev 6), and `PLAN-P04-WORKTREE-BINDING-PROOF.md` (Rev 4).
+> **Authority**: Formulated pursuant to accepted `docs/24_CHANGE_GOVERNANCE.md`, `AGENTS.md`, `PROPOSAL-P04-001` (Rev 7), `DRAFT-ADR-018` (Rev 7), and `PLAN-P04-WORKTREE-BINDING-PROOF.md` (Rev 5).
 > **Worker Profile**: Orchestration worker may use `antigravity-standard`; disposable AO under test must not invoke LLM models.
 > **Runtime Invariants**: `AUTOMATIC_RESTORE = DISABLED`; zero production database modification; zero autonomous agent prompts; zero interaction with user repository or recovery directory.
 
@@ -24,7 +24,7 @@
   "revision_number": 1,
   "supersedes_contract_id": null,
   "phase_id": "P04",
-  "objective": "Execute static pinned AO source inspection and non-runtime authority reconciliation to establish deterministic worktree path binding specifications for Phase P04 without touching user databases or running autonomous agent coding. Runtime disposable AO execution is blocked and deferred due to lack of an upstream inert harness.",
+  "objective": "Execute static pinned AO source inspection and non-runtime authority reconciliation to establish deterministic worktree path binding specifications for Phase P04 without touching user databases or running autonomous agent coding. Runtime disposable AO execution is retired and deferred due to lack of an upstream inert harness.",
   "requirements": [
     "FR-008",
     "SEC-002",
@@ -60,7 +60,7 @@
   "constraints": [
     "Strictly zero interaction with user databases, user sessions, or primary repository (D:\\TU_CODE\\ai-supervisor)",
     "Strictly zero interaction with recovery directory (D:\\TU_CODE\\ai-supervisor-user-wip-recovery\\P03-EXIT-R2-001)",
-    "Strictly zero disposable AO runtime worker session creation, killing, restoring, or prompting (blocked pending upstream inert seam)",
+    "Strictly zero disposable AO runtime worker session creation, killing, restoring, or prompting (retired pending upstream inert seam)",
     "Worker orchestration may utilize approved profile antigravity-standard; disposable AO under test must not invoke LLM models",
     "All file paths must reside strictly within the absolute host-injected state root",
     "AUTOMATIC_RESTORE remains DISABLED"
@@ -106,7 +106,7 @@
   "acceptance_criteria": [
     "Static source inspection of backend/internal/adapters/workspace/gitworktree/workspace.go at pinned commit 15e9ea971f1711ec8b50e157d6eb300db6cbe0d6 conclusively documented with official permalinks",
     "Authoritative attempt_workspace_bindings schema specified with immutable triggers, VolumeSerialNumber, and 128-bit FileId",
-    "Runtime physical binding transitioned into Stage B fail-closed validation on authorized sessions during normal operation",
+    "Runtime physical binding transitioned into WORKTREE_BINDING_RUNTIME_VALIDATION fail-closed checks on authorized sessions during normal operation",
     "Zero runtime disposable AO sessions executed or prompted",
     "Zero modifications to production code, schemas, or migrations"
   ]
@@ -117,7 +117,7 @@
 
 ## 2. Release Guardrails & Governance
 
-- **Release Status**: `BLOCKED_NOT_RELEASEABLE` (Status invariant: `NOT_RELEASED`).
-- **Release Condition**: This draft contract cannot be released as an active implementation task because disposable AO runtime testing is blocked by the absence of an upstream inert harness (`DESIGN_BLOCKER_P04_INERT_AO_HARNESS = OPEN`).
-- **Stage B Transition**: Physical worktree authority and binding is validated via Stage B fail-closed checks on authorized sessions during normal operation, backed by `attempt_workspace_bindings` (Schema v6).
+- **Release Status**: `RETIRED_NON_EXECUTABLE_DRAFT` (Status invariant: `NOT_RELEASED`).
+- **Decoupling from P04 Execution Graph**: This draft contract is retired and preserved for historical audit record only. It does NOT block Subtask P04A. Subtask P04A is the first releaseable subtask once architecture is approved.
+- **Runtime Validation Transition**: Physical worktree authority and binding is validated via `WORKTREE_BINDING_RUNTIME_VALIDATION` fail-closed checks on authorized sessions during normal operation, backed by `attempt_workspace_bindings` (Schema v6).
 - **Candidate Release**: No candidate contract is created or released in this state.
