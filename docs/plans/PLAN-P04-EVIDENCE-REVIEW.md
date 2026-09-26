@@ -1,16 +1,16 @@
 # PLAN-P04: Evidence & Review Engine Implementation & Governance Plan
 
 > **Plan ID**: `PLAN-P04-EVIDENCE-REVIEW`
-> **Revision**: 19
-> **Status**: `PLANNING_PENDING_EXTERNAL_AUDIT (REVISION 19)`
+> **Revision**: 20
+> **Status**: `PLANNING_PENDING_EXTERNAL_AUDIT (REVISION 20)`
 > **Date**: 2026-09-27
-> **Audited Baseline**: `e3cd8bd54f0c3e39e2c6a5599ff66baa004c7aec`
-> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_18`
+> **Audited Baseline**: `5e2cff1b1edd3c065dd6786efc9b95d356c3f045`
+> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_19`
 > **Deciders**: AI Engineering Supervisor Architecture Council, External Supervisor
 > **Related Architecture**: `docs/04_ARCHITECTURE.md` (Section 7), `docs/05_DOMAIN_MODEL.md`, `docs/10_REVIEW_BUNDLE.md`
 > **Related Requirements**: `docs/02_REQUIREMENTS.md` (FR-008, NFR-008 via PROPOSAL-P04-002 Revision 9)
-> **Supersedes**: `PLAN-P04-EVIDENCE-REVIEW` Revision 18
-> **External Audit Tracking**: Remediates Findings `P04-ARCH-R18-001`, `P04-ARCH-R18-002`, and the remainder of `P04-ARCH-R17-003` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_017.md`).
+> **Supersedes**: `PLAN-P04-EVIDENCE-REVIEW` Revision 19
+> **External Audit Tracking**: Remediates Finding `P04-ARCH-R19-001` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_018.md`).
 
 ---
 
@@ -23,10 +23,10 @@ Phase P04 implements the **Evidence & Review Engine**, providing independent, ta
 ```mermaid
 flowchart TD
     subgraph PreExecution [Pre-Execution / Governance]
-        ADR18[DRAFT-ADR-018 Revision 19]
-        PROP1[PROPOSAL-P04-001 Revision 19]
+        ADR18[DRAFT-ADR-018 Revision 20]
+        PROP1[PROPOSAL-P04-001 Revision 20]
         PROP2[PROPOSAL-P04-002 Revision 9]
-        Audit017[External Re-Audit 017]
+        Audit018[External Re-Audit 018]
     end
 
     subgraph P04A [Subtask P04A: Seam, Clean Intake & Workspace Binding Authority]
@@ -63,8 +63,8 @@ flowchart TD
 ```
 
 ### 1.2. Key Architectural Invariants
-1. **Model 1 Persistence Ownership Discipline (P04-ARCH-R10-002, P04-ARCH-R16-001)**:
-   - Subtask P04A is the sole persistence owner of Schema Migration v6 (`attempt_workspace_bindings`, `worker_claims`, `review_integrity_holds`), Transaction A, and intake failure diagnostic transactions.
+1. **Model 1 Persistence Ownership Discipline (P04-ARCH-R10-002, P04-ARCH-R16-001, P04-ARCH-R19-001)**:
+   - Subtask P04A is the sole persistence owner of Schema Migration v6 (`attempt_workspace_bindings`, `worker_claims`, `review_integrity_holds`), the controlled extension of the `PrepareBoundDispatch` store seam (combining bound dispatch allocation with workspace binding creation into a single atomic transaction), Transaction A, and intake failure diagnostic transactions.
    - Subtasks P04B and P04C are pure in-memory collectors with ZERO SQLite writes, ZERO audit event appends, and ZERO hold mutations.
    - Subtask P04D is the sole persistence owner of Schema Migration v9 (`task_verification_leases`, `evidence_sets`, `review_artifacts`, `review_bundles`), Content-Addressed Store, leases, Transaction B, Transaction C, and hold resolution orchestration (reusing Schema v6 `review_integrity_holds` without duplicate DDL).
    - Audit events are appended exclusively by their authoritative transaction owner to guarantee database atomicity; no two subtasks share ownership of a single transaction.
@@ -101,10 +101,25 @@ Phase P04 strictly maintains the two-track validation discipline:
 
 ## 3. Work Breakdown Structure (Subtasks P04A – P04D)
 
-### 3.1. Subtask P04A: Dispatch Seam, Clean Intake & Workspace Binding Authority (P04-ARCH-R16-001)
-- **Objective**: Implement workspace binding creation prior to dispatch and Transaction A report intake upon worker completion.
+### 3.1. Subtask P04A: Dispatch Seam, Clean Intake & Workspace Binding Authority (P04-ARCH-R16-001, P04-ARCH-R19-001)
+- **Objective**: Implement unified Bound Dispatch + Workspace Binding Transaction owning the controlled extension of the `PrepareBoundDispatch` store seam, and Transaction A report intake upon worker completion.
 - **Scope**:
-  - Implement Schema Migration v6: `attempt_workspace_bindings`, `worker_claims`, AND `review_integrity_holds` (including triggers and partial unique active index).
+  - Implement Schema Migration v6: `attempt_workspace_bindings` (with lineage trigger requiring `dispatch_operations.stage = 'DISPATCH_BOUND'`), `worker_claims`, AND `review_integrity_holds` (including triggers and partial unique active index).
+  - Implement controlled extension of Store dispatch seam `PrepareBoundDispatch`:
+    * Pre-transaction OS handle acquisition and Win32 `FileIdInfo` / volume serial capture. Fail-closed on handle or identity failure (no attempt created).
+    * Single atomic SQLite transaction executing in exact sequence:
+      1. Guard verification (Task `READY`, latest frozen contract, Pair active lane & quarantine/provisioning clean)
+      2. TaskAttempt allocation (`task_attempts`) with immutable session/generation snapshot
+      3. Dispatch operation creation (`dispatch_operations` with `stage = 'DISPATCH_BOUND'`)
+      4. Workspace binding creation (`attempt_workspace_bindings` with `binding_state = 'ACTIVE'`)
+      5. Append audit `TASK_DISPATCH_BOUND`
+      6. Append audit `WORKSPACE_BINDING_CREATED`
+      7. CAS update `tasks` (`READY -> DISPATCHED`) and increment `current_attempt`
+      8. Commit single transaction.
+    * Rollback atomicity guarantee: any failure prior to commit rolls back the entire transaction; zero orphaned attempts, operations, bindings, or audits; task remains in `READY` state.
+  - Implement fail-closed guard in `RecordSendRequested`: rejects unless exactly one ACTIVE binding matching exact lineage exists and physical identity revalidated against managed handles; no active integrity hold.
+  - Implement fault injection test suite at each step of the transaction proving total rollback atomicity.
+  - Implement behavior tests verifying `RecordSendRequested` rejects when binding is missing, mismatched lineage, non-ACTIVE state, or changed physical identity.
   - Implement pre-intake cleanliness probe: invoke `git status --porcelain=v1 -z --untracked-files=all` and `git diff-index --quiet HEAD --` with `GIT_OPTIONAL_LOCKS=0`.
   - If dirty, roll back Transaction A, preserve task state `RUNNING` (strictly zero blanket transitions to `BLOCKED`). In a separate diagnostic transaction executed after rollback: (1) derives non-self-referencing `hold_id = 'hold-' + SHA256(RFC8785_JCS(hold_identity_descriptor))` using `kind='review_integrity_hold'`, `hold_reason='DIRTY_WORKTREE_DETECTED'`, and `occurrence_number`; (2) derives `rejection_event_id = SHA256(RFC8785_JCS(rejection_event_identity_descriptor))` including pre-computed `hold_id`; (3) appends rejection audit event `EVIDENCE_COLLECTION_FAILED` to `audit_events` first (`actor = 'ai-supervisor-daemon'`, `details_json.actor_role = 'SUPERVISOR'`); (4) inserts an ACTIVE hold row into `review_integrity_holds` (`hold_reason = 'DIRTY_WORKTREE_DETECTED'`) in the same diagnostic transaction. If any step fails, the entire diagnostic transaction rolls back atomically.
   - Implement shared hold creation primitives and Descriptors A and B.
@@ -114,7 +129,7 @@ Phase P04 strictly maintains the two-track validation discipline:
   - Store verbatim `reported_head_sha` (`CHECK (LENGTH BETWEEN 7 AND 40)`).
   - Update `attempt_workspace_bindings` to `RETAINED_FOR_VERIFICATION` via CAS.
   - Atomically transition `tasks.state`: `RUNNING -> REPORT_READY`.
-  - **Admission Guard**: Completing Subtask P04A does NOT open runtime admission for Phase P04.
+  - **Admission Guard**: Completing Subtask P04A does NOT open runtime admission for Phase P04. The sequence P04A -> P04B -> P04C -> P04D is strictly preserved.
 - **Target Schema**: Migration v6 (Owned by Subtask P04A).
 
 ### 3.2. Subtask P04B: Hardened Git Evidence Collector (Pure In-Memory)
@@ -162,6 +177,11 @@ Phase P04 strictly maintains the two-track validation discipline:
 
 | Failure Point | State Before Crash | Recovery Action on Restart | Canonical Resulting State |
 | :--- | :--- | :--- | :--- |
+| Crash before commit of Bound Dispatch Tx | `READY` | Entire transaction rolls back; task remains `READY`; zero orphan records | `READY` (Preserved) |
+| Crash after commit of Bound Dispatch Tx | `DISPATCHED` | `DISPATCH_BOUND` operation and `ACTIVE` binding coexist; recovery revalidates handle identity before proceeding | `DISPATCHED` (Recoverable) |
+| Missing / mismatched / `INVALIDATED` binding | `DISPATCHED` | `RecordSendRequested` fail-closed guard forbids send; emits diagnostic under approved authority | Fail-Closed Hold |
+| Replay with identical binding | `DISPATCHED` | Idempotent readback comparison succeeds without state mutation | Current State Preserved |
+| Replay with mismatched identity or lineage | `DISPATCHED` | Integrity guard rejects replay; fails closed | Integrity Conflict |
 | Crash during worker execution | `RUNNING` | P03 host recovery detects unconfirmed worker; lease expired | `FAILED` |
 | Dirty worktree at report intake | `RUNNING` | Transaction A rolls back; task state preserved; ACTIVE hold inserted in diagnostic Tx | `RUNNING` (Preserved; Admission Closed) |
 | Invariant corruption during compilation | Any non-`REVIEWING` | Transaction C rolls back; task state preserved; ACTIVE hold inserted in diagnostic Tx | Current State Preserved (Admission Closed; Human Reconciliation Required) |
