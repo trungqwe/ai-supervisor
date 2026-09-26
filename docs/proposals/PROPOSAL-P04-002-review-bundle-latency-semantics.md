@@ -1,6 +1,7 @@
 # PROPOSAL-P04-002: ReviewBundle Latency Measurement Semantics (NFR-008 Reconciliation)
 
 > **Proposal ID**: `PROPOSAL-P04-002`
+> **Revision**: 2
 > **Title**: Formal Latency Measurement Semantics for ReviewBundle Compilation & Pipeline Reconciliation
 > **Author**: AI Engineering Supervisor Team
 > **Status**: `PENDING_EXTERNAL_REVIEW`
@@ -15,25 +16,25 @@
 Canonical non-functional requirement **NFR-008** specifies:
 > *"The Supervisor Control Plane shall generate a Review Bundle within 3 seconds of worker completion on repos up to 10,000 files."*
 
-At the same time, functional requirement **FR-009** and canonical **Architecture Section 7** require that the `ReviewBundle` contain **independent test verification evidence** (`actual_test_evidence`) captured by running test suites, compilers, and linters in isolated execution environments under the Supervisor Control Plane's authority.
+At the same time, functional requirement **FR-008** and canonical **Architecture Section 7** require that the `ReviewBundle` contain **independent verification evidence** (`actual_test_evidence` and `actual_git_evidence`) captured by running Git collectors, test suites, compilers, and linters in isolated Windows AppContainers under the Supervisor Control Plane's authority.
 
-Running real-world test suites (e.g. `go test -race ./...`, `npm test`, `pytest`) can legitimately take from tens of seconds to several minutes, which inherently exceeds 3 seconds. If NFR-008's 3-second clock begins at worker report submission and includes external test execution, every realistic engineering task will breach NFR-008 regardless of how fast or optimized the Supervisor Control Plane itself is. Conversely, omitting test execution from the ReviewBundle violates FR-009 and undermines core verification integrity.
+Running real-world test suites (e.g., `go test -race ./...`, `npm test`, `pytest`) legitimately requires durations ranging from tens of seconds to several minutes, inherently exceeding 3 seconds. If NFR-008's 3-second clock begins at worker report submission and includes external test execution, every realistic engineering task will breach NFR-008 regardless of Supervisor Control Plane efficiency. Conversely, omitting test execution from the ReviewBundle violates audit integrity.
 
-This proposal establishes a rigorous, unambiguous measurement model that reconciles NFR-008 with FR-009 without weakening either requirement, and defines the change governance process required before canonical `docs/02_REQUIREMENTS.md` or ADR-018 can be formally adopted.
+This proposal establishes a rigorous, unambiguous measurement model that reconciles NFR-008 without weakening audit guarantees, and defines the change governance process required before canonical `docs/02_REQUIREMENTS.md` or ADR-018 can be formally adopted.
 
 ---
 
 ## 2. Problem Statement & Tension Analysis
 
 ### 2.1. The Conflict
-1. **Canonical NFR-008**: Stipulates a hard performance budget of $\le 3	ext{ seconds}$ from "worker completion" on repositories up to 10,000 files.
-2. **Canonical FR-009 & ReviewBundle Schema**: Stipulates that `ReviewBundle.actual_test_evidence` must record the Supervisor's independently executed test commands and exit codes.
+1. **Canonical NFR-008**: Stipulates a hard performance budget of <= 3.0 seconds from worker completion on repositories up to 10,000 files.
+2. **Canonical FR-008 & ReviewBundle Schema**: Stipulates that `ReviewBundle.actual_test_evidence` must record the Supervisor's independently executed test commands and exit codes.
 3. **Execution Reality**:
-   - Compiling and executing test suites (e.g., in Windows AppContainers with zero inherited handles and network denial) is bounded by project build times, external toolchain performance, and test case complexity, not Supervisor Control Plane scheduling.
-   - For complex Go or TypeScript projects, verification tests typically run between 5 and 60 seconds.
+   - Compiling and executing test suites in Windows AppContainers with zero inherited handles and network denial is bounded by project build times, external toolchain performance, and test complexity.
+   - For real projects, verification tests typically run between 5 and 60 seconds.
 
 ### 2.2. Governance Conflict
-Modifying the text or interpretation of NFR-008 unilaterally in proposals or ADRs violates the 9-level decision hierarchy of `docs/24_CHANGE_GOVERNANCE.md` (Level 4 Requirement Specification cannot be implicitly altered by Level 6 Task Contracts or Level 8 Suggestions). Formal approval of this proposal by the External Supervisor is mandatory before modifying canonical documentation.
+Modifying the text or interpretation of NFR-008 unilaterally violates the 9-level decision hierarchy of `docs/24_CHANGE_GOVERNANCE.md` (Level 4 Requirement Specification cannot be implicitly altered by Level 6 Task Contracts or Level 8 Suggestions). Formal approval of this proposal by the External Supervisor is mandatory before modifying canonical documentation.
 
 ---
 
@@ -45,49 +46,60 @@ We propose structuring the post-worker pipeline into two strictly separated, ind
 sequenceDiagram
     autonumber
     participant Worker as Worker Session
-    participant Intake as Boundary A: Report Intake
+    participant Intake as Transaction A: Report Intake
     participant Runner as Verification Runner (P04C)
-    participant Compiler as Boundary C: Bundle Compiler (P04D)
-    participant Store as SQLite WAL (review_bundles)
+    participant Finalize as Transaction B: Evidence Finalization
+    participant Compiler as Transaction C: Bundle Compilation
+    participant Store as SQLite WAL (audit_events & review_bundles)
 
     Worker->>Intake: Submit WorkerReport
-    Intake->>Intake: Validate report & bind workspace
+    Intake->>Intake: Validate report & verify existing binding
     Note over Intake: Task enters REPORT_READY (Worker Completion)
 
     rect rgb(240, 240, 255)
-        Note over Intake,Runner: Interval 1: Evidence Acquisition Window (Budget: max_verification_budget_ms)
+        Note over Intake,Finalize: Interval 1: Evidence Acquisition Window (Derived Contract Timeouts)
         Intake->>Runner: Acquire Lease & Dispatch Verification
-        Runner->>Runner: Execute Git diff & isolated tests
-        Runner->>Intake: All evidence inputs terminal (T0)
+        Runner->>Runner: Execute Git diff & AppContainer tests
+        Runner->>Finalize: Persist evidence_sets & review_artifacts
+        Finalize->>Finalize: Release lease & commit Transaction B (T0: evidence_committed_at)
     end
 
     rect rgb(255, 240, 240)
-        Note over Compiler,Store: Interval 2: ReviewBundle Compilation Window (Budget: <= 3.0s per NFR-008)
-        Compiler->>Compiler: T0: Begin bundle synthesis
-        Compiler->>Compiler: Ingest Git diff + test evidence + policy findings
-        Compiler->>Compiler: Generate RFC 8785 JCS canonical JSON
-        Compiler->>Store: Insert review_bundles & transition to REVIEWING (T1)
-        Note over Store: T1 - T0 <= 3.0 seconds (NFR-008 Enforcement Point)
+        Note over Compiler,Store: Interval 2: ReviewBundle Compilation Window (<= 3.0s per NFR-008)
+        Compiler->>Compiler: T0: Begin bundle synthesis from committed evidence_sets
+        Compiler->>Compiler: Generate RFC 8785 JCS canonical JSON & validate schema
+        Compiler->>Store: Insert review_bundles, audit_events & transition to REVIEWING (T1)
+        Note over Store: 0 <= T1 - T0 <= 3.0 seconds (NFR-008 Enforcement Point)
     end
 ```
 
-### 3.1. Interval 1: Evidence Acquisition Window ($T_{	ext{worker\_completion}} 	o T_0$)
-- **Trigger**: Worker submits report; Boundary A validates report, inserts `attempt_workspace_bindings`, and transitions `tasks.state` to `REPORT_READY`.
+### 3.1. Interval 1: Evidence Acquisition Window (Worker Completion to T0)
+- **Trigger**: Worker submits report; Transaction A validates report, verifies authoritative `attempt_workspace_bindings`, persists `worker_claims`, and transitions `tasks.state` to `REPORT_READY`.
 - **Scope**: Hardened in-memory Git diff/log collection (Subtask P04B) and Windows AppContainer verification runner execution (Subtask P04C).
-- **Governing Budget**: Bound by attempt-scoped verification execution limits (`max_verification_budget_ms`, default 60,000 ms, configurable in `VerificationPolicyCatalog`).
-- **Enforcement**: Hard timeout enforcement via Windows Job Object (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) and process-tree cancellation.
-- **Terminal Moment ($T_0$)**: Defined as the exact timestamp when **all mandatory evidence collection processes have reached a terminal state** (succeeded, failed, timed out, or quarantined) and evidence finalization (Boundary B) completes.
+- **Governing Timeout (No Arbitrary Budget Tokens)**:
+  * The timeout for Interval 1 is derived strictly from the validated task contract's `verification_requests[].timeout_seconds`.
+  * If a request omits `timeout_seconds`, the default is taken from `MaxTimeoutSeconds` defined in the approved `VerificationPolicyCatalog` profile.
+  * Aggregation rules:
+    - **Sequential Execution**: Total timeout = sum(request.timeout_seconds).
+    - **Parallel Execution**: Total timeout = max(request.timeout_seconds).
+  * Arbitrary unapproved tokens (such as `unapproved verification budget tokens` or ungrounded 60,000 ms defaults) are strictly prohibited.
+- **Enforcement**: Hard timeout enforcement via Windows Job Object (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) and process-tree termination.
+- **Terminal Moment (T0)**: Defined as `evidence_committed_at`, the exact timestamp when Transaction B commits `evidence_sets` and `review_artifacts` to SQLite WAL, releases the verification lease, and transitions `tasks.state`: `REPORT_READY -> EVIDENCE_READY`.
 
-### 3.2. Interval 2: ReviewBundle Compilation & Persistence Window ($T_0 	o T_1$)
-- **Start ($T_0$)**: The instant when all mandatory evidence inputs are terminal and Boundary B commits evidence metadata to SQLite.
-- **End ($T_1$)**: The instant when:
+### 3.2. Interval 2: ReviewBundle Compilation & Persistence Window (T0 to T1)
+- **Start (T0)**: The instant when `evidence_sets` is durably committed in SQLite (Transaction B commit timestamp).
+- **End (T1)**: The instant when:
   1. The canonical RFC 8785 JSON Canonicalization Scheme (JCS) `ReviewBundle` payload is constructed in memory;
   2. The payload is validated against `docs/schemas/review-bundle.schema.json`;
   3. The `review_bundles` row is durably inserted;
-  4. The `tasks.state` CAS transition to `REVIEWING` is committed to SQLite WAL.
+  4. The `audit_events` row (`event_type = 'AUDIT_EVENT_BUNDLE_GENERATED'`) is durably inserted;
+  5. The `tasks.state` CAS transition to `REVIEWING` is committed to SQLite WAL.
 - **Governing Requirement (NFR-008)**:
-  $$T_1 - T_0 \le 3.0	ext{ seconds}$$
+  $$0 <= T1 - T0 <= 3.0 seconds$$
   for repositories containing up to 10,000 files.
+- **Monotonic Duration & Clock Regression Invariant**:
+  - In-process execution measures compilation duration using monotonic clocks (`time.Since(t0)`).
+  - Persisted epoch timestamps must satisfy `T1 >= T0`. Any clock regression (`T1 < T0`) triggers an immediate fail-closed error and audit alert.
 
 ---
 
@@ -95,20 +107,20 @@ sequenceDiagram
 
 | Option | Description | Pros | Cons | Verdict |
 | :--- | :--- | :--- | :--- | :--- |
-| **A. Include test runtime in NFR-008** | Clock runs from worker report to ReviewBundle persistence including tests. | Strict literal reading of "worker completion". | Practically impossible for real projects; tests breach 3s constantly. | **Rejected** |
-| **B. Make test execution asynchronous** | Generate partial ReviewBundle in 3s without tests; enrich later. | Meets 3s trivially. | Violates FR-009; ChatGPT reviewer receives incomplete audit data. | **Rejected** |
-| **C. Two-Interval Model (Proposed)** | Separate external tool execution budget from Control Plane compilation budget ($T_1 - T_0 \le 3	ext{s}$). | Preserves verification integrity; holds Control Plane strictly accountable for compilation latency ($\le 3	ext{s}$). | Requires explicit measurement definition in requirements. | **Recommended** |
+| **A. Include test runtime in NFR-008** | Clock runs from worker report to ReviewBundle persistence including tests. | Strict literal reading of "worker completion". | Impossible for real projects; tests breach 3s constantly. | **Rejected** |
+| **B. Make test execution asynchronous** | Generate partial ReviewBundle in 3s without tests; enrich later. | Meets 3s trivially. | Violates audit integrity; reviewer receives incomplete audit data. | **Rejected** |
+| **C. Two-Interval Model (Proposed)** | Separate external test execution timeout from Control Plane compilation budget (T1 - T0 <= 3s). | Preserves audit integrity; holds Control Plane strictly accountable for compilation latency (<= 3s). | Requires explicit measurement definition in requirements. | **Recommended** |
 
 ---
 
 ## 5. Implementation & Verification Plan
 
 1. **Instrumentation**: Subtask P04D tracks:
-   - `evidence_terminal_at_epoch_ms` ($T_0$)
-   - `bundle_persisted_at_epoch_ms` ($T_1$)
-   - `bundle_compilation_latency_ms` = $T_1 - T_0$
-2. **Benchmark Test Suite**: Integration test in Subtask P04D tests a repository with 10,000 committed files, synthesizes a ReviewBundle from pre-computed evidence, and asserts that $T_1 - T_0 \le 3000	ext{ ms}$.
-3. **Audit Log Metric**: Emits an audit event `REVIEW_BUNDLE_COMPILED` recording $T_0$, $T_1$, and latency delta.
+   - `evidence_committed_at` (T0, epoch ms)
+   - `bundle_committed_at` (T1, epoch ms)
+   - `compilation_latency_ms` = T1 - T0 (asserted <= 3000 ms)
+2. **Benchmark Test Suite**: Integration test in Subtask P04D tests a repository with 10,000 committed files, synthesizes a ReviewBundle from pre-computed evidence sets, and asserts that T1 - T0 <= 3000 ms.
+3. **Audit Log Metric**: Emits an audit event into canonical table `audit_events` with `event_type = 'AUDIT_EVENT_BUNDLE_GENERATED'`, recording T0, T1, and latency delta in `details_json`.
 
 ---
 
