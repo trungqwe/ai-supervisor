@@ -1,30 +1,36 @@
 # PROPOSAL-P04-001: Evidence & Review Engine Architecture, Execution Isolation, and ReviewBundle Reconciliation
 
 - **Proposal ID:** `PROPOSAL-P04-001`
+- **Revision:** 2 (Remediation of External Audit 001)
 - **Target Phase:** Phase P04 — Evidence & Review Engine
 - **Status:** `PENDING_EXTERNAL_REVIEW`
+- **Audit Reference:** [`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_AUDIT_001.md`](../audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_AUDIT_001.md)
 - **Author:** AI Engineering Supervisor Control Plane Team
 - **Governance Authority:** [`docs/24_CHANGE_GOVERNANCE.md`](../24_CHANGE_GOVERNANCE.md)
 - **Decision Precedence:** Level 3 (Canonical Architecture) / Level 2 (ADR Required)
 - **Related ADRs:** [`ADR-006`](../adr/ADR-006-evidence-first-review.md), [`ADR-011`](../adr/ADR-011-worker-report-handoff-and-agy-invocation-boundary.md), [`ADR-012`](../adr/ADR-012-task-contract-revision-and-attempt-binding.md), [`ADR-013`](../adr/ADR-013-trusted-verification-command-spec.md), [`DRAFT-ADR-018`](../adr/DRAFT-ADR-018-evidence-review-and-verification-isolation.md)
+- **Source Provenance:** [`docs/sources/SOURCE_REGISTRY.md`](../sources/SOURCE_REGISTRY.md), [`docs/sources/REUSE_MATRIX.md`](../sources/REUSE_MATRIX.md), [`docs/22_MODULE_PROVENANCE.md`](../22_MODULE_PROVENANCE.md)
 - **Primary Traceability:** FR-007, FR-008, FR-009, FR-010, SEC-003, NFR-004, NFR-008, REC-007, REC-008
 
 ---
 
-## 1. Executive Summary & Context
+## 1. Executive Summary, Provenance & Reuse Boundaries
 
 Phase P03 established the foundational integration between the Supervisor Control Plane and the upstream Agent Orchestrator (AO REST daemon API `v0.13.0`), achieving clean session provisioning, task dispatch saga, observation reconciliation, raw bounded workspace artifact transport (`GetWorkspaceFile`), and exclusive daemon host bootstrap.
 
-Pursuant to the formal governance boundaries frozen across Phase P01, P02, and P03:
-1. **Zero-Trust Boundary**: AO session idleness (`AO_IDLE != REPORT_READY`) and worker execution output represent unverified worker hypotheses (`WORKER_CLAIMS`), not objective truth.
-2. **P04 Ownership**: Phase P04 owns the exclusive domain authority to parse `worker-report.json`, enforce schema validation, extract `WorkerClaim` entities, collect independent Git evidence, evaluate TaskContract scope compliance via `PolicyEngine`, execute profile-constrained verification commands via `VerificationRunner`, persist immutable evidence rows, and assemble the synthesized `ReviewBundle` for ChatGPT supervisor review.
-3. **Pre-Contract Seams**: Prior to drafting and releasing any formal Task Contract for Phase P04, four critical architectural seams must be evaluated and approved:
-   - `DESIGN_BLOCKER_P04_WORKTREE_BINDING`: Establishing an authoritative, immutable binding between `TaskAttempt` and physical local workspace worktree.
-   - `DESIGN_BLOCKER_P04_GIT_EVIDENCE_AUTHORITY`: Enforcing read-only, non-mutating, sanitized Git diff collection with precise revision ancestry semantics.
-   - `DESIGN_BLOCKER_P04_VERIFICATION_ISOLATION`: Implementing two-layer verification command execution separating Layer A (command authority) from Layer B (untrusted code execution isolation) on Windows hosts.
-   - `DESIGN_BLOCKER_P04_REVIEW_SCHEMA_RECONCILIATION`: Reconciling structural drift across specification markdown, JSON schemas, valid examples, and domain entity types.
-
-This proposal provides the architectural analysis, gap matrix, technology trade-offs, state-machine transaction flows, persistence schemas, and subtask decomposition plan required for External Supervisor decision.
+Pursuant to the formal governance boundaries frozen across Phase P01, P02, and P03, and citing [`docs/sources/SOURCE_REGISTRY.md`](../sources/SOURCE_REGISTRY.md) and [`docs/sources/REUSE_MATRIX.md`](../sources/REUSE_MATRIX.md):
+1. **Reuse of Upstream Capabilities**: Phase P04 strictly reuses:
+   - Untrivial Agent Orchestrator public workspace file reading primitive (`GetWorkspaceFile` in `internal/ao/client.go`), avoiding private database queries or terminal scraping.
+   - Upstream Git worktree isolation mechanisms, strictly prohibiting building a custom, unapproved worktree manager.
+   - Existing Supervisor domain entities and SQLite store seams established in Phase P02 and P03 (`internal/domain/**`, `internal/store/**`).
+2. **Zero-Trust Boundary**: AO session idleness (`AO_IDLE != REPORT_READY`) and worker execution output represent unverified worker hypotheses (`WORKER_CLAIMS`), not objective truth.
+3. **P04 Ownership**: Phase P04 owns the exclusive domain authority to parse `worker-report.json`, enforce schema validation, extract `WorkerClaim` entities, collect independent Git evidence, evaluate TaskContract scope compliance via `PolicyEngine`, execute profile-constrained verification commands via `VerificationRunner`, persist immutable evidence rows, and assemble the synthesized `ReviewBundle` for ChatGPT supervisor review.
+4. **Pre-Contract Blockers**: Prior to drafting and releasing any formal Task Contract for Phase P04, five critical architectural seams must be evaluated, remediated, and approved:
+   - `DESIGN_BLOCKER_P04_WORKTREE_BINDING`: Establishing an authoritative binding between `TaskAttempt` and physical local workspace worktree.
+   - `DESIGN_BLOCKER_P04_GIT_EVIDENCE_AUTHORITY`: Enforcing read-only, non-mutating, sanitized Git diff collection with strict descendant ancestry verification and TOCTOU protection.
+   - `DESIGN_BLOCKER_P04_VERIFICATION_ISOLATION`: Implementing two-layer verification command execution separating Layer A (command authority) from Layer B (Windows AppContainer untrusted code execution isolation with read-only source tree protection).
+   - `DESIGN_BLOCKER_P04_REVIEW_SCHEMA_RECONCILIATION`: Reconciling structural drift across specification markdown, JSON schemas, valid examples, and domain entity types, ensuring inspectable evidence payloads for ChatGPT.
+   - `DESIGN_BLOCKER_P04_EVIDENCE_ATOMICITY`: Structuring sequential schema migrations (v6..v9) and complete CAS state progression across short SQLite transactions.
 
 ---
 
@@ -32,331 +38,269 @@ This proposal provides the architectural analysis, gap matrix, technology trade-
 
 | Deliverable / Component | Canonical Requirement | Code Seam Hiện Có (Baseline P03) | Phần Còn Thiếu Cần Xây Dựng (P04) | Owner Subtask | Dependencies |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **WorkerReport Ingestion** | FR-007, ADR-011, `docs/09_WORKER_REPORT.md` | `AOAdapter.GetWorkspaceFile` (`internal/adapter/ao/session.go`), `CanonicalExpectedReportPath` (`internal/store/report_path.go`) | Ingestion orchestrator, JSON schema parser/validator against `worker-report.schema.json`, identity reconciliation (`task_id`, `attempt_id`), size/content bounding. | P04A | AOAdapter, SQLite store |
-| **WorkerClaim Creation** | FR-007, ADR-011, `docs/05_DOMAIN_MODEL.md` | `domain.WorkerClaim` entity definition (`internal/domain/entities.go`) | Entity conversion, field normalization, unverified claims extraction, SQLite persistence (`worker_claims` table). | P04A | WorkerReport parser |
+| **WorkerReport Ingestion** | FR-007, ADR-011, `docs/09_WORKER_REPORT.md` | `AOAdapter.GetWorkspaceFile` (`internal/ao/client.go`), `CanonicalExpectedReportPath` (`internal/store/report_path.go`) | Ingestion orchestrator, JSON schema parser/validator against `worker-report.schema.json`, identity reconciliation (`task_id`, `attempt_id`), size/content bounding. | P04A | AOAdapter, SQLite store |
+| **WorkerClaim Creation** | FR-007, ADR-011, `docs/05_DOMAIN_MODEL.md` | `domain.WorkerClaim` entity definition (`internal/domain/entities.go`) | Entity conversion, field normalization, unverified claims extraction, SQLite persistence (`worker_claims` table in Schema v6). | P04A | WorkerReport parser |
 | **EvidenceCollector** | FR-008, ADR-011, `docs/04_ARCHITECTURE.md`, `docs/22_MODULE_PROVENANCE.md` | `domain.Evidence` entity definition (`internal/domain/entities.go`) | Evidence coordinator orchestrating Git inspection, scope policy checking, and verification runner execution into atomic evidence bundle. | P04B / P04D | Git adapter, PolicyEngine, VerificationRunner |
-| **Git Evidence Adapter** | FR-008, ADR-013 §4.4, `docs/22_MODULE_PROVENANCE.md` | Pure unit/harness mocks in `test/integration/ao_harness_test.go` | Read-only trusted absolute `git.exe` executor, environment sanitization, commit object verification, direct HEAD query, ancestry check, dirty worktree check, diff byte hasher. | P04B | Host Git binary, Worktree binding |
+| **Git Evidence Adapter** | FR-008, ADR-013 §4.4, `docs/22_MODULE_PROVENANCE.md` | Pure unit/harness mocks in `test/integration/ao_harness_test.go` | Read-only trusted absolute `git.exe` executor, environment sanitization, commit object verification, direct HEAD query, strict descendant check, dirty worktree check, diff byte hasher. | P04B | Host Git binary, Worktree binding |
 | **PolicyEngine** | FR-008, ADR-013, `docs/08_TASK_CONTRACT.md` | Pre-dispatch lexical path validator `ValidateCwdContainment` (`internal/contract/path_policy.go`) | Post-execution diff policy evaluator: matching git changed paths against `allowed_scope` and `forbidden_scope`, canonical glob matching, Windows case-insensitivity, scope precedence. | P04B | Git changed files list |
 | **VerificationPolicyCatalog Runtime Loader** | ADR-013 §2, `docs/08_TASK_CONTRACT.md` | Pure domain interface `domain.VerificationPolicyCatalog` & `domain.VerificationProfilePolicy` (`internal/domain/verification_policy.go`) | Production host configuration file loader, trusted executable registry, parameter schema validator, timeout ceiling enforcer, capability mapping. | P04C | Host filesystem/config |
-| **VerificationRunner** | FR-008, ADR-013 §2-4, `docs/07_SECURITY_MODEL.md` | None in production (P03 harness avoided executing external commands) | Concrete execution runner implementing Layer A command containment and Layer B isolation (AppContainer/Restricted Token + Job Object on Windows), zero-secret env, isolated TEMP/TMP, stdout/stderr caps, output hashing. | P04C | Windows OS APIs, Toolchain binaries |
-| **Evidence Persistence** | FR-008, ADR-012, `docs/14_FAILURE_RECOVERY.md` | Schema v1-v5 (`internal/store/migrations.go`) without evidence tables | Schema v6: tables `worker_claims`, `evidence`, `actual_test_results`, `policy_findings`, `review_bundles`, lineage constraints, triggers, atomic transaction wrapper. | P04A, P04B, P04D | SQLite store |
-| **ReviewBundleBuilder** | FR-009, FR-010, ADR-006, `docs/10_REVIEW_BUNDLE.md` | None in production (`internal/domain/entities.go` lacks `ReviewBundle` struct) | Bundle compiler correlating Contract, Claims, Git Evidence, Test Evidence, Policy Findings, generating review focus hints, validating schema against `review-bundle.schema.json`. | P04D | Evidence persistence, Schema validator |
-| **State Transitions & Audit** | FR-007, FR-008, FR-009, `docs/06_WORKFLOW_STATE_MACHINE.md` | Pure state machine definition in `internal/workflow/state_machine.go` (`RUNNING -> REPORT_READY -> EVIDENCE_READY -> REVIEWING`) | Orchestrated transactional store methods executing atomic state updates with audit log appending and CAS checks. | P04A, P04B, P04D | SQLite store, Audit logger |
+| **VerificationRunner** | FR-008, ADR-013 §2-4, `docs/07_SECURITY_MODEL.md` | None in production (P03 harness avoided executing external commands) | Concrete execution runner implementing Layer A command containment and Layer B AppContainer isolation on Windows, read-only worktree mount, zero-secret env, isolated TEMP/TMP, stdout/stderr caps, output hashing. | P04C | Windows OS APIs, Toolchain binaries |
+| **Evidence Persistence** | FR-008, ADR-012, `docs/14_FAILURE_RECOVERY.md` | Schema v1-v5 (`internal/store/migrations.go`) without evidence tables | Sequential migrations: Schema v6 (`worker_claims`, `attempt_workspace_bindings`), v7 (`evidence`, `policy_findings`), v8 (`actual_test_results`), v9 (`review_bundles`). Lineage constraints, triggers, short atomic transactions. | P04A, P04B, P04C, P04D | SQLite store |
+| **ReviewBundleBuilder** | FR-009, FR-010, ADR-006, `docs/10_REVIEW_BUNDLE.md` | None in production (`internal/domain/entities.go` lacks `ReviewBundle` struct) | Bundle compiler correlating Contract, Claims, Git Evidence (bounded patch), Test Evidence (bounded logs), Policy Findings, generating review focus hints, validating schema against `review-bundle.schema.json`. | P04D | Evidence persistence, Schema validator |
+| **State Transitions & Audit** | FR-007, FR-008, FR-009, `docs/06_WORKFLOW_STATE_MACHINE.md` | Pure state machine definition in `internal/workflow/state_machine.go` (`RUNNING -> REPORT_READY -> EVIDENCE_READY -> REVIEWING`) | Orchestrated transactional store methods executing atomic state updates with full CAS guards, audit log appending, and failure handling. | P04A, P04B, P04D | SQLite store, Audit logger |
 
 ---
 
 ## 3. DESIGN_BLOCKER_P04_WORKTREE_BINDING
 
-### 3.1. Problem Statement
-Phase P04 requires collecting Git diffs, verifying repository state, and executing verification commands against the **exact local worktree** where the worker performed its attempt. However:
-1. `TaskAttempt` in current schema v1-v5 does not record `worktree_path` or filesystem identity.
-2. `WorkerSession.worktree_path` is a nullable column in schema v3 (`internal/store/migrations.go`).
-3. Pinned AO (`v0.13.0`) does not expose `worktree_path` via its public session REST API (`GET /api/v1/sessions/{sessionId}`).
-4. `Project.RootPath` denotes repository root, but does not prove whether AO created an isolated sub-worktree, branch directory, or session checkout.
+### 3.1. Problem Statement & Authority Gap
+Phase P04 requires collecting Git diffs, verifying repository state, and executing verification commands against the **exact local worktree** where the worker performed its attempt.
+However, analysis of pinned upstream AO (`v0.13.0`) reveals a fundamental authority gap:
+1. **Public API Surface Gap**: AO's public session REST API (`GET /api/v1/sessions/{sessionId}`) returns only `session_id`, `activity`, and `is_terminated`. It strictly does **NOT** expose the local physical `worktree_path`.
+2. **`Project.RootPath` Insufficiency**: `Project.RootPath` in the Supervisor database denotes the project repository root. It does not prove whether AO created an isolated Git worktree, branch directory, or session checkout. Assuming `Project.RootPath` as the session worktree breaks whenever concurrent sessions or worktrees exist.
+3. **Dispatch Integration Seam**: Binding the workspace prior to `POST /api/v1/sessions/{id}/send` requires coordination across `internal/ao/client.go`, `internal/store/**`, and `internal/dispatch/**`.
 
-### 3.2. Evaluation of Architectural Options
+### 3.2. Mapping Feasibility Analysis: `(session_id, terminal_generation, attempt_id, branch) -> physical worktree`
+To resolve this mapping, three potential authority mechanisms are evaluated:
+- **Mechanism A: Direct Git Worktree Inspection (`git worktree list --porcelain -z`)**:
+  - The host inspects the repository's registered worktrees.
+  - *Collision & Uniqueness*: If AO names worktrees or branches with the session ID, matching is deterministic. If AO creates detached HEAD worktrees without metadata, mapping is ambiguous.
+  - *Restore / Restart*: Git worktrees survive daemon restarts, but worktree administrative files (`.git/worktrees/<id>/gitdir`) must be verified.
+  - *TOCTOU*: If another process mutates or removes the worktree between dispatch and collection, evidence collection fails.
+- **Mechanism B: Host-Owned Provisioning with Explicit Worktree Parameter**:
+  - The Supervisor provisions the workspace directory before creating the AO session, passing an explicit working directory parameter.
+  - However, pinned AO `v0.13.0` public API `POST /api/v1/sessions` takes `AgentId` and `ProjectName`; it does not accept a custom local worktree override.
+- **Mechanism C: Upstream Runtime Proof Requirement**:
+  - Conduct a bounded proof contract to inspect AO's local session disk layout and verify if AO sessions map deterministically to known worktree paths.
 
-#### Phương án 1: Host-Owned Immutable `AttemptWorkspaceBinding` Persisted Before Dispatch
-- **Mechanism:** Prior to issuing `POST /api/v1/sessions/{id}/send`, the Supervisor host resolves the exact canonical local worktree path, validates physical directory and Git repository root identity, and persists an immutable `attempt_workspace_bindings` record bound to `attempt_id`.
-- **Provenance:** Authoritatively stamped by Supervisor Core at dispatch binding; lineage tied directly to `task_attempts.attempt_id`.
-- **Crash/Restart Behavior:** Survives restarts cleanly; on recovery, Supervisor retrieves the persisted canonical path without re-querying AO or guessing.
-- **Alias / Symlink / Junction Handling:** Canonicalized strictly via `filepath.EvalSymlinks` and Windows `GetFinalPathNameByHandleW` prior to database insertion.
-- **TOCTOU:** Minimized: Path is validated and volume serial + file index or unique repository genesis commit is recorded. If repository identity changes at collection time, collection aborts fail-closed.
-- **Replay:** Deterministic: Historical attempts permanently point to the exact worktree where execution occurred.
-- **Schema Impact:** New table `attempt_workspace_bindings (attempt_id PK REFERENCES task_attempts, canonical_worktree_path TEXT NOT NULL, git_dir TEXT NOT NULL, bound_at TEXT NOT NULL)`.
-- **Falsification Test:** Injecting a simulated dispatch with a symlink to another drive or non-existent worktree fails validation before dispatch. Pointing evidence collector to another directory triggers identity mismatch.
+### 3.3. Evaluation of Architectural Options
 
-#### Phương án 2: `Project.RootPath` Used Only After Physical Git Repository / Worktree Identity Verification
-- **Mechanism:** Assume worker operates in `Project.RootPath`, but before running Git commands, execute physical runtime verification (`git rev-parse --show-toplevel`, `git rev-parse --git-dir`, commit matching).
-- **Provenance:** Derived from static `projects.root_path` table.
-- **Crash/Restart Behavior:** Trivially re-read from `projects`.
-- **Alias / Symlink / Junction Handling:** Evaluated at collection time.
-- **TOCTOU:** High vulnerability: If multiple workers or concurrent attempts share `Project.RootPath`, Git HEAD changes during execution, corrupting diff collection. Multi-worktree setups cannot be disambiguated.
-- **Replay:** Fails: If `Project.RootPath` advances to future commits, historical attempts cannot verify their original isolated workspace.
-- **Schema Impact:** Zero schema change.
-- **Falsification Test:** Dispatching two concurrent attempts to the same `Project.RootPath` causes cross-attempt diff contamination.
+| Evaluation Criterion | Phương án 1: Host-Owned Immutable `AttemptWorkspaceBinding` Persisted at Dispatch | Phương án 2: `Project.RootPath` Verified via Physical Git Check | Phương án 3: Host Worktree Registry Mapping Session to Local Path |
+| :--- | :--- | :--- | :--- |
+| **Provenance** | Stamped by Supervisor Core during dispatch saga (`internal/dispatch/**`); tied to `task_attempts.attempt_id`. | Derived statically from `projects.root_path`. | Maintained by centralized Host Daemon service using Git worktree query. |
+| **Crash / Restart** | Fully persistent in SQLite; rehydrated without external guessing. | Trivial, but assumes static directory. | Reconstructed on startup from SQLite store and Git worktree verification. |
+| **Alias / Symlink / Junction** | Evaluated via `filepath.EvalSymlinks` and Windows `GetFinalPathNameByHandleW`. | Evaluated at collection time. | Centralized normalization at registry entry. |
+| **TOCTOU Resistance** | High: Verifies volume serial number and repository commit hash at binding and re-verifies before diff collection. | Poor: Highly vulnerable to concurrent attempts modifying the shared root path. | High: Protected by the single-instance machine exclusivity lock (ADR-017). |
+| **Replay & Audit** | Exact historical worktree path is permanently recorded. | Cannot disambiguate historical attempts on branches. | Requires historical registry lookup. |
+| **Schema Impact** | Table `attempt_workspace_bindings` (Schema v6). | Zero schema change. | Table `host_worktree_registry` or update `worker_sessions`. |
+| **Falsification Test** | Simulated dispatch with invalid/symlinked path fails closed. Diff collection against non-matching worktree halts. | Concurrent attempts pollute diffs, failing falsification. | Session termination unregisters worktree, blocking invalid access. |
 
-#### Phương án 3: Host Worktree Registry Mapping Exact Attempt/Session/Generation to Local Path
-- **Mechanism:** A centralized host daemon service (`HostWorktreeRegistry`) manages workspace paths for all active sessions. Maps `(session_id, terminal_generation, attempt_id) -> canonical_worktree_path`.
-- **Provenance:** Maintained in memory with backing SQLite storage.
-- **Crash/Restart Behavior:** Reconstructed on daemon startup from database and active session state.
-- **Alias / Symlink / Junction Handling:** Centralized canonical path normalization.
-- **TOCTOU:** Protected by the daemon's single-instance machine exclusivity lock (ADR-017).
-- **Replay:** Requires querying historical registry records.
-- **Schema Impact:** Requires updating `worker_sessions.worktree_path` to `NOT NULL` or introducing `host_worktree_mappings`.
-- **Falsification Test:** Terminating session and unregistering worktree prevents any late evidence collector from accessing invalid workspace.
-
-### 3.3. Recommendation
-**Khuyến nghị Phương án 1 kết hợp Phương án 3:**
-Adopt an immutable `AttemptWorkspaceBinding` table persisted at dispatch time (Phương án 1), verified against the Host Worktree Registry (Phương án 3). If `worktree_path` cannot be authoritatively resolved and verified as a valid Git worktree prior to dispatch, dispatch MUST be refused (`FAIL_CLOSED`).
-*Lưu ý: Không implement trong lượt này; giữ DESIGN_BLOCKER_P04_WORKTREE_BINDING = OPEN.*
+### 3.4. Architectural Determination
+Because pinned AO (`v0.13.0`) does not expose `worktree_path` via its public REST API, Decision 1 in ADR-018 is formally designated as **CONDITIONAL / UNRESOLVED**.
+- **Governance Requirement:** Prior to ADR-018 approval, a bounded runtime proof must establish the authoritative mechanism to map AO sessions to physical worktrees.
+- **Fail-Closed Rule:** If the physical worktree cannot be deterministically verified as a clean Git worktree matching the attempt's contract before dispatch, the dispatch saga MUST fail-closed (`FAIL_CLOSED`).
+- *Status: `DESIGN_BLOCKER_P04_WORKTREE_BINDING = OPEN`.*
 
 ---
 
 ## 4. DESIGN_BLOCKER_P04_GIT_EVIDENCE_AUTHORITY
 
 ### 4.1. Strict Read-Only Authority & Isolation
-The Git evidence collector must operate as a deterministic, tamper-proof audit probe:
-1. **Trusted Absolute Executable**: The binary `git.exe` must be located at a trusted absolute path validated at Supervisor startup. Never resolve `git` via mutable `PATH` or worker-controlled `cwd`.
-2. **Fixed Internal Commands**: Command invocations are hardcoded internal routines. The collector strictly rejects command strings or arguments from TaskContract, worker reports, or ChatGPT tools.
-3. **Absolute Prohibition on Mutating Commands**: Commands such as `git checkout`, `git reset`, `git clean`, `git stash`, `git commit`, `git merge`, `git rebase`, `git pull`, `git push`, `git tag` are strictly forbidden in P04.
-4. **Environment Sanitization**: Child process environment must strip:
+The Git evidence collector operates as a deterministic, non-mutating audit probe:
+1. **Pinned Trusted Executable**: Binary `git.exe` must reside at an immutable absolute path validated at Supervisor startup via SHA-256 cryptographic hash and PE binary header verification. Resolving `git` via `PATH` or worker-controlled `cwd` is strictly prohibited.
+2. **Fixed Command Set**: Only read-only queries are permitted: `rev-parse`, `cat-file`, `status --porcelain=v1 -z -uall`, `diff --binary --no-color`. Mutating commands (`checkout`, `reset`, `clean`, `stash`, `commit`, `merge`, `rebase`, `pull`, `push`, `tag`) are prohibited.
+3. **Explicit CLI Hardening Flags**: Every git invocation must pass explicit flags overriding configuration:
+   `git --no-optional-locks -c core.hooksPath=/dev/null -c diff.external= -c diff.textconv=false -c core.fsmonitor=false diff --no-ext-diff --no-textconv --ignore-submodules=none`
+4. **Environment Sanitization**: Strip:
    - `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`.
-   - `HOME`, `USERPROFILE`, `XDG_CONFIG_HOME` (prevent reading malicious user configs).
-   - Set `GIT_CONFIG_NOSYSTEM=1`.
-5. **Config Hardening Flags**: Every git command must execute with inline config overrides:
-   `-c core.hooksPath=/dev/null -c diff.external= -c core.fsmonitor=false -c diff.textconv=false -c core.askPass= -c credential.helper=`
-6. **Object & Repository Verification**:
-   - Verify `base_sha` exists as a valid commit object: `git cat-file -e <base_sha>^{commit}`.
-   - Read actual HEAD directly from worktree: `git rev-parse HEAD`.
-   - Verify `head_sha` exists as a valid commit object: `git cat-file -e <actual_head_sha>^{commit}`.
-   - Reconcile `actual_head_sha` against `WorkerReport.head_sha`. Discrepancies are recorded as `UNVERIFIED_CLAIM` or `HEAD_MISMATCH`.
+   - `GIT_EXTERNAL_DIFF`, `GIT_DIFF_OPTS`.
+   - `GIT_ASKPASS`, `SSH_ASKPASS`, `GIT_TERMINAL_PROMPT=0`.
+   - `HOME`, `USERPROFILE`, `XDG_CONFIG_HOME`.
+   - Inject `GIT_CONFIG_NOSYSTEM=1` and `LC_ALL=C` for deterministic output formatting.
 
-### 4.2. Revision Ancestry Semantics: `base..head` vs `base...head`
-Choosing between two-dot and three-dot diff notation is a fundamental architectural decision:
-- **Two-Dot Notation (`base..head` / `git diff base head`)**:
-  - *Semantics*: Compares the tree of commit `base` directly with the tree of commit `head`.
-  - *Behavior*: Produces the exact net diff required to turn `base` into `head`.
-  - *Failure Mode*: If upstream commits were merged into `base` after the worker branched, or if `base` and `head` have diverged, `base..head` includes the inverted diff of all intermediary base commits, misattributing upstream changes to the worker.
-- **Three-Dot Notation (`base...head`)**:
-  - *Semantics*: Compares `head` with the `merge-base` (common ancestor) of `base` and `head`.
-  - *Behavior*: Shows only the changes made on the worker's branch since it diverged from `base`.
-  - *Failure Mode*: If `base` and `head` have no common ancestor (disconnected histories), `git diff base...head` fails with a fatal error. Furthermore, if the worker merged upstream into their branch, `merge-base` advances, potentially hiding changes.
-- **Authoritative Ancestry Policy**:
-  The Supervisor enforces **Strict Linear Descendant Policy**:
-  1. Execute `git merge-base --is-ancestor <base_sha> <actual_head_sha>`.
-  2. If `base_sha` is an ancestor of `actual_head_sha`, then `base..head` and `base...head` are mathematically identical. The diff is clean, linear, and uncontaminated.
-  3. If `base_sha` is **NOT** an ancestor of `actual_head_sha`:
-     - The attempt has diverged, rebased incorrectly, or swapped branches.
-     - Flag `ANCESTRY_DIVERGENCE_ERROR`.
-     - The collector halts and transitions to `FAILED` or records policy violation; it does NOT guess which diff representation to use.
+### 4.2. Revision Ancestry: Strict Descendant Policy
+- **Ancestry Invariant**:
+  The collector executes `git merge-base --is-ancestor <base_sha> <actual_head_sha>`.
+  - *Success Case*: If `base_sha` is an ancestor of `actual_head_sha`, the commits form a **Strict Descendant** chain.
+  - *Linear History Check*: If project policy requires linear non-merge history, the collector verifies `git rev-list --merges <base_sha>..<actual_head_sha>` returns zero commits. If merge commits exist, they must be documented in evidence.
+  - *Divergence Failure*: If `base_sha` is **NOT** an ancestor of `actual_head_sha`, the branch has diverged, rebased onto another branch, or swapped heads. Flag `ANCESTRY_DIVERGENCE_ERROR` and halt fail-closed; do NOT attempt to guess diff notation.
 
-### 4.3. Worktree Cleanliness & File Change Extraction
-- **Dirty Worktree Detection**: Run `git status --porcelain=v1 -z -uall`.
-  - Tracked modifications (` M`), staged files (`M `), or untracked files (`??`) outside `.supervisor/` indicate uncommitted worktree pollution.
-  - If dirty files exist, they must be recorded in evidence. Depending on project policy, uncommitted changes trigger `UNCOMMITTED_CHANGES_VIOLATION`.
-- **NUL-Delimited Path Parsing**: All git commands listing paths (`git diff -z --raw`, `git status -z`) must use `-z` (NUL delimiter `\0`) to prevent quote escaping and handle special characters/spaces safely.
-- **Canonical Diff Byte Hash**: Compute SHA-256 over raw binary diff output (`git diff --binary --no-color base head`) to produce an immutable `git_diff_hash`.
+### 4.3. TOCTOU Mitigation & Multi-Step Verification
+To prevent worktree state changes between multi-step inspection:
+1. Record `pre_head_sha = git rev-parse HEAD` and `pre_status = git status --porcelain=v1 -z -uall`.
+2. Execute diff and changed files collection.
+3. Re-verify `post_head_sha = git rev-parse HEAD` and `post_status = git status --porcelain=v1 -z -uall`.
+4. If `pre_head_sha != post_head_sha` or `pre_status != post_status`, worktree mutated during collection: abort with `CONCURRENT_WORKTREE_MUTATION_ERROR`.
+
+### 4.4. Binary Diff Hashing vs Machine-Readable Manifest
+- **Machine-Readable Manifest**: Changed files are parsed via `git diff -z --raw --no-color base head` (NUL-delimited) into a structured manifest of path entries, statuses (`M`, `A`, `D`, `R`), and blob OIDs.
+- **Canonical Diff Byte Hash**: SHA-256 computed directly over raw binary patch output (`git diff --binary --no-ext-diff --no-textconv base head`), producing immutable `git_diff_hash`.
+- *Status: `DESIGN_BLOCKER_P04_GIT_EVIDENCE_AUTHORITY = OPEN`.*
 
 ---
 
 ## 5. DESIGN_BLOCKER_P04_VERIFICATION_ISOLATION
 
 ### 5.1. Separation of Security Layers
-Pursuant to [`ADR-013`](../adr/ADR-013-trusted-verification-command-spec.md):
-- **Layer A (Command Authority Containment)**: Prevents shell injection and arbitrary executable execution by requiring declarative `verification_requests` bound to host-defined `VerificationProfilePolicy` definitions.
-- **Layer B (Untrusted Code Execution Isolation)**: Solves the threat where safe commands (`go test`, `npm test`) execute untrusted repository code written by an AI worker:
+- **Layer A (Command Authority Containment)**: Governed by host-owned `VerificationProfilePolicy` definitions. Prohibits shell strings, command injection, and arbitrary executable execution.
+- **Layer B (Untrusted Code Execution Isolation)**: Governs runtime sandbox execution. Safe profile commands (`go test`, `npm test`) execute untrusted worker code:
   ```
-  SAFE_PROFILE != TRUSTED_CODE
+  SAFE_COMMAND_SPEC != TRUSTED_CODE_EXECUTION
   ```
 
-### 5.2. Evaluation of Windows Execution Isolation Mechanisms
+### 5.2. Layer B Primary Mechanism: Windows AppContainer Isolation
+1. **Primary Mechanism Selection**: **Windows AppContainer Isolation** paired with **Windows Job Object**.
+   - AppContainer natively provides low-integrity, capability-based sandboxing, denying network by default and restricting filesystem access strictly to explicitly granted directory ACLs.
+   - Secondary Fallback: Restricted Token with Low Integrity Level is permitted **only** if paired with external firewalling (WFP / Windows Firewall) to enforce network isolation, because a Restricted Token standalone **CANNOT** isolate network egress.
+2. **Worktree Read-Only Mount**:
+   - The audited worktree is granted strictly **READ-ONLY** access (`GENERIC_READ`, deny write/delete) during verification.
+   - **Prohibition on Direct Worktree Mutation**: Untrusted verification processes are strictly forbidden from modifying the audited worktree.
+   - **Disposable Copy / Snapshot Policy**: If a test toolchain requires write access (e.g. building binaries, updating source files, code generation), execution MUST occur in a **temporary disposable copy / snapshot directory** with verified provenance, never mutating the audited worktree directly.
+3. **Child Desktop & Window Station Isolation**:
+   - Verification child processes execute on an isolated Window Station and Desktop (`CreateDesktopW`) to prevent Windows GUI message hooking, window injection, or synthetic keyboard/mouse interaction.
+4. **Zero-Secret Environment**:
+   - Strip all host credentials (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, AO credentials, tunnel tokens). Provide only bare OS minimums (`SYSTEMROOT`, `WINDIR`, `COMSPEC`) and toolchain home (`GOROOT`).
+5. **Isolated Temporary Directories**:
+   - Redirect `TEMP` and `TMP` to an attempt-local folder: `.supervisor/tmp/<attempt_id>/`, securely wiped post-execution. Tool caches (`GOCACHE`, `GOPATH` temp) are redirected into this ephemeral directory.
+6. **Process Tree Termination**:
+   - Windows Job Object enforces `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` to terminate all background child processes upon timeout or completion.
+7. **Operational Ceilings**:
+   - Operational limits (e.g. `DEFAULT_VERIFICATION_TIMEOUT`, `MAX_OUTPUT_BYTES`) remain `VALUE = UNSET` or host-injected until formal approval.
 
-| Isolation Mechanism | Filesystem Sandboxing | Network Isolation | Secret / Token Stripping | Process-Tree Cleanup | Startup Overhead | Verdict for Layer B |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Subprocess Only (Naked exec)** | NONE | NONE | NONE (Inherits all) | Poor (Orphan risk) | < 5 ms | **REJECTED**: Extreme vulnerability |
-| **Windows Job Object Only** | NONE | NONE | NONE | EXCELLENT (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) | < 5 ms | **REJECTED FOR LAYER B ALONE**: ADR-013 explicitly notes Job Object lacks fs/net/secret sandbox |
-| **Restricted Token (Safer/LUA)** | MODERATE (Restricted SID, Low Integrity) | POOR (Shares host network stack) | GOOD (Strips privileges, admin SIDs) | Moderate | < 20 ms | **PARTIAL**: Requires external firewalling |
-| **Windows AppContainer** | EXCELLENT (Capability-based; only explicit worktree ACL) | EXCELLENT (Default deny all inbound/outbound) | EXCELLENT (Anonymous sandboxed SID) | GOOD (Paired with Job Object) | < 50 ms | **RECOMMENDED FOR WINDOWS**: Native, fast, robust fs & net isolation |
-| **Windows Sandbox / MicroVM / Containers** | COMPLETE | COMPLETE | COMPLETE | COMPLETE | 15–30 sec | **REJECTED FOR TEST RUNS**: Violates NFR-008 (< 3s SLA) and high host requirements |
+### 5.3. Falsification Matrix for Layer B Isolation
 
-### 5.3. Isolation Invariants & Operational Policy Values
-1. **Rejection of Job Object Alone**: A Windows Job Object MUST NOT be claimed as full Layer B isolation. It must be paired with security token/AppContainer sandboxing.
-2. **Environment Stripping**: The execution environment must contain **zero host secrets**. Prohibit `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, AO credentials, tunnel tokens. Provide only bare OS minimums (`SYSTEMROOT`, `COMSPEC`, `WINDIR`) and toolchain home (`GOROOT`).
-3. **Isolated Temporary Directories**: Redirect `TEMP` and `TMP` to an attempt-local folder: `.supervisor/tmp/<attempt_id>/`, securely wiped post-execution.
-4. **Output Buffering Ceilings**: stdout and stderr streams are strictly capped (e.g. 1 MB). Overflow triggers truncation flag `OUTPUT_EXCEEDED_LIMIT`.
-5. **Fail-Closed on Isolation Absence**: If the host platform lacks the configured Layer B capability, the runner MUST fail-closed (`ISOLATION_CAPABILITY_UNAVAILABLE`), rather than silently executing unprotected.
-6. **Operational Limits**: Operational limits (e.g. `DEFAULT_VERIFICATION_TIMEOUT`, `MAX_OUTPUT_BYTES`) remain `VALUE = UNSET` or host-injected until formal approval.
+| Test Vector | Threat Description | Isolation Mechanism Enforced | Expected Observable Result |
+| :--- | :--- | :--- | :--- |
+| **Filesystem Escape** | Test code attempts to write to `C:\Users`, `C:\Windows`, or audited worktree. | AppContainer ACL / Read-only mount. | `ERROR_ACCESS_DENIED` (0x5); zero disk mutation. |
+| **Network Egress** | Test code attempts outbound HTTP request to external server. | Default-deny network (no network capabilities). | `WSAEACCES` (10013) / connection refused. |
+| **Environment Secret Leak** | Test code dumps `os.Environ()` searching for API keys. | Aggressive environment stripping. | Zero keys discovered; only minimal OS variables present. |
+| **Child Process Escape** | Test launches detached background process (`Start-Process`, `daemon`). | Job Object process-tree assignment. | Entire process tree terminated on job close; zero orphan processes. |
+| **Source Tree Mutation** | Test attempts to mutate `.go` files in audited worktree. | Read-only worktree ACL / post-run status check. | Write denied; post-run `git status` verifies zero dirty files. |
+
+- *Status: `DESIGN_BLOCKER_P04_VERIFICATION_ISOLATION = OPEN`.*
 
 ---
 
-## 6. WorkerReport Ingestion & Atomic State Flow
+## 6. DESIGN_BLOCKER_P04_REVIEW_SCHEMA_RECONCILIATION & REVIEWABLE EVIDENCE
 
-### 6.1. Ingestion Protocol
-1. **Raw Bounded Transport**: The Supervisor calls `AOAdapter.GetWorkspaceFile(sessionID, expectedReportPath)`. Transport enforces a maximum byte ceiling (e.g. 1 MB) and bounded HTTP timeout.
-2. **JSON Schema Validation**: Parse payload and validate 100% against `worker-report.schema.json`.
-3. **Identity Verification**: Verify:
-   - `report.task_id == attempt.task_id`
-   - `report.attempt_id == attempt.attempt_id`
-   - Lineage matches active `task_contracts.contract_id`.
-4. **Worker Fields as Claims**: All worker content (`commands_run`, `tests`, `build_status`, `worker_claims`) is captured strictly as `domain.WorkerClaim` telemetry.
+### 6.1. Reviewable Evidence Payload Design
+A ReviewBundle containing only cryptographic hashes is useless to ChatGPT, forcing 15–30 low-level tool calls and defeating the primary objective of cognitive compression (FR-009, FR-010).
+The ReviewBundle must provide **inspectable, reviewable content**:
+1. **Bounded Git Patch Artifact (`bounded_git_patch`)**:
+   - *Inline Patch*: Contains the actual unified diff text (up to a bounded limit, e.g. 100 KB).
+   - *Artifact ID*: If the diff exceeds the inline limit, provide an opaque `artifact_id` referencing durable local storage.
+   - *Metadata*: `git_diff_hash` (SHA-256), `original_bytes`, `captured_bytes`, `is_truncated: boolean`, `has_binary_files: boolean`.
+2. **Bounded Test Output Logs (`test_results`)**:
+   - *Inline Logs*: Capture bounded stdout and stderr text for each executed verification command.
+   - *Metadata*: `exit_code`, `passed: boolean`, `stdout_hash`, `stderr_hash`, `duration_ms`, `is_truncated: boolean`.
+   - *Prohibition*: Worker-reported test logs are NEVER used as verified evidence.
+3. **Strict Naming Alignment**:
+   - Unify field name strictly to `test_results` (eliminate historical drift with `details`).
+4. **Strictly Typed TaskContract**:
+   - `task_contract` in ReviewBundle is an immutable snapshot object containing `contract_id`, `revision_number`, `requirements`, `allowed_scope`, `forbidden_scope`, and `acceptance_criteria`.
+5. **Non-Circular Bundle Hashing**:
+   - `bundle_hash` is computed as the SHA-256 digest of the canonical JSON serialization of the ReviewBundle **excluding** the `bundle_hash` field itself.
+6. **Phase P05 Bounded Artifact Retrieval**:
+   - Phase P05 will access large truncated artifacts via an internal bounded artifact retrieval tool (`get_artifact(artifact_id)`) returning chunked content without granting arbitrary filesystem access to ChatGPT.
 
-### 6.2. Atomic State Transition (`RUNNING -> REPORT_READY`)
-When a valid report is ingested, the Supervisor must atomically execute inside a single SQLite transaction:
+### 6.2. Drift Analysis & Reconciliation Plan (S1..S10)
+
+| Field / Concept | `docs/10_REVIEW_BUNDLE.md` | `docs/schemas/review-bundle.schema.json` | `review-bundle.valid.json` | `internal/domain/entities.go` | Reconciled Direction |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **`diff_summary` vs `diff_stat`** | Mermaid: `diff_summary`; text: `diff_stat`. | Requires `diff_stat: string`. | `"diff_stat": "1 file..."`. | Lacks both. | Adopt `diff_stat: string` + add bounded patch payload. |
+| **`full_diff_url`** | Present in Mermaid. | Missing. | Missing. | Missing. | Remove `full_diff_url`; replace with local `bounded_git_patch`. |
+| **`git_diff_hash`** | Missing. | Missing. | Missing. | Present in `Evidence`. | Add `git_diff_hash: string` to schema and docs. |
+| **`actual_test_evidence`** | Summary fields. | `all_passed`, `executed_commands`. | `all_passed`, `commands`. | `TestLogs: []ActualTestResult`. | Add `test_results: []ActualTestResult` with bounded logs. |
+| **`worker_claims` Structure** | Claims text. | Untyped `object`. | `claimed_status`, `claims`. | Typed `WorkerClaim` struct. | Formalize schema matching `domain.WorkerClaim`. |
+| **`additionalProperties`** | Implied closed. | Closed at root; open in sub-objects. | Compliant. | Closed by policy. | Enforce `additionalProperties: false` recursively. |
+| **`ReviewBundle` Domain Entity**| Fully specified. | Fully specified. | Fully specified. | **MISSING**. | Implement `ReviewBundle` Go struct in `entities.go`. |
+
+- **Reconciliation Plan:** S1 (diff_stat + git_diff_hash), S2 (remove full_diff_url), S3 (structured test_results), S4 (worker_claims schema), S5 (nested additionalProperties: false), S6 (string/array bounds), S7 (entities.go alignment), S8 (example JSON update), S9 (non-circular bundle_hash), S10 (supervisor audit).
+- *Status: `DESIGN_BLOCKER_P04_REVIEW_SCHEMA_RECONCILIATION = OPEN`.*
+
+---
+
+## 7. DESIGN_BLOCKER_P04_EVIDENCE_ATOMICITY & MIGRATION STRATEGY
+
+### 7.1. Sequential Schema Migration Architecture
+To prevent schema versioning conflicts across subtasks, P04 adopts **Sequential Migrations (v6..v9)**:
+- **Migration v6 (Subtask P04A)**:
+  - `attempt_workspace_bindings` (attempt_id PK, worktree_path, repo_root, bound_at).
+  - `worker_claims` (claim_id PK, attempt_id UNIQUE FK, reported_head_sha, claimed_files_changed_json, tests_json, created_at).
+- **Migration v7 (Subtask P04B)**:
+  - `evidence` (evidence_id PK, attempt_id UNIQUE FK, actual_base_sha, actual_head_sha, actual_files_changed_json, git_diff_hash, diff_stat, scope_verified, collected_at).
+  - `policy_findings` (finding_id PK, attempt_id FK, rule_id, passed, severity, details, created_at).
+- **Migration v8 (Subtask P04C)**:
+  - `actual_test_results` (result_id PK, attempt_id FK, request_id, profile_id, exit_code, passed, stdout_hash, stderr_hash, duration_ms, executed_at, UNIQUE(attempt_id, request_id)).
+- **Migration v9 (Subtask P04D)**:
+  - `review_bundles` (bundle_id PK, task_id FK, attempt_id UNIQUE FK, contract_id FK, bundle_hash, payload_json, generated_at).
+
+### 7.2. Complete CAS Ingestion Query (`RUNNING -> REPORT_READY`)
+Atomic ingestion executes inside a short SQLite transaction enforcing strict CAS:
 ```sql
 BEGIN IMMEDIATE TRANSACTION;
--- 1. Store raw report and attempt end time
+-- 1. CAS Update on task_attempts
 UPDATE task_attempts
 SET ended_at = :ended_at,
     worker_report_raw = :worker_report_raw
-WHERE attempt_id = :attempt_id AND ended_at IS NULL;
+WHERE attempt_id = :attempt_id
+  AND ended_at IS NULL
+  AND task_id = :task_id
+  AND contract_id = :contract_id
+  AND session_id = :session_id
+  AND terminal_generation = :terminal_generation;
 
--- 2. Insert WorkerClaim
-INSERT INTO worker_claims (claim_id, attempt_id, reported_head_sha, claimed_files_changed_json, tests_json, created_at)
-VALUES (:claim_id, :attempt_id, :head_sha, :files_json, :tests_json, :now);
-
--- 3. Transition Task state
+-- 2. CAS Update on tasks
 UPDATE tasks
-SET state = 'REPORT_READY', updated_at = :now
-WHERE task_id = :task_id AND state = 'RUNNING';
+SET state = 'REPORT_READY', updated_at = :ended_at
+WHERE task_id = :task_id
+  AND state = 'RUNNING'
+  AND current_attempt = :attempt_number;
 
--- 4. Append audit event
+-- 3. Assert affected rows == 1 on both updates; if not, ROLLBACK!
+
+-- 4. Insert WorkerClaim
+INSERT INTO worker_claims (claim_id, attempt_id, reported_head_sha, claimed_files_changed_json, tests_json, created_at)
+VALUES (:claim_id, :attempt_id, :reported_head_sha, :claimed_files_json, :tests_json, :ended_at);
+
+-- 5. Append audit event
 INSERT INTO audit_events (...);
 COMMIT;
 ```
+- **CAS Failure Handling**: If `affected_rows != 1`, transaction rolls back immediately. The supervisor re-reads durable state from the database; no duplicate claims or duplicate audit events are generated.
+- **`failure_reason` Semantics**: In compliance with the canonical domain model, `failure_reason` is strictly a workflow event detail attribute recorded in audit logs and API responses; it is **NOT** a column in `task_attempts`.
 
-### 6.3. Failure Protocols (REC-007 / REC-008)
-- If the report file is missing after bounded poll: Trigger `REC-007`. Mark attempt `ended_at = now`, transition `TaskState = FAILED`, `failure_reason = REPORT_MISSING`. Zero promotion to `REPORT_READY`.
-- If the report is non-JSON or violates schema: Trigger `REC-008`. Transition `TaskState = FAILED`, `failure_reason = REPORT_INVALID`.
-- If identifiers mismatch: Trigger `REC-008`. Transition `TaskState = FAILED`, `failure_reason = REPORT_IDENTITY_MISMATCH`.
-- In all failure cases, **no normal ReviewBundle is generated**.
-
----
-
-## 7. Evidence Persistence & Transaction Boundaries
-
-### 7.1. Proposed Schema (Design Level — No DDL Applied)
-
-```sql
--- 1. Self-reported worker claims
-CREATE TABLE worker_claims (
-    claim_id TEXT PRIMARY KEY,
-    attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
-    reported_head_sha TEXT NOT NULL,
-    claimed_files_changed_json TEXT NOT NULL,
-    tests_json TEXT,
-    created_at TEXT NOT NULL
-);
-
--- 2. Authoritative Git and scope evidence
-CREATE TABLE evidence (
-    evidence_id TEXT PRIMARY KEY,
-    attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
-    actual_base_sha TEXT NOT NULL,
-    actual_head_sha TEXT NOT NULL,
-    actual_files_changed_json TEXT NOT NULL,
-    git_diff_hash TEXT NOT NULL,
-    diff_stat TEXT NOT NULL,
-    scope_verified INTEGER NOT NULL CHECK (scope_verified IN (0, 1)),
-    collected_at TEXT NOT NULL
-);
-
--- 3. Verified test execution results from VerificationRunner
-CREATE TABLE actual_test_results (
-    result_id TEXT PRIMARY KEY,
-    attempt_id TEXT NOT NULL REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
-    request_id TEXT NOT NULL,
-    profile_id TEXT NOT NULL,
-    exit_code INTEGER NOT NULL,
-    passed INTEGER NOT NULL CHECK (passed IN (0, 1)),
-    stdout_hash TEXT NOT NULL,
-    stderr_hash TEXT NOT NULL,
-    duration_ms INTEGER NOT NULL,
-    executed_at TEXT NOT NULL,
-    UNIQUE(attempt_id, request_id)
-);
-
--- 4. Scope and contract policy findings
-CREATE TABLE policy_findings (
-    finding_id TEXT PRIMARY KEY,
-    attempt_id TEXT NOT NULL REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
-    rule_id TEXT NOT NULL,
-    passed INTEGER NOT NULL CHECK (passed IN (0, 1)),
-    severity TEXT NOT NULL CHECK (severity IN ('INFO', 'WARNING', 'ERROR', 'BLOCKING')),
-    details TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
-
--- 5. Final compiled ReviewBundle metadata
-CREATE TABLE review_bundles (
-    bundle_id TEXT PRIMARY KEY,
-    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
-    attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
-    contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
-    bundle_hash TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    generated_at TEXT NOT NULL
-);
-```
-
-### 7.2. Transaction Boundaries
-- **Transaction 1 (`REPORT_READY -> EVIDENCE_READY`)**:
-  - Requires: Git diff evidence collected, PolicyEngine findings computed, and ALL mandatory `verification_requests` executed.
-  - Commits atomically: `evidence`, `actual_test_results`, `policy_findings`, and `tasks.state = 'EVIDENCE_READY'`.
-  - Partial evidence commits are strictly forbidden. If any verification runner fails catastrophically or crashes, transaction rolls back.
-- **Transaction 2 (`EVIDENCE_READY -> REVIEWING`)**:
-  - Requires: `ReviewBundleBuilder` compiles payload, validates 100% against `review-bundle.schema.json`.
-  - Commits atomically: `review_bundles`, `tasks.state = 'REVIEWING'`, and audit log.
+### 7.3. Separation of Long External Execution from Short DB Transactions
+- External Git diff execution and verification test runners execute **OUTSIDE** database transactions.
+- Long-running commands hold zero SQLite locks.
+- Upon completion, results are snapshotted and committed via short, atomic transactions with CAS guards.
+- Concurrent runner calls for the same attempt fail-closed via unique database constraints on `(attempt_id, request_id)`.
+- *Status: `DESIGN_BLOCKER_P04_EVIDENCE_ATOMICITY = OPEN`.*
 
 ---
 
-## 8. ReviewBundle Canonical Reconciliation
+## 8. PolicyEngine Semantics
 
-### 8.1. Current Drift Analysis Matrix
-
-| Field / Concept | `docs/10_REVIEW_BUNDLE.md` | `docs/schemas/review-bundle.schema.json` | `review-bundle.valid.json` | `internal/domain/entities.go` | Nature of Drift & Proposed Resolution |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **`diff_summary` vs `diff_stat`** | Mermaid specifies `diff_summary: DiffSummary`; text specifies `diff_stat`. | Requires `diff_stat: string`. | Contains `"diff_stat": "1 file changed..."`. | `Evidence` struct lacks both fields. | **Reconcile**: Adopt `diff_stat: string` in schema and domain model. Update Mermaid in `docs/10`. |
-| **`full_diff_url`** | Present in Mermaid (`+string full_diff_url`). | Missing from schema. | Missing from example. | Missing from `entities.go`. | **Reconcile**: Remove `full_diff_url` from canonical docs; local supervisor uses direct bounded diff payload. |
-| **`git_diff_hash`** | Missing from field list. | Missing from schema properties. | Missing from example. | Present in `entities.go` (`GitDiffHash string`). | **Reconcile**: Add `git_diff_hash: string` to `actual_git_evidence` in schema and `docs/10` for tamper evidence. |
-| **`actual_test_evidence`** | `all_passed`, `executed_commands`. | `all_passed: boolean`, `executed_commands: string[]`. | `"all_passed": true, "executed_commands": [...]"`. | `TestLogs: []ActualTestResult`. | **Reconcile**: Add structured `test_results: []ActualTestResult` inside `actual_test_evidence` alongside summary `all_passed`. |
-| **`worker_claims` Structure** | Claims from `WorkerReport`. | Type `object` (unstructured). | `{"claimed_status": "...", "claims": [...]}`. | `WorkerClaim` entity struct with `ReportedHeadSHA`, `Tests`. | **Reconcile**: Define explicit schema for `worker_claims` object matching `domain.WorkerClaim`. |
-| **`additionalProperties`** | Implied closed. | Top level has `additionalProperties: false`; nested objects lack it. | Compliant. | Go structs ignore unknown by default. | **Reconcile**: Enforce `additionalProperties: false` on all nested schema definitions. |
-| **`ReviewBundle` Domain Entity** | Fully specified. | Fully specified. | Fully specified. | **MISSING**: Struct `ReviewBundle` does not exist in Go code. | **Reconcile**: Implement `ReviewBundle` Go struct in `internal/domain/entities.go`. |
-
-### 8.2. Canonical Reconciliation Plan (S1..S10)
-- **S1**: Standardize `actual_git_evidence` schema to require `actual_base_sha`, `actual_head_sha`, `actual_changed_files`, `diff_stat`, and `git_diff_hash`.
-- **S2**: Remove obsolete `full_diff_url` from `docs/10_REVIEW_BUNDLE.md`.
-- **S3**: Formalize `actual_test_evidence` schema with `all_passed: boolean`, `executed_commands: string[]`, and optional `details: []ActualTestResult`.
-- **S4**: Formalize `worker_claims` schema structure to eliminate untyped `object`.
-- **S5**: Add nested `additionalProperties: false` to all sub-objects in `review-bundle.schema.json`.
-- **S6**: Define explicit length and count bounds for all strings and arrays in `review-bundle.schema.json`.
-- **S7**: Align `internal/domain/entities.go` with reconciled schema by adding `ReviewBundle`, `ActualGitEvidence`, and updating `ActualTestEvidence`.
-- **S8**: Update `docs/schemas/examples/review-bundle.valid.json` to reflect reconciled fields.
-- **S9**: Formalize deterministic JSON serialization and hashing algorithm for `bundle_hash`.
-- **S10**: Submit reconciled documentation diff for External Supervisor audit.
-
----
-
-## 9. PolicyEngine Semantics
-
-### 9.1. Specification
-The `PolicyEngine` enforces TaskContract scope containment against actual Git changed files:
-1. **Canonical Glob Grammar**: Standard Unix globbing: `*` (matches within path segment), `**` (matches across directories), `?` (single character), `[...]` (character class). No arbitrary regex or brace expansion.
-2. **Slash Normalization**: All paths and patterns strictly converted to forward slash (`/`). Windows backslashes (`\`) normalized prior to evaluation.
-3. **Windows Case Insensitivity**: On Windows, file paths are matched case-insensitively (`strings.EqualFold` / canonical lowercase normalization) to prevent case-variation bypasses (e.g. `File.txt` vs `file.txt`).
-4. **Precedence Rule**:
+1. **Canonical Glob Grammar**: Standard Unix globbing: `*` (segment match), `**` (recursive directory match), `?` (character match), `[...]` (character class). No arbitrary regex or brace expansion.
+2. **Slash Normalization**: All paths and glob patterns strictly converted to forward slash (`/`).
+3. **Windows Case Insensitivity**: On Windows, matching is case-insensitive (`strings.EqualFold` / lowercase normalization) to eliminate case-variation bypasses.
+4. **Precedence Invariant**:
    ```
-   IF path matches forbidden_scope -> REJECT (FORBIDDEN)
-   ELSE IF path matches allowed_scope -> ACCEPT
-   ELSE -> REJECT (OUTSIDE_SCOPE)
+   forbidden_scope PRECEDENCE > allowed_scope
    ```
-   `forbidden_scope` **strictly takes precedence** over `allowed_scope`.
+   If a path matches `forbidden_scope`, it is strictly rejected, even if it also matches `allowed_scope`.
 5. **Special Path Handlings**:
-   - **Renamed / Copied Files**: Both source path and destination path must independently satisfy `allowed_scope` and not match `forbidden_scope`.
-   - **Deleted Files**: Deleted path must satisfy `allowed_scope`.
-   - **Submodules / Gitlinks**: Submodule path entries must be within `allowed_scope`.
-   - **Symlinks**: The symlink path itself and its evaluated target must both be contained within `allowed_scope`.
-   - **Control Plane Metadata (`.supervisor/**`)**: Excluded from worker application diff; if any commit touches `.supervisor/`, trigger fatal scope violation.
-6. **Fail-Closed on Empty / Invalid**: Empty `allowed_scope` allows zero files. Invalid glob pattern fails evaluation closed immediately.
+   - Renamed/copied files: Both source and destination paths must satisfy `allowed_scope` and not match `forbidden_scope`.
+   - Deleted files: Deleted path must satisfy `allowed_scope`.
+   - Submodules: Submodule paths treated as directory entries and must fall in `allowed_scope`.
+   - Symlinks: Both symlink and target must fall in `allowed_scope`.
+   - Control plane path `.supervisor/**`: Excluded from application diffs; touching `.supervisor/` in an application commit triggers fatal rejection.
+6. **Fail-Closed**: Empty `allowed_scope` permits zero files. Invalid glob syntax fails evaluation immediately.
 
 ---
 
-## 10. Verification Result Integrity
+## 9. Verification Result Integrity
 
 1. **Request Binding**: Every `ActualTestResult` is immutably bound to `(attempt_id, request_id, profile_id)`.
-2. **Exact Request Snapshot**: The executed command line, parameters, and cwd are snapshotted from the immutable `TaskContract.VerificationRequests`.
-3. **Execution Metadata**:
-   - Wall-clock timestamps (`started_at`, `ended_at`, `duration_ms`).
-   - Process exit code.
-   - Cryptographic hashes of stdout and stderr (`SHA-256`).
-   - Process tree termination status (`CLEAN_EXIT`, `TIMEOUT_KILLED`, `OUTPUT_CAPPED`).
-4. **No Worker Claim Promotion**: Test results claimed in `WorkerReport.tests` are never copied or promoted into `actual_test_results`. Only commands independently executed by the Supervisor's `VerificationRunner` receive `passed = true/false`.
-5. **Missing Verification Handling**: If a required verification request in `TaskContract.verification_requests` fails to execute, the attempt MUST be marked `UNVERIFIED` / `FAILED`.
+2. **Execution Metadata**: Wall-clock timestamps, exit code, SHA-256 hashes of stdout and stderr, process-tree termination status (`CLEAN_EXIT`, `TIMEOUT_KILLED`, `OUTPUT_CAPPED`).
+3. **Zero Claim Promotion**: Worker self-reported tests are never copied into `actual_test_results`. Only Supervisor-executed commands receive verified status.
+4. **Missing Verification Handling**: If a required verification request fails to execute, the attempt is marked `UNVERIFIED` / `FAILED`.
 
 ---
 
-## 11. Recovery, Concurrency, and Replay Matrix
+## 10. Proposed Concurrency, Recovery, and Replay Scenarios
+
+The following **13 proposed P04 recovery scenarios** govern fault handling during pre-contract evaluation:
 
 | Scenario ID | Failure / Event Trigger | System Impact | Recovery / Resolution Mechanism | Resulting State |
 | :--- | :--- | :--- | :--- | :--- |
@@ -376,58 +320,57 @@ The `PolicyEngine` enforces TaskContract scope containment against actual Git ch
 
 ---
 
-## 12. Requirement Clarification: NFR-008 Review Bundle Generation Latency
+## 11. Requirement Clarification: NFR-008 Performance SLA
 
-### 12.1. The Conflict
-- **NFR-008 Statement** (`docs/02_REQUIREMENTS.md`):
+### 11.1. The Conflict
+- **Current Requirement** (`docs/02_REQUIREMENTS.md`):
   *"The Supervisor Control Plane shall generate a Review Bundle within 3 seconds of worker completion on repos up to 10,000 files."*
-- **Operational Reality**:
-  Running real verification requests (e.g. `go test -race ./...`, `npm test`) frequently takes 10 to 60+ seconds, making a literal 3-second end-to-end SLA physically impossible whenever tests are required.
+- **Operational Reality**: Running real verification test suites (e.g. `go test -race ./...`) frequently takes 10 to 60+ seconds, making a literal 3-second end-to-end SLA physically impossible whenever tests are required.
 
-### 12.2. Proposed Clarification Options (For External Supervisor Decision)
-- **Option A (Pure Assembly Latency SLA)**:
-  Clarify that the 3-second deadline applies strictly to **pure Review Bundle assembly and JSON serialization** from `EVIDENCE_READY` to `REVIEWING`, excluding external test runner execution time.
-- **Option B (Segmented End-to-End SLA)**:
-  Decompose the requirement into distinct measurable segments:
-  1. *Report Ingestion & Git Evidence SLA*: < 3.0 seconds (for repos up to 10,000 files).
-  2. *Verification Execution SLA*: Bounded by `TaskContract.verification_requests[].timeout_seconds`.
-  3. *Review Bundle Compilation SLA*: < 1.0 second.
-- **Status:** Marked as **REQUIREMENT_CLARIFICATION_REQUIRED**; pending External Supervisor formal determination.
+### 11.2. Proposed Canonical Amendment (Two Milestones)
+We formally propose amending NFR-008 into two distinct, measurable milestones:
+1. **Milestone 1 (Verification Duration)**:
+   - Verification execution duration is bounded by `TaskContract.verification_requests[].timeout_seconds` (origin: test process spawn, endpoint: process-tree exit).
+2. **Milestone 2 (Bundle Compilation SLA)**:
+   - From durable `EVIDENCE_READY` to ReviewBundle validated and persisted in `REVIEWING` must be **<= 3.0 seconds** on repositories up to 10,000 files (origin: `EVIDENCE_READY` transaction commit, endpoint: `review_bundles` insert and `REVIEWING` state transition).
+- **Failure Behavior**: If bundle compilation exceeds 3.0 seconds, record performance warning in audit log.
+- *Status: `REQUIREMENT_CLARIFICATION_REQUIRED` pending External Supervisor audit.*
 
 ---
 
-## 13. Phased Scope Decomposition Plan
+## 12. Phased Scope Decomposition Plan
 
-A monolithic implementation of Phase P04 carries excessive risk and large blast radius. We propose decomposing P04 into four strictly sequential subcontracts:
+Phase P04 is decomposed into four strictly sequential subtasks:
 
 ```mermaid
 graph TD
-    P04A[P04A: Schema & Ingestion Core] --> P04B[P04B: Git Evidence & Scope Policy]
-    P04B --> P04C[P04C: Verification Catalog & Isolated Runner]
-    P04C --> P04D[P04D: ReviewBundleBuilder & Orchestration]
+    P04A[TASK-P04-001: P04A - Ingestion & Claims Core] --> P04B[TASK-P04-002: P04B - Git Evidence & Scope Policy]
+    P04B --> P04C[TASK-P04-003: P04C - Verification Catalog & Runner]
+    P04C --> P04D[TASK-P04-004: P04D - ReviewBundle & Orchestration]
 ```
 
 1. **`P04A` — WorkerReport Ingestion, Schema Validation & Claim Persistence**:
-   - Scope: `worker-report.schema.json` reconciliation, `AOAdapter.GetWorkspaceFile` integration, `worker_claims` table migration, `RUNNING -> REPORT_READY` transition, `REC-007`/`REC-008` handling.
-   - Exit Gate: Ingests valid reports, rejects malformed/missing reports, transitions `REPORT_READY` with zero Git/test dependencies.
+   - Scope: `worker-report.schema.json` validation, `AOAdapter.GetWorkspaceFile` (`internal/ao/client.go`), dispatch integration seam (`internal/dispatch/**`), Schema v6 migration (`worker_claims`, `attempt_workspace_bindings`), `RUNNING -> REPORT_READY` CAS transition, `REC-007`/`REC-008` handling.
+   - Exit Gate: Ingests valid reports, rejects malformed/missing reports, transitions `REPORT_READY` atomically with zero Git/test dependencies.
 2. **`P04B` — Git EvidenceCollector & PolicyEngine**:
-   - Scope: Read-only `git.exe` adapter, commit/ancestry verification, dirty file detection, NUL-delimited parsing, diff byte hashing, `PolicyEngine` glob scope evaluation, `evidence` and `policy_findings` persistence.
-   - Exit Gate: Mathematically accurate diffs and scope violations detected against actual Git commits.
+   - Scope: Read-only `git.exe` adapter, strict descendant verification, dirty file detection, NUL-delimited parsing, diff byte hashing, `PolicyEngine` glob scope evaluation, Schema v7 migration (`evidence`, `policy_findings`).
+   - Exit Gate: Mathematically accurate diffs and scope violations detected against actual Git commits; ancestry divergence flagged fail-closed.
 3. **`P04C` — VerificationPolicyCatalog & Isolated VerificationRunner**:
-   - Scope: Host verification catalog loader, trusted executable registry, Layer B execution isolation harness (AppContainer/Restricted Token + Job Object), output capping, hashing, `actual_test_results` persistence.
-   - Exit Gate: Safely executes test profiles inside isolated boundary; enforces timeouts and output caps; zero secret leakage.
+   - Scope: Host verification catalog loader, trusted executable registry, Layer B AppContainer isolation harness on Windows, read-only worktree enforcement, output capping, Schema v8 migration (`actual_test_results`).
+   - Exit Gate: Safely executes test profiles inside isolated sandbox; enforces process-tree termination on timeout/cancel; zero secret leakage; zero worktree mutation.
 4. **`P04D` — ReviewBundleBuilder & End-to-End Orchestration**:
-   - Scope: `ReviewBundleBuilder` implementation, `review-bundle.schema.json` validation, `review_bundles` persistence, `REPORT_READY -> EVIDENCE_READY -> REVIEWING` transitions, end-to-end integration harness.
-   - Exit Gate: 100% valid ReviewBundles generated; full lifecycle integration test passes with zero race conditions.
+   - Scope: `ReviewBundleBuilder` implementation (bounded patch, bounded logs), `review-bundle.schema.json` validation, Schema v9 migration (`review_bundles`), `REPORT_READY -> EVIDENCE_READY -> REVIEWING` transitions, integration test harness.
+   - Exit Gate: 100% valid ReviewBundles generated; full lifecycle integration test passes with zero race conditions (`go test -race -count=1 ./...`).
 
 ---
 
-## 14. Blocker & Governance Tracking
+## 13. Blocker & Governance Tracking
 
 - `DESIGN_BLOCKER_P04_WORKTREE_BINDING = OPEN`
+- `DESIGN_BLOCKER_P04_GIT_EVIDENCE_AUTHORITY = OPEN`
 - `DESIGN_BLOCKER_P04_VERIFICATION_ISOLATION = OPEN`
 - `DESIGN_BLOCKER_P04_REVIEW_SCHEMA_RECONCILIATION = OPEN`
 - `DESIGN_BLOCKER_P04_EVIDENCE_ATOMICITY = OPEN`
 - `P04_TASK_CONTRACT = NOT_RELEASED`
 - `P04_CODE = HELD_PENDING_APPROVED_ARCHITECTURE_AND_TASK_CONTRACT`
-- `ACTIVE_GATE = P04_PRECONTRACT_ARCHITECTURE_AUDIT`
+- `ACTIVE_GATE = P04_PRECONTRACT_ARCHITECTURE_REMEDIATION`
