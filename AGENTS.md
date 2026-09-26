@@ -98,16 +98,17 @@ This document establishes immutable operational directives for all AI coding age
 > External Supervisor approved and released `CONTRACT-TASK-P03-003D-01` from candidate commit `7701b8b02c68006c4e692a1c8a61609c72a6c033`, blob `604c4786281354565c8e37238f0b5ba95542e4f9`, code base `583e700eb125a08cc6bd7d63b6b27a6f3d4cc527` (`docs/audits/P03_TASK_003D_CONTRACT_RELEASE_AUDIT.md`).
 > Historical 3B release: External Supervisor released CONTRACT-TASK-P03-003B-01 from candidate SHA `ae8deb9ee41479d0e0868dced53ed89135252923`, blob `84bd84535352c2d28dbc1eba820aa8b22382dd99`, with code base SHA `b8b0c95576d87677e8d48210d9838cc2f599752a`.
 
-> External Supervisor approved merge integration: exact implementation commit `d9b7c1344a8a41cfad6e3bd8bb4db87080afcc03` merged into main at merge commit `aea182a060e85e91d2a6d7f11f007fc22e6c1da9` (zero-diff on all 15 implementation paths). Audited in docs/audits/P03_TASK_004_MERGE_INTEGRATION_AUDIT.md. Status: TASK_P03_004_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED; TASK_P03_004_CODE = MERGED; HOST_QUIESCENCE_INTEGRATION = IMPLEMENTED_AT_LIBRARY_AND_DAEMON_SCOPE; DESIGN_BLOCKER_3D_STARTUP_WIRING = CLOSED_AT_IMPLEMENTATION_SCOPE; ACTIVE_GATE = P03_EXIT_GATE_AUDIT. Do not open P04/P05; do not declare P03 COMPLETE. AUTOMATIC_RESTORE=DISABLED; host principal, Live AO and Stage B runtime remain UNVERIFIED.
+> External Supervisor approved merge integration: exact implementation commit `d9b7c1344a8a41cfad6e3bd8bb4db87080afcc03` merged into main at merge commit `aea182a060e85e91d2a6d7f11f007fc22e6c1da9` (zero-diff on all 15 implementation paths). Audited in docs/audits/P03_TASK_004_MERGE_INTEGRATION_AUDIT.md. Status: TASK_P03_004_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED; TASK_P03_004_CODE = MERGED; HOST_QUIESCENCE_INTEGRATION = IMPLEMENTED_AT_LIBRARY_AND_DAEMON_SCOPE; DESIGN_BLOCKER_3D_STARTUP_WIRING = CLOSED_AT_IMPLEMENTATION_SCOPE. External Supervisor exit gate audit in docs/audits/P03_EXIT_GATE_EXTERNAL_AUDIT_001.md issued verdict P03_EXIT_GATE = REVISION_REQUIRED with findings P03-EXIT-R1-001..004 remediated in dossier. ACTIVE_GATE = P03_EXIT_GATE_REMEDIATION. Do not open P04/P05; do not declare P03 COMPLETE. AUTOMATIC_RESTORE=DISABLED; host principal, Live AO and Stage B runtime remain UNVERIFIED.
 >
-1. **P03 EXIT GATE AUDIT DIRECTIVES**:
-   - `ACTIVE_GATE = P03_EXIT_GATE_AUDIT`; `P03_EXIT_GATE = READY_FOR_EXTERNAL_AUDIT`.
+1. **P03 EXIT GATE REMEDIATION DIRECTIVES**:
+   - `ACTIVE_GATE = P03_EXIT_GATE_REMEDIATION`; `P03_EXIT_GATE = REVISION_REQUIRED`.
    - All 7 Phase P03 work packages (TASK-P03-001, 002, 003A, 003B, 003C, 003D, 004 Rev 2) are formally approved and merged into `main`.
    - Daemon bootstrap, machine exclusivity, and host quiescence are fully implemented, approved, and merged at library and daemon scope (`HOST_QUIESCENCE_INTEGRATION = IMPLEMENTED_AT_LIBRARY_AND_DAEMON_SCOPE`, `DESIGN_BLOCKER_3D_STARTUP_WIRING = CLOSED_AT_IMPLEMENTATION_SCOPE`).
-   - Stop and await External Supervisor's formal exit gate audit decision. Phase P03 is NOT declared COMPLETE until that decision is recorded.
-   - Zero production or test code for Phase P04 or P05 may be written in this stage.
-   - Maintain strict fail-closed dependencies: `AUTOMATIC_RESTORE = DISABLED`; operator restore and linked stop remain disabled until verified operator principal reaches trusted boundary.
-   - Preserve three-track evidence: (1) Automated Library/Mock AO unit and integration tests in CI (verified); (2) Real Windows binary verification (`cmd/supervisor`) for lock exclusivity, admission, and drain (verified); (3) Live AO proof (unverified evidence track, non-blocking for automated harness exit gate).
+   - Stop and await External Supervisor's formal exit gate re-audit decision. Phase P03 is NOT declared COMPLETE until that decision is recorded.
+   - Zero production or test code for Phase P04 or P05 may be written in this stage (`P04_CODE = NOT_AUTHORIZED`, `P05_CODE = NOT_AUTHORIZED`).
+   - Maintain strict fail-closed dependencies: `AUTOMATIC_RESTORE = DISABLED`; operator restore and linked stop remain disabled until verified operator principal reaches trusted boundary (`VERIFIED_OPERATOR_PRINCIPAL = OPEN_FAIL_CLOSED_DEPENDENCY`).
+   - Stage B runtime catalog is deferred: `STAGE_B_RUNTIME_CATALOG = DEFERRED_TO_P04_RUNTIME_INTEGRATION`.
+   - Preserve three-track evidence: (1) Automated Library/Mock AO unit and integration tests in CI (verified); (2) Real Windows binary verification (`cmd/supervisor`) for lock exclusivity, admission, and drain (verified); (3) Live AO proof (`LIVE_AO_INTEGRATION = UNVERIFIED_EVIDENCE_TRACK`, non-blocking for automated harness exit gate).
 
 2. **HISTORICAL SUBTASK CLEARANCE RECORD**:
    - `TASK_P03_001 = EXTERNAL_AUDIT_APPROVED` & `MERGED`.
@@ -119,8 +120,8 @@ This document establishes immutable operational directives for all AI coding age
    - `TASK_P03_004 = EXTERNAL_AUDIT_APPROVED` & `MERGED` (`CONTRACT_TASK_P03_004_02`).
 
 3. **EXPLICITLY FORBIDDEN IN THIS EXIT GATE STAGE**:
-   - Absolutely NO writing of Phase P04 Evidence & Review Engine code;
-   - Absolutely NO writing of Phase P05 ChatGPT Tool Interface code;
+   - Absolutely NO writing of Phase P04 Evidence & Review Engine code (`P04_CODE = NOT_AUTHORIZED`);
+   - Absolutely NO writing of Phase P05 ChatGPT Tool Interface code (`P05_CODE = NOT_AUTHORIZED`);
    - Absolutely NO self-declaring Phase P03 as COMPLETE without External Supervisor exit audit;
    - Absolutely NO enabling of `AUTOMATIC_RESTORE`;
    - Absolutely NO calls to live upstream AO daemon or modifying user databases;
@@ -161,9 +162,15 @@ This document establishes immutable operational directives for all AI coding age
    - `FINDING_P03_004_R3_001 = CLOSED`
    - `FINDING_P03_004_R3_002 = CLOSED`
    - `FINDING_P03_004_R4_001 = CLOSED`
-   - `ACTIVE_GATE = P03_EXIT_GATE_AUDIT`
-   - `P03_EXIT_GATE = READY_FOR_EXTERNAL_AUDIT`
+   - `FINDING_P03_EXIT_R1_001_THROUGH_004 = REMEDIATED` (`docs/audits/P03_EXIT_GATE_EXTERNAL_AUDIT_001.md`)
+   - `P03_EXIT_GATE = REVISION_REQUIRED`
+   - `ACTIVE_GATE = P03_EXIT_GATE_REMEDIATION`
+   - `P04_CODE = NOT_AUTHORIZED`
+   - `P05_CODE = NOT_AUTHORIZED`
    - `AUTOMATIC_RESTORE = DISABLED`
+   - `LIVE_AO_INTEGRATION = UNVERIFIED_EVIDENCE_TRACK`
+   - `VERIFIED_OPERATOR_PRINCIPAL = OPEN_FAIL_CLOSED_DEPENDENCY`
+   - `STAGE_B_RUNTIME_CATALOG = DEFERRED_TO_P04_RUNTIME_INTEGRATION`
    - Host/bootstrap integration owns verified operator principal evidence; until verified, runtime restore and linked stop remain disabled.
 
 > **Historical 3B remediation (superseded)**: Earlier implementation `4b45c55d47a9bc7ede4c778e21355a476e198169` had verdict `REVISION_REQUIRED` (`docs/audits/P03_TASK_003B_EXTERNAL_AUDIT_001.md`); subsequent re-audits are preserved in `docs/audits/P03_TASK_003B_EXTERNAL_REAUDIT_001.md` through `_003.md`. The current approval and gate are stated above.
