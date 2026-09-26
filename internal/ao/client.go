@@ -251,6 +251,7 @@ func (c *Client) decodeError(req *http.Request, resp *http.Response) error {
 		Reason:     "malformed or non-conforming AO error envelope",
 	}
 }
+
 // GetWorkspaceFile retrieves a workspace file from an active AO session using the canonical JSON envelope
 // endpoint GET /api/v1/sessions/{sessionId}/workspace/file?path={filePath}.
 //

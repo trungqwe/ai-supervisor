@@ -490,17 +490,16 @@ func TestDaemonReadinessLifecycle(t *testing.T) {
 	t.Log("PASS: /readyz correctly refused after daemon shutdown")
 }
 
-
 // TestDaemonPollerFailureMidRunProbe proves P03-004-R3-002:
-// 1. Starts daemon with -test-fail-poller-file trigger and -poll-interval=50ms.
-// 2. Verifies daemon starts up, signals ready, and /readyz returns HTTP 200 OK.
-// 3. Verifies owner lock is held (contender rejected with exit code 32).
-// 4. Triggers real PollOnce failure mid-run by writing the trigger file.
-// 5. Verifies /readyz transitions to HTTP 503 Service Unavailable (host admission closed).
-// 6. Verifies daemon process does NOT crash and owner lock (.owner.lock) is STILL held (contender exit code 32).
-// 7. Executes graceful shutdown via stop CLI command, verifying that shutdown
-//    cleanly joins the watcher and the Poller (which already stopped due to failure).
-// 8. Verifies that after daemon exits, lock is released and a new contender can acquire it.
+//  1. Starts daemon with -test-fail-poller-file trigger and -poll-interval=50ms.
+//  2. Verifies daemon starts up, signals ready, and /readyz returns HTTP 200 OK.
+//  3. Verifies owner lock is held (contender rejected with exit code 32).
+//  4. Triggers real PollOnce failure mid-run by writing the trigger file.
+//  5. Verifies /readyz transitions to HTTP 503 Service Unavailable (host admission closed).
+//  6. Verifies daemon process does NOT crash and owner lock (.owner.lock) is STILL held (contender exit code 32).
+//  7. Executes graceful shutdown via stop CLI command, verifying that shutdown
+//     cleanly joins the watcher and the Poller (which already stopped due to failure).
+//  8. Verifies that after daemon exits, lock is released and a new contender can acquire it.
 func TestDaemonPollerFailureMidRunProbe(t *testing.T) {
 	tempDir := t.TempDir()
 	binPath := filepath.Join(tempDir, "supervisor.exe")

@@ -155,6 +155,7 @@ type ResumeWorkerResult struct {
 	RestoreMode RestoreMode
 	Session     WorkerStatus
 }
+
 // WorkspaceReadOptions defines bounded limits for reading workspace files from AO.
 type WorkspaceReadOptions struct {
 	MaxWireBytes int64 // Maximum allowed wire envelope payload size in bytes (> 0)

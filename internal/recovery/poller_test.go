@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"runtime"
-	"sync"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
