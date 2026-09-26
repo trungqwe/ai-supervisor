@@ -52,7 +52,7 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P03 TASK-P03-003D IMPLEMENTATION
+# SECTION 2: CURRENT PHASE RULES — P03 EXIT GATE AUDIT
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
@@ -87,43 +87,44 @@ This document establishes immutable operational directives for all AI coding age
 > External Supervisor released `CONTRACT-TASK-P03-003C-01` from candidate `a8f8edc7a64f3d1aa66acf5519397fe46d8f6177`, blob `7a689f16f04b35acecb7952dc43873ece6f7df6f`; findings `3C-C1-001..003=CLOSED` at design level. Historical `BLOCKER-3C-001` closed at design level. Historical audit of `90a168daa2fcd114e1fcbba3c15319897c257b42` required remediation (`docs/audits/P03_TASK_003C_EXTERNAL_AUDIT_001.md`). External Supervisor approved implementation `3d223e47eb4ba05809b196fc77caca61f94421eb`, closed `3C-R1-001..003`, and merged the audited code at `583e700eb125a08cc6bd7d63b6b27a6f3d4cc527` (`docs/audits/P03_TASK_003C_EXTERNAL_REAUDIT_001.md`). `TASK_P03_003C_IMPLEMENTATION=EXTERNAL_AUDIT_APPROVED`; `TASK_P03_003D=RELEASED`; BLOCKER-3D-001/002/003 closed at design level by approved clarification/addendum. External audit of 3D implementation `710b27f2d41dcbadd385c6ac07e30bb1765d1cbe` requires revision (`3D-R1-001..005=OPEN`); (Lịch sử: khi đó `TASK_P03_003D_IMPLEMENTATION=REVISION_REQUIRED` theo contract revision 2). Hiện tại: contract revision 3 đã RELEASED; implementation 3D EXTERNAL_AUDIT_APPROVED tại `7513f1b`; findings 3D-R1-001..005 và 3D-R2-001..002 đã CLOSED ở library scope; code đã merge tại `35909d7`; ACTIVE_GATE=TASK_P03_003D_HANDOFF_VERIFICATION.
 > Lịch sử trước decision `3babaa2`: Supervisor xác nhận hướng cho `3D-R1-005`: `dispatch_operations.confirmed_at` là origin của send-confirmation-based execution budget (không phải actual execution start); deadline/policy bất biến; startup zero timeout effect; runtime monitor đi qua shared host admission và stop coordinator 3C. Khi đó `PROPOSAL-P03-004`, draft ADR-016 addendum và draft contract revision 3 chờ design audit. Implementation branch `codex/p03-003d` tại `00f64d0b26db2749eadd21b7307c98faa6b6280d` được giữ nguyên; `3D-R1-005=OPEN`, chưa cấp quyền migration hoặc code deadline.
 > External Supervisor chấp thuận thiết kế execution budget tại governance `3babaa2ba573fcdd7d6b34cfb5ea2fd44f1fffe4` với ràng buộc EXEC-R1-001..003: trusted maintenance scope, exact open RUNNING manual stop, Tx R tái dùng atomic double quarantine 3C, bỏ quyền effect giữ STOP_REQUESTED/IN_FLIGHT, không dùng RelinquishTimeoutEffect, và whitelist migration v4 test có giới hạn. ADR addendum chính thức/canonical reconciliation đã chuẩn bị; candidate contract revision 3 vẫn NOT_RELEASED và chờ release audit. `3D-R1-005=OPEN`; implementation `00f64d0b26db2749eadd21b7307c98faa6b6280d` giữ nguyên, chưa có quyền migration/code deadline mới. `HOST_QUIESCENCE_INTEGRATION=OPEN`, verified host principal và startup wiring dependency giữ nguyên.
-> `TASK_P03_003D_REVISION_3=NOT_RELEASED`; `TASK_P03_003D_IMPLEMENTATION=REVISION_REQUIRED`; `P03_CODE=AUTHORIZED_3D_ONLY` theo contract revision 2 đã release; `ACTIVE_GATE=TASK_P03_003D_REMEDIATION`. Addendum design approval không tự thay đổi gate implementation.
+> **Historical 3D remediation note (superseded):** `TASK_P03_003D_REVISION_3=NOT_RELEASED`; `TASK_P03_003D_IMPLEMENTATION=REVISION_REQUIRED`; `P03_CODE=AUTHORIZED_3D_ONLY` theo contract revision 2 đã release; `ACTIVE_GATE=TASK_P03_003D_REMEDIATION`. Addendum design approval không tự thay đổi gate implementation.
 > External Supervisor approved canonical reconciliation at `68194f739fc5a514cd1f7850027771a77a866d47` and released `CONTRACT-TASK-P03-003D-03` from candidate blob `0c15ca55403681f8647e5b2dc242fcf91ec5a521`. **Current:** `TASK_P03_003D_REVISION_3=RELEASED`; `TASK_P03_003D_IMPLEMENTATION=EXTERNAL_AUDIT_APPROVED`; findings `3D-R1-001..005` và `3D-R2-001..002` CLOSED ở library scope; code đã MERGED tại `35909d7`; `ACTIVE_GATE=TASK_P03_003D_HANDOFF_VERIFICATION`. `AUTOMATIC_RESTORE=DISABLED`; verified host principal, `HOST_QUIESCENCE_INTEGRATION=OPEN` và startup wiring dependency (`DESIGN_BLOCKER_3D_STARTUP_WIRING=PRESERVED`) persist.
-> External audit 002 of 3D remediation commit `d9d2fcc57ac95b098ac02f81686a891afa1aab19` recorded findings `3D-R2-001` (waiting_input timeout) and `3D-R2-002` (pre-send policy validation) with verdict `REVISION_REQUIRED`; suite gốc race PASS, hai probes FAIL; `3D-R1-005` chưa đóng (`docs/audits/P03_TASK_003D_EXTERNAL_AUDIT_002.md`). Chưa merge. `TASK_P03_003D_IMPLEMENTATION=REVISION_REQUIRED`; `P03_CODE=AUTHORIZED_3D_ONLY`; `ACTIVE_GATE=TASK_P03_003D_REMEDIATION`; `AUTOMATIC_RESTORE=DISABLED`; `HOST_QUIESCENCE_INTEGRATION=OPEN`; `DESIGN_BLOCKER_3D_STARTUP_WIRING=PRESERVED`.
+> **Historical 3D re-audit 002 (superseded by re-audit 001/merge):** External audit 002 of 3D remediation commit `d9d2fcc57ac95b098ac02f81686a891afa1aab19` recorded findings `3D-R2-001` (waiting_input timeout) and `3D-R2-002` (pre-send policy validation) with verdict `REVISION_REQUIRED`; suite gốc race PASS, hai probes FAIL; `3D-R1-005` chưa đóng (`docs/audits/P03_TASK_003D_EXTERNAL_AUDIT_002.md`). Chưa merge. `TASK_P03_003D_IMPLEMENTATION=REVISION_REQUIRED`; `P03_CODE=AUTHORIZED_3D_ONLY`; `ACTIVE_GATE=TASK_P03_003D_REMEDIATION`; `AUTOMATIC_RESTORE=DISABLED`; `HOST_QUIESCENCE_INTEGRATION=OPEN`; `DESIGN_BLOCKER_3D_STARTUP_WIRING=PRESERVED`.
 > External re-audit 001 of 3D remediation commit `7513f1b9f39fa459be15e0abc836c6258a610d8b` (code base `583e700eb125a08cc6bd7d63b6b27a6f3d4cc527`, governance baseline `422ca9e5fa41b263b02d888c81850f8ebc9c0e31`) closed findings `3D-R1-001..005` and `3D-R2-001..002` at library implementation scope with verdict `TASK_P03_003D_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED` (`docs/audits/P03_TASK_003D_EXTERNAL_REAUDIT_001.md`). External Supervisor verified `go test -race -count=1 ./...` exit 0, whitelist diff 23/32, outside scope 0, `diff --check` exit 0. Chưa suy ra host integration hoặc runtime deployment đã đạt; `AUTOMATIC_RESTORE = DISABLED`; `HOST_QUIESCENCE_INTEGRATION = OPEN`; `DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED`; verified host principal chưa có bằng chứng runtime.
 > Audited implementation `7513f1b9f39fa459be15e0abc836c6258a610d8b` was merged into main at `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea` (tree `internal/` khớp `a91fcdc207116bff3a40a58beea5021de98392eb`); post-merge integration `go test -race -count=1 ./...` exit 0, `diff --check` exit 0 (`docs/audits/P03_TASK_003D_MERGE_INTEGRATION_AUDIT.md`). Handoff dependencies: `HOST_QUIESCENCE_INTEGRATION = OPEN`, verified host principal chưa có bằng chứng runtime, `DESIGN_BLOCKER_3D_STARTUP_WIRING = PRESERVED`, `AUTOMATIC_RESTORE = DISABLED`. Chưa cấp quyền P04 hoặc daemon/bootstrap.
 
 > External Supervisor approved ADR-016 addendum design at audited SHA 3807343f06f99c0e11460c74522a2efb3be19491; ADD-R1-001..003 CLOSED. DESIGN_BLOCKER_3B_RESTORE_PROTOCOL=CLOSED_BY_APPROVED_ADDENDUM. Canonical reconciliation per addendum is EXTERNAL_AUDIT_APPROVED.
-> Host/bootstrap integration owns verified operator principal evidence at the trusted boundary. Library fake-principal tests do not enable runtime restore or linked stop. AUTOMATIC_RESTORE=DISABLED. 3D is RELEASED for implementation; DESIGN_BLOCKER_3D_STARTUP_WIRING preserved.
+> **Historical 3D release note (superseded):** Host/bootstrap integration owns verified operator principal evidence at the trusted boundary. Library fake-principal tests do not enable runtime restore or linked stop. AUTOMATIC_RESTORE=DISABLED. 3D is RELEASED for implementation; DESIGN_BLOCKER_3D_STARTUP_WIRING preserved.
 > External Supervisor approved and released `CONTRACT-TASK-P03-003D-01` from candidate commit `7701b8b02c68006c4e692a1c8a61609c72a6c033`, blob `604c4786281354565c8e37238f0b5ba95542e4f9`, code base `583e700eb125a08cc6bd7d63b6b27a6f3d4cc527` (`docs/audits/P03_TASK_003D_CONTRACT_RELEASE_AUDIT.md`).
 > Historical 3B release: External Supervisor released CONTRACT-TASK-P03-003B-01 from candidate SHA `ae8deb9ee41479d0e0868dced53ed89135252923`, blob `84bd84535352c2d28dbc1eba820aa8b22382dd99`, with code base SHA `b8b0c95576d87677e8d48210d9838cc2f599752a`.
 
 > External Supervisor approved merge integration: exact implementation commit `d9b7c1344a8a41cfad6e3bd8bb4db87080afcc03` merged into main at merge commit `aea182a060e85e91d2a6d7f11f007fc22e6c1da9` (zero-diff on all 15 implementation paths). Audited in docs/audits/P03_TASK_004_MERGE_INTEGRATION_AUDIT.md. Status: TASK_P03_004_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED; TASK_P03_004_CODE = MERGED; HOST_QUIESCENCE_INTEGRATION = IMPLEMENTED_AT_LIBRARY_AND_DAEMON_SCOPE; DESIGN_BLOCKER_3D_STARTUP_WIRING = CLOSED_AT_IMPLEMENTATION_SCOPE; ACTIVE_GATE = P03_EXIT_GATE_AUDIT. Do not open P04/P05; do not declare P03 COMPLETE. AUTOMATIC_RESTORE=DISABLED; host principal, Live AO and Stage B runtime remain UNVERIFIED.
 >
-1. **P03 EXIT GATE AUDIT (TASK-P03-004 MERGED)**:
-   - `TASK_P03_004 = RELEASED (Revision 2)`; `TASK_P03_004_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED`; `TASK_P03_004_CODE = MERGED`.
-   - Formally released pursuant to `docs/audits/P03_TASK_004_REVISION_2_RELEASE_AUDIT.md`.
-   - Implement only `docs/tasks/TASK_CONTRACT_P03_004_REVISION_2.md` (`CONTRACT-TASK-P03-004-02`), from code base SHA `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea` on branch `codex/p03-004`.
-   - Allowed scope: `cmd/supervisor/**`, `internal/host/**`, `internal/recovery/poller.go`, `internal/recovery/poller_test.go`, `internal/ao/client.go`, `internal/ao/types.go`, `internal/ao/client_test.go`, `test/integration/**`.
-   - Governance and release artifacts stay separate from the implementation diff.
-   - Host/bootstrap verified principal remains an OPEN fail-closed dependency at trusted boundary; `AUTOMATIC_RESTORE = DISABLED`.
-   - Preserve three-track evidence: Library/Mock AO unit tests in CI; Real Windows binary verification (`cmd/supervisor`) for lock exclusivity, admission, and drain; Live AO proof (mock tests must not claim live AO proof).
+1. **P03 EXIT GATE AUDIT DIRECTIVES**:
+   - `ACTIVE_GATE = P03_EXIT_GATE_AUDIT`; `P03_EXIT_GATE = READY_FOR_EXTERNAL_AUDIT`.
+   - All 7 Phase P03 work packages (TASK-P03-001, 002, 003A, 003B, 003C, 003D, 004 Rev 2) are formally approved and merged into `main`.
+   - Daemon bootstrap, machine exclusivity, and host quiescence are fully implemented, approved, and merged at library and daemon scope (`HOST_QUIESCENCE_INTEGRATION = IMPLEMENTED_AT_LIBRARY_AND_DAEMON_SCOPE`, `DESIGN_BLOCKER_3D_STARTUP_WIRING = CLOSED_AT_IMPLEMENTATION_SCOPE`).
+   - Stop and await External Supervisor's formal exit gate audit decision. Phase P03 is NOT declared COMPLETE until that decision is recorded.
+   - Zero production or test code for Phase P04 or P05 may be written in this stage.
+   - Maintain strict fail-closed dependencies: `AUTOMATIC_RESTORE = DISABLED`; operator restore and linked stop remain disabled until verified operator principal reaches trusted boundary.
+   - Preserve three-track evidence: (1) Automated Library/Mock AO unit and integration tests in CI (verified); (2) Real Windows binary verification (`cmd/supervisor`) for lock exclusivity, admission, and drain (verified); (3) Live AO proof (unverified evidence track, non-blocking for automated harness exit gate).
 
-2. **TASK-P03-003 PARTIAL RELEASE GUARD**:
-   - `TASK_P03_003A = RELEASED`.
-   - `TASK_P03_003B = RELEASED`; `TASK_P03_003B_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED`.
-   - `TASK_P03_003C = RELEASED` and `TASK_P03_003D = RELEASED`.
-   - `DESIGN_BLOCKER_3D_STARTUP_WIRING` remains preserved for 3D and does not block 3A.
+2. **HISTORICAL SUBTASK CLEARANCE RECORD**:
+   - `TASK_P03_001 = EXTERNAL_AUDIT_APPROVED` & `MERGED`.
+   - `TASK_P03_002 = EXTERNAL_AUDIT_APPROVED` & `MERGED`.
+   - `TASK_P03_003A = EXTERNAL_AUDIT_APPROVED` & `MERGED`.
+   - `TASK_P03_003B = EXTERNAL_AUDIT_APPROVED` & `MERGED`.
+   - `TASK_P03_003C = EXTERNAL_AUDIT_APPROVED` & `MERGED`.
+   - `TASK_P03_003D = EXTERNAL_AUDIT_APPROVED` & `MERGED`.
+   - `TASK_P03_004 = EXTERNAL_AUDIT_APPROVED` & `MERGED` (`CONTRACT_TASK_P03_004_02`).
 
-3. **EXPLICITLY FORBIDDEN IN THIS IMPLEMENTATION STAGE**:
-   - No daemon bootstrap/server implementation or claim of recovery-before-listener proof;
-   - Absolutely NO invented numeric operational timeout or poll interval defaults;
-   - Absolutely NO synthetic worker heartbeat generation;
-   - Absolutely NO SSE or `/api/v1/events` integration;
-   - Absolutely NO workspace file fetching or WorkerReport handling;
-   - No production change outside the released 3D contract whitelist;
-   - No calls to a live AO or migration against a user's database for testing;
-   - Absolutely NO modification to accepted ADR-016 or proposals.
+3. **EXPLICITLY FORBIDDEN IN THIS EXIT GATE STAGE**:
+   - Absolutely NO writing of Phase P04 Evidence & Review Engine code;
+   - Absolutely NO writing of Phase P05 ChatGPT Tool Interface code;
+   - Absolutely NO self-declaring Phase P03 as COMPLETE without External Supervisor exit audit;
+   - Absolutely NO enabling of `AUTOMATIC_RESTORE`;
+   - Absolutely NO calls to live upstream AO daemon or modifying user databases;
+   - Absolutely NO modifying accepted ADRs (ADR-016, ADR-017) or released Task Contracts.
 
 4. **FINAL GOVERNANCE STATE**:
    - `P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED` (Historical Baseline A)
@@ -150,14 +151,18 @@ This document establishes immutable operational directives for all AI coding age
    - `PROPOSAL_P03_006 = EXTERNAL_APPROVED`
    - `TASK_P03_004 = RELEASED (Revision 2)`
    - `CONTRACT_TASK_P03_004_02 = RELEASED`
-   - `TASK_P03_004_IMPLEMENTATION = REVISION_REQUIRED`
-   - `TASK_P03_004_REMEDIATION = IN_PROGRESS`
-   - `P03_CODE = AUTHORIZED_004_ONLY`
-   - `ACTIVE_GATE = TASK_P03_004_REMEDIATION`
-   - `FINDING_P03_004_R3_001 = OPEN`
-   - `FINDING_P03_004_R3_002 = OPEN`
-   - `HOST_QUIESCENCE_INTEGRATION = CLOSING_VIA_TASK_P03_004`
-   - `DESIGN_BLOCKER_3D_STARTUP_WIRING = CLOSING_VIA_TASK_P03_004`
+   - `TASK_P03_004_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED`
+   - `TASK_P03_004_CODE = MERGED` (merge commit `aea182a060e85e91d2a6d7f11f007fc22e6c1da9`)
+   - `TASK_P03_004_MERGE_AUDIT = VERIFIED` (`docs/audits/P03_TASK_004_MERGE_INTEGRATION_AUDIT.md`, commit `e57a87fcc764ca38578daa6e109eed084a6980c3`)
+   - `HOST_QUIESCENCE_INTEGRATION = IMPLEMENTED_AT_LIBRARY_AND_DAEMON_SCOPE`
+   - `DESIGN_BLOCKER_3D_STARTUP_WIRING = CLOSED_AT_IMPLEMENTATION_SCOPE`
+   - `FINDING_P03_004_R1_001_THROUGH_005 = CLOSED`
+   - `FINDING_P03_004_R2_001 = CLOSED`
+   - `FINDING_P03_004_R3_001 = CLOSED`
+   - `FINDING_P03_004_R3_002 = CLOSED`
+   - `FINDING_P03_004_R4_001 = CLOSED`
+   - `ACTIVE_GATE = P03_EXIT_GATE_AUDIT`
+   - `P03_EXIT_GATE = READY_FOR_EXTERNAL_AUDIT`
    - `AUTOMATIC_RESTORE = DISABLED`
    - Host/bootstrap integration owns verified operator principal evidence; until verified, runtime restore and linked stop remain disabled.
 

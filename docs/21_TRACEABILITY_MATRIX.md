@@ -90,15 +90,19 @@ Authority: `docs/adr/ADR-016-CLARIFICATION-administrative-stop-risk-acceptance.m
 Contract revision 3 đã RELEASED; implementation 3D EXTERNAL_AUDIT_APPROVED tại `7513f1b9f39fa459be15e0abc836c6258a610d8b`; `3D-R1-001..005` và `3D-R2-001..002` đã CLOSED ở library scope; code đã MERGED tại `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea`. Host principal, `HOST_QUIESCENCE_INTEGRATION=OPEN` và startup wiring (`DESIGN_BLOCKER_3D_STARTUP_WIRING=PRESERVED`) tiếp tục là dependency runtime.
 
 
-## TASK-P03-004 Host Bootstrap & Lifecycle Coverage (ADR-017)
+## TASK-P03-004 Host Bootstrap & Lifecycle Coverage (ADR-017 / CONTRACT-TASK-P03-004-02 Revision 2)
 
-| Requirement / Invariant | Architecture & Design Reference | Acceptance Criteria |
-|---|---|---|
-| Machine-wide Exclusivity | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md §2.3` | `AC-004-01` |
-| Alias Proof & Fail-Closed | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md §2.3, §4.3` | `AC-004-02` |
-| Host Pinned DB Handle & 4 Invariants | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md §2.3, §4.4` | `AC-004-03` |
-| Shutdown Drain & Order | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md §2.3, §2.6` | `AC-004-04` |
-| Named Pipe Takeover & SID Check | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md §2.3` | `AC-004-05` |
-| Startup Readiness Probe | `docs/plans/PLAN-HOST-INTEGRATION-DEPENDENCY.md §4; docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md §2.6` | `AC-004-06` |
-| P03 Integration Harness | `docs/plans/PLAN-HOST-INTEGRATION-DEPENDENCY.md §5; docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md §4.1` | `AC-004-07` |
-| Zero Effectful HTTP & UNSET Policy | `docs/adr/ADR-017-host-quiescence-and-daemon-lifecycle-architecture.md §3.1, §4.2, §4.4` | `AC-004-08` |
+**Status:** `EXTERNAL_AUDIT_APPROVED` (Exact Audited SHA `d9b7c1344a8a41cfad6e3bd8bb4db87080afcc03`); `MERGED` into `main` at `aea182a060e85e91d2a6d7f11f007fc22e6c1da9`; Integration Audit `e57a87fcc764ca38578daa6e109eed084a6980c3`.
+
+| Acceptance Criteria | Requirement / Invariant | Implementation Path & Verification Evidence | Verification Status |
+|---|---|---|---|
+| `AC-004-01` | Machine-wide Exclusivity (.owner.lock) | `internal/host/lease_windows.go`; `test/integration/two_process_lock_test.go:TestProcessOwnerLeaseAndTwoProcessContention`, `TestTwoProcessContentionAndDrain` | **PASS** |
+| `AC-004-02` | Lock Key vs Physical ID; Alias Fail-Closed | `internal/host/db_handle_windows.go`, `lease_windows.go`; `TestTwoProcessContentionAndDrain` (subst, canonical volume check) | **PASS** |
+| `AC-004-03` | Pinned DB Custody (4 Invariants, No Delete Share) | `internal/host/db_handle_windows.go`; `TestPinnedDBPreventsFileDeletion`, `TestPrepareNewDBOrderAndVolume` | **PASS** |
+| `AC-004-04` | Shutdown Drain Order (Store.Close before CleanMetadata) | `internal/host/drain.go`; `TestShutdownDrainStoreCloseBarrierAndOrder`, `TestRealDaemonDrainTimeoutPreservesLock` | **PASS** |
+| `AC-004-05` | Named Pipe Takeover & Caller SID Check | `internal/host/pipe_windows.go`; `TestNamedPipeTakeoverAndStatus`, `TestRequestPipeTakeoverNegativeCases`, `TestCLIStopNegativeCases` | **PASS** |
+| `AC-004-06` | Startup Readiness Probe & Pair Hold Guard | `cmd/supervisor/main.go`; `TestDaemonReadinessLifecycle`, `TestPairHoldAndAdmissionGuard` | **PASS** |
+| `AC-004-07` | P03 Integration Harness (5 Lifecycle Steps) | `test/integration/ao_harness_test.go:TestP03IntegrationHarness5StepsViaLibrarySaga` | **PASS** |
+| `AC-004-08` | Zero Effectful HTTP, UNSET Policies Fail-Closed, -race Clean | `cmd/supervisor/main.go`, `internal/host/authority.go`; full repository race suite exit code 0 | **PASS** |
+| `AC-004-09` | Poller Done/Err Synchronized Lifecycle & /readyz 503 Transition | `internal/recovery/poller.go`, `cmd/supervisor/main.go`; `TestPollerDoneAndErrLifecycle_BarrierErrorAndRestart`, `TestDaemonPollerFailureMidRunProbe` | **PASS** |
+| `AC-004-10` | Typed AO Workspace File Retrieval & JSON Envelope Validation | `internal/ao/client.go`, `internal/ao/types.go`; `internal/ao/client_test.go:TestClient_GetWorkspaceFile` (boundary, overflow, deleted rejection) | **PASS** |

@@ -36,11 +36,12 @@ Addendum ADR-016 execution budget phê duyệt origin `dispatch_operations.confi
 
 ## 6. Host Bootstrap, Daemon Lifecycle & Integration Harness (TASK-P03-004, ADR-017)
 
-Pursuant to approved PROPOSAL-P03-005 and accepted ADR-017, subtask `TASK-P03-004` is formally incorporated into Phase P03 to close the exit gate without Phase P04/P05 dependencies:
+Pursuant to approved PROPOSAL-P03-005, accepted ADR-017, and released Task Contract Revision 2 (`CONTRACT-TASK-P03-004-02`), subtask `TASK-P03-004` is implemented, approved (`TASK_P03_004_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED` at audited SHA `d9b7c1344a8a41cfad6e3bd8bb4db87080afcc03`), and merged into `main` at merge commit `aea182a060e85e91d2a6d7f11f007fc22e6c1da9` (`TASK_P03_004_CODE = MERGED`):
 - **Exclusivity**: Windows machine-wide single instance exclusivity via sidecar lock handle (`<canonical_db_path>.owner.lock`, share mode 0, `OPEN_ALWAYS`, no inherit).
 - **Pinned DB Custody**: Host opens and holds `hPinnedDB` (omitting `FILE_SHARE_DELETE`) preventing file substitution or rename during Store lifetime.
 - **Two DB Paths**: Existing DB pinned handle vs Brand New DB exclusive-create (`CREATE_NEW`) with pre-Store.Open pinning.
 - **Store Integration Boundary**: Host validates local DOS volume path and invokes `store.Open(ctx, store.Config{DBPath, BusyTimeoutMs})`; governed by 4 Invariants without private Store DB inspection.
-- **Readiness & Shutdown**: Startup-before-serve readiness probe; graceful shutdown drain order (close pipe -> drain callers -> Store.Close() -> close hPinnedDB -> clean metadata -> close lock last).
+- **Readiness & Shutdown**: Startup-before-serve readiness probe; graceful shutdown drain order per ADR-017 §4.2 and AC-004-04 (close listeners -> drain/join callers -> stop/join schedulers -> Store.Close() -> CleanMetadata nếu instance khớp -> close pinned DB handle -> close owner lock last).
 - **P03 Integration Harness**: Pure library test harness in `test/integration/ao_harness_test.go` asserting 5 exit gate steps via approved internal library APIs without effectful HTTP routes.
-- **Handoff Clearance**: Closes `HOST_QUIESCENCE_INTEGRATION` and `DESIGN_BLOCKER_3D_STARTUP_WIRING` within Phase P03.
+- **Handoff Clearance**: Closes `HOST_QUIESCENCE_INTEGRATION` and `DESIGN_BLOCKER_3D_STARTUP_WIRING` at implementation scope within Phase P03.
+- **Gate Transition**: Active gate transitions to `P03_EXIT_GATE_AUDIT` (`P03_EXIT_GATE = READY_FOR_EXTERNAL_AUDIT`). Phase P03 is not declared COMPLETE until formal exit audit approval.
