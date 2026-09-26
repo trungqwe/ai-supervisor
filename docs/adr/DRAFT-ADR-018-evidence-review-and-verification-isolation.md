@@ -1,14 +1,15 @@
 # ADR-018: Evidence & Review Engine Architecture, Execution Isolation, and Verification Governance
 
-> **Status**: DRAFT (`REVISION_12_REQUIRED` / Remediated to Revision 12)
+> **Status**: DRAFT (`REVISION_12_REQUIRED` / Remediated to Revision 13 — `DRAFT_PENDING_EXTERNAL_APPROVAL`)
 > **Date**: 2026-09-26
-> **Audited Baseline**: `6e1993da150031a9465901a7019c71257de44312`
-> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_11`
+> **Audited Baseline**: `b5a1d8ef0c38e52ed71370a1e0dfa17e0d3e5f2d`
+> **Preservation Baseline Commit**: `6e1993da150031a9465901a7019c71257de44312` (Revision 11)
+> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_12`
 > **Deciders**: AI Engineering Supervisor Architecture Council, External Supervisor
 > **Related Architecture**: `docs/04_ARCHITECTURE.md` (Section 7), `docs/05_DOMAIN_MODEL.md`, `docs/10_REVIEW_BUNDLE.md`
 > **Related Requirements**: `docs/02_REQUIREMENTS.md` (FR-008, NFR-008 via PROPOSAL-P04-002)
-> **Supersedes**: `DRAFT-ADR-018` Revision 11
-> **External Audit Tracking**: Remediates Findings `P04-ARCH-R11-001` through `P04-ARCH-R11-004` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_010.md`).
+> **Supersedes**: `DRAFT-ADR-018` Revision 12
+> **External Audit Tracking**: Remediates Findings `P04-ARCH-R12-001` through `P04-ARCH-R12-004` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_011.md`).
 
 ---
 
@@ -16,65 +17,85 @@
 
 Phase P04 implements the **Evidence & Review Engine**, providing independent, tamper-proof verification of AI worker outputs under canonical architecture (`docs/04_ARCHITECTURE.md` Section 7) and requirements (`docs/02_REQUIREMENTS.md`).
 
-External Re-Audit 010 recorded four architectural findings requiring Revision 12 remediation:
-1. `P04-ARCH-R11-001`: Canonical NFR-008 measures from worker completion. The internal supervisor interval (`evidence_finalized_at -> bundle_assembled_at`) must be designated the **ReviewBundle assembly diagnostic**, and NFR-008 compliance status must remain strictly **`UNVERIFIED`** in v1. Furthermore, audit events committed inside SQLite transactions cannot contain telemetry regarding the duration of their own future disk commit (`commit_duration_ms`).
-2. `P04-ARCH-R11-002`: The verification lease model required refactoring to **append-only lease history** with `lease_id PRIMARY KEY`, partial unique indexes enforcing at most one `ACTIVE` lease per task and attempt, immutability triggers blocking `worker_id` changes, atomic reclaim, and a complete crash/replay/concurrent reclaim matrix.
-3. `P04-ARCH-R11-003`: Elimination of blanket transition rules ("any non-REVIEWING state with a bundle to BLOCKED"), strict canonical TaskState preservation on invariant mismatch, and isolated diagnostic failure transactions for dirty worktree and bundle rejection.
-4. `P04-ARCH-R11-004`: Strict stream limit inequality (`hard_safety_limit_bytes > capture_limit_bytes`), a bounded overflow reader algorithm reading up to `hard + 1` bytes, and mutual exclusion precedence between stream states.
+External Re-Audit 011 (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_011.md`) evaluated Round 11 remediation at commit `b5a1d8ef0c38e52ed71370a1e0dfa17e0d3e5f2d`, recording verdict `REVISION_12_REQUIRED`. It confirmed closure on `P04-ARCH-R11-001` (assembly diagnostic naming and post-commit telemetry decoupling), rejected in-place `RECLAIMED` mutation (`P04-ARCH-R11-002`), required durable integrity holds and audit idempotency mapping (`P04-ARCH-R11-003`), and required integer typing and overflow guards (`P04-ARCH-R11-004`).
+
+Revision 13 establishes design-level closure on findings `P04-ARCH-R12-001` through `P04-ARCH-R12-004` via surgical patches applied directly to the Revision 11 normative baseline (`6e1993da150031a9465901a7019c71257de44312`):
+1. `P04-ARCH-R12-001`: Complete preservation of all Revision 11 normative architecture (hardened Git allowlist, isolated environment, clean index/worktree policy, immutable snapshot extraction, TOCTOU/crash matrix, Windows AppContainer with handle lists and Job Objects, ReviewBundle replay matrix, Schema v6 opaque `terminal_generation TEXT` and canonical WorkerClaim payload validation).
+2. `P04-ARCH-R12-002`: Linear lease chain design with immutable predecessors (elimination of `RECLAIMED` mutation, permanent `EXPIRED` predecessor rows, `predecessor_lease_id TEXT NULL UNIQUE`, token monotonicity, single active lease partial index, immutable `released_at_epoch_ms`, authoritative process-death proof requirement).
+3. `P04-ARCH-R12-003`: Durable integrity hold mechanism (`review_integrity_holds` Schema v9 table, fail-closed hold checks across all pipeline paths, startup recovery loading holds, diagnostic transaction recording after rollback, and deterministic `audit_events.event_id` idempotency mapping).
+4. `P04-ARCH-R12-004`: Integer typing constraints (`typeof(col) = 'integer'` across all numeric columns) and arithmetic overflow guards (`acquired_at_epoch_ms <= MaxInt64 - ttl*1000`, `fencing_token <= MaxInt64`, `hard_safety_limit_bytes <= MaxInt64 - 1`).
+
+### Revision 11 to Revision 13 Preservation Matrix
+| Revision 11 Section | Revision 13 Section & Location | Status & Surgical Changes |
+| :--- | :--- | :--- |
+| Section 1: Context & Problem Statement | Section 1: Context & Problem Statement | Preserved; updated with Re-Audit 011 findings and baseline tracking. |
+| Section 2: Decision Drivers | Section 2: Decision Drivers | Preserved verbatim. |
+| Section 3: Considered Options | Section 3: Considered Options | Preserved verbatim. |
+| Section 4, Decision 1: Worktree Authority & Schema v6 | Section 4, Decision 1 | Preserved full Schema v6 (`terminal_generation TEXT`, canonical worktree, hex checks, triggers); added integer typing (`typeof() = 'integer'`) and canonical WorkerClaim array payload checks (`P04-ARCH-R12-001`, `R12-004`). |
+| Section 4, Decision 2: Hardened Git Collector & Allowlist | Section 4, Decision 2 | Preserved clean worktree policy, 10-command allowlist, snapshot extraction; added durable integrity hold and deterministic audit event_id mapping on failure (`P04-ARCH-R12-001`, `R12-003`). |
+| Section 4, Decision 3: Windows Verification Isolation | Section 4, Decision 3 | Preserved AppContainer handle list, Job Object assignment/limits; added authoritative process-death proof requirement for lease reclaim (`P04-ARCH-R12-001`, `R12-002`). |
+| Section 4, Decision 4: Verification Authority & Latency | Section 4, Decision 4 | Preserved ReviewBundle assembly diagnostic; confirmed NFR-008 UNVERIFIED status; commit_duration_ms decoupled from Tx C (`P04-ARCH-R11-001`). |
+| Section 4, Decision 5: Pipeline Transactions & Fencing | Section 4, Decision 5 | Preserved 3 pipeline transactions; replaced old lease model with Linear Lease Chain (no RECLAIMED, predecessor_lease_id UNIQUE, token monotonicity, single active lease); added `review_integrity_holds` table DDL; preserved ReviewBundle Replay/Conflict Matrix (`P04-ARCH-R12-002`, `R12-003`). |
+| Section 4, Decision 6: Artifact Store & Schema v9 | Section 4, Decision 6 | Preserved artifact streaming and ReviewBundle DDL; added integer typing (`typeof() = 'integer'`), int64 overflow bounds, 4 stream states, UNVERIFIED status, and deterministic `audit_events.event_id` idempotency mapping (`P04-ARCH-R12-003`, `R12-004`). |
+| Section 5: Consequences | Section 5: Consequences | Preserved and updated with linear lease chain and durable holds. |
+| Section 6: Migration & Schema Ownership | Section 6: Migration & Schema Ownership | Preserved and updated to include Schema v9 `review_integrity_holds`. |
 
 ---
 
-## 2. Decision Outcomes
+## 2. Decision Drivers
 
-### Decision 1: Model 1 Persistence Ownership & Subtask Division (P04-ARCH-R10-002)
+1. **Evidence Integrity & Non-Repudiation**: The supervisor must independently corroborate worker claims using immutable source snapshots and sandboxed execution without trusting worker memory or worker assertions.
+2. **Canonical Schema Alignment & Lineage Guarantees**: All persistence contracts must enforce task, attempt, and contract lineage via composite foreign keys and SQLite triggers, maintaining strict compliance with `worker-report.schema.json`, `review-bundle.schema.json`, and `docs/06_WORKFLOW_STATE_MACHINE.md`.
+3. **Model 1 Persistence Ownership**: Subtasks P04B and P04C must remain strictly in-memory collectors with zero SQLite writes, concentrating all Schema v9 mutations, leases, and CAS transactions in Subtask P04D.
+4. **Crash Consistency & Deadlock Elimination**: Database transactions and latency metrics must support crash recovery across daemon restarts without permanent deadlocks.
+5. **Clean Worktree Guarantee**: Worker outputs must be fully committed; dirty staged, unstaged, or untracked state must fail closed.
+6. **Execution Containment**: Verification tests must run under OS-level isolation (Windows AppContainers) with explicit handle inheritance and network denial.
 
-1. **Subtask P04A (Report Intake & Workspace Verification)**:
-   - Owns Schema Migration v6 (`attempt_workspace_bindings` and `worker_claims`).
-   - Owns Transaction A (`RUNNING -> REPORT_READY`), physical worktree handle verification (`FileIdInfo`), and clean worktree validation.
-2. **Subtask P04B (Hardened Git Evidence Collector)**:
-   - Pure in-memory collector with **ZERO SQLite writes**.
-   - Executes strictly read-only Git commands against verified snapshots to produce in-memory `GitEvidence`.
-3. **Subtask P04C (Isolated Verification Runner & AppContainer Boundary)**:
-   - Pure in-memory execution engine with **ZERO SQLite writes**.
-   - Spawns verification commands sequentially in Windows AppContainers with handle inheritance whitelisting and network denial, producing in-memory `TestEvidence`.
-4. **Subtask P04D (Pipeline Orchestrator, CAS, and CAS Persistence Orchestrator)**:
-   - **SOLE SQLite persistence authority** for Schema Migration v9 (`task_verification_leases`, `evidence_sets`, `review_artifacts`, and `review_bundles`).
-   - Owns Content-Addressed Store directory structure (`artifacts/<first-two-hex>/<captured_sha256>`).
-   - Owns lease acquisition, TTL monitoring, atomic reclaim, and completion.
-   - Owns Transaction B (`REPORT_READY -> EVIDENCE_READY`) and Transaction C (`EVIDENCE_READY -> REVIEWING`).
-   - Owns all proposed audit events.
+---
 
-### Decision 2: Report Intake, Verbatim Claims & Dirty Worktree Rollback (P04-ARCH-R11-003)
+## 3. Considered Options
 
-1. **Verbatim Reported Head SHA**:
-   - `worker_claims.reported_head_sha` accepts verbatim 7-40 hex characters matching `docs/schemas/worker-report.schema.json`.
-   - Supervisor independently discovers actual verified HEAD SHA via `git rev-parse HEAD^{commit}`.
-2. **Strict Clean Worktree Policy**:
-   - Evaluated via `git status --porcelain=v1 --untracked-files=all` and `git rev-parse --absolute-git-dir`.
-   - Any staged change, unstaged change, untracked file, or submodule modification rejects intake.
-3. **Dirty Worktree Rollback & Isolated Diagnostic Audit**:
-   - If a dirty worktree is detected:
-     * Transaction A rolls back completely.
-     * `tasks.state` remains `RUNNING` (preserved; attempt report is rejected).
-     * In a separate diagnostic transaction executed after rollback, diagnostic audit event `EVIDENCE_COLLECTION_FAILED` is appended with `failure_reason = 'DIRTY_WORKTREE_DETECTED'` and an `idempotency_key` (`audit:<attempt_id>:DIRTY_WORKTREE_DETECTED`).
-     * If appending this diagnostic audit event fails, a compound failure error is returned to the caller, and the system explicitly does not claim the audit event was recorded.
+- **Option 1**: Monolithic in-process execution directly in worker worktree. (Rejected: Vulnerable to TOCTOU, handle leaks, network escape, and worktree contamination).
+- **Option 2**: Ephemeral Git branches in worker repository without AppContainer sandboxing. (Rejected: Test execution could compromise host OS; non-isolated processes lack network denial).
+- **Option 3 (Selected - Model 1 Architecture)**: Decoupled verification pipeline with Windows AppContainer isolation, deterministic source snapshot extraction, strict clean worktree enforcement, pure in-memory collectors (P04B, P04C), and centralized CAS orchestration in P04D.
+
+---
+
+## 4. Decision Outcome
+
+### Decision 1: Worktree Authority, Immutable Bindings & Canonical WorkerClaim (P04-ARCH-R10-001)
+
+1. **Two-Transaction Workspace Lifecycle**:
+   - **Binding Creation (P04A)**: Binds `attempt_id` to the physical worktree (`FileIdInfo`) and linked gitdir identity prior to dispatch, in state `ACTIVE`.
+   - **Report Intake Transaction A (P04A)**: Triggered upon worker completion. Validates worktree identity, verifies clean worktree/index via porcelain check, validates `WorkerReport` via JSON schema in Go, canonicalizes via RFC 8785 JCS, inserts into `worker_claims`, updates binding to `RETAINED_FOR_VERIFICATION` via CAS, and transitions `tasks.state`: `RUNNING -> REPORT_READY`.
+2. **Verbatim Head SHA & Lineage Invariants**:
+   - `worker_claims.reported_head_sha` stores the exact reported value (`CHECK (LENGTH(reported_head_sha) BETWEEN 7 AND 40 AND NOT (reported_head_sha GLOB '*[^0-9a-f]*'))`).
+   - The verified `actual_head_sha` belongs strictly to Evidence (`evidence_sets.git_evidence_json`), never in `worker_claims`.
+   - `worker_claims` includes `contract_id` with composite lineage triggers and immutable update/delete triggers.
+3. **Canonical Mapping**:
+   - `WorkerReport.head_sha` -> `WorkerClaim.reported_head_sha`
+   - `WorkerReport.files_changed` -> `WorkerClaim.claimed_files_changed`
+   - `WorkerReport.tests` -> `WorkerClaim.claimed_tests`
+   - `WorkerReport.worker_claims` (array of strings) -> `WorkerClaim.textual_claims`
+   - `WorkerReport.build_status` -> `WorkerClaim.build_status`
+   - Canonical `WorkerClaim` object is embedded directly into ReviewBundle `worker_claims`.
 
 ```sql
 -- Schema v6: attempt_workspace_bindings (Owned by Subtask P04A)
 CREATE TABLE attempt_workspace_bindings (
-    binding_id TEXT PRIMARY KEY,
+    attempt_id TEXT PRIMARY KEY REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
     task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
-    attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
-    session_id TEXT NOT NULL,
-    terminal_generation INTEGER NOT NULL CHECK (terminal_generation >= 0),
-    workspace_path TEXT NOT NULL,
+    contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
+    session_id TEXT NOT NULL CHECK (LENGTH(session_id) > 0),
+    terminal_generation TEXT NOT NULL CHECK (LENGTH(terminal_generation) > 0),
+    canonical_worktree_path TEXT NOT NULL CHECK (LENGTH(canonical_worktree_path) > 0),
     volume_serial_hex TEXT NOT NULL CHECK (
         LENGTH(volume_serial_hex) = 16 AND NOT (volume_serial_hex GLOB '*[^0-9a-f]*')
     ),
     file_id_hex TEXT NOT NULL CHECK (
         LENGTH(file_id_hex) = 32 AND NOT (file_id_hex GLOB '*[^0-9a-f]*')
     ),
-    linked_gitdir_path TEXT NOT NULL,
+    linked_gitdir_path TEXT NOT NULL CHECK (LENGTH(linked_gitdir_path) > 0),
     linked_gitdir_volume_serial_hex TEXT NOT NULL CHECK (
         LENGTH(linked_gitdir_volume_serial_hex) = 16 AND NOT (linked_gitdir_volume_serial_hex GLOB '*[^0-9a-f]*')
     ),
@@ -84,28 +105,37 @@ CREATE TABLE attempt_workspace_bindings (
     pinned_ao_commit TEXT NOT NULL CHECK (
         LENGTH(pinned_ao_commit) = 40 AND NOT (pinned_ao_commit GLOB '*[^0-9a-f]*')
     ),
-    binding_status TEXT NOT NULL CHECK (
-        binding_status IN ('ACTIVE', 'RETAINED_FOR_VERIFICATION', 'RELEASED', 'INVALIDATED')
+    binding_state TEXT NOT NULL CHECK (
+        binding_state IN ('ACTIVE', 'RETAINED_FOR_VERIFICATION', 'RELEASED', 'INVALIDATED')
     ),
-    bound_at TEXT NOT NULL CHECK (LENGTH(bound_at) > 0)
+    created_at_epoch_ms INTEGER NOT NULL CHECK (
+        typeof(created_at_epoch_ms) = 'integer' AND created_at_epoch_ms > 0
+    ),
+    released_at_epoch_ms INTEGER NULL CHECK (
+        released_at_epoch_ms IS NULL OR (
+            typeof(released_at_epoch_ms) = 'integer' AND released_at_epoch_ms >= created_at_epoch_ms
+        )
+    ),
+    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT,
+    CHECK (
+        (binding_state IN ('ACTIVE', 'RETAINED_FOR_VERIFICATION') AND released_at_epoch_ms IS NULL) OR
+        (binding_state IN ('RELEASED', 'INVALIDATED') AND released_at_epoch_ms IS NOT NULL)
+    )
 );
 
 CREATE TRIGGER trg_attempt_workspace_bindings_lineage_guard
 BEFORE INSERT ON attempt_workspace_bindings
 FOR EACH ROW
 BEGIN
-    SELECT RAISE(ABORT, 'lineage mismatch: attempt_id does not match task_id in task_attempts')
+    SELECT RAISE(ABORT, 'lineage mismatch: attempt_id does not match task_id, contract_id in task_attempts or session in dispatch_operations')
     WHERE NOT EXISTS (
         SELECT 1 FROM task_attempts a
+        JOIN dispatch_operations d ON d.attempt_id = a.attempt_id
         WHERE a.attempt_id = NEW.attempt_id
           AND a.task_id = NEW.task_id
-    );
-    SELECT RAISE(ABORT, 'lineage mismatch: session_id does not match dispatch_operations')
-    WHERE NOT EXISTS (
-        SELECT 1 FROM dispatch_operations d
-        WHERE d.attempt_id = NEW.attempt_id
-          AND d.task_id = NEW.task_id
+          AND a.contract_id = NEW.contract_id
           AND d.session_id = NEW.session_id
+          AND d.terminal_generation = NEW.terminal_generation
     );
 END;
 
@@ -114,24 +144,24 @@ BEFORE UPDATE ON attempt_workspace_bindings
 FOR EACH ROW
 BEGIN
     SELECT RAISE(ABORT, 'immutable column modified in attempt_workspace_bindings')
-    WHERE NEW.binding_id != OLD.binding_id
+    WHERE NEW.attempt_id != OLD.attempt_id
        OR NEW.task_id != OLD.task_id
-       OR NEW.attempt_id != OLD.attempt_id
+       OR NEW.contract_id != OLD.contract_id
        OR NEW.session_id != OLD.session_id
        OR NEW.terminal_generation != OLD.terminal_generation
-       OR NEW.workspace_path != OLD.workspace_path
+       OR NEW.canonical_worktree_path != OLD.canonical_worktree_path
        OR NEW.volume_serial_hex != OLD.volume_serial_hex
        OR NEW.file_id_hex != OLD.file_id_hex
        OR NEW.linked_gitdir_path != OLD.linked_gitdir_path
        OR NEW.linked_gitdir_volume_serial_hex != OLD.linked_gitdir_volume_serial_hex
        OR NEW.linked_gitdir_file_id_hex != OLD.linked_gitdir_file_id_hex
        OR NEW.pinned_ao_commit != OLD.pinned_ao_commit
-       OR NEW.bound_at != OLD.bound_at;
+       OR NEW.created_at_epoch_ms != OLD.created_at_epoch_ms;
 
-    SELECT RAISE(ABORT, 'illegal binding status transition')
+    SELECT RAISE(ABORT, 'illegal state transition in attempt_workspace_bindings')
     WHERE NOT (
-        (OLD.binding_status = 'ACTIVE' AND NEW.binding_status IN ('RETAINED_FOR_VERIFICATION', 'RELEASED', 'INVALIDATED')) OR
-        (OLD.binding_status = 'RETAINED_FOR_VERIFICATION' AND NEW.binding_status IN ('RELEASED', 'INVALIDATED'))
+        (OLD.binding_state = 'ACTIVE' AND NEW.binding_state IN ('RETAINED_FOR_VERIFICATION', 'RELEASED', 'INVALIDATED')) OR
+        (OLD.binding_state = 'RETAINED_FOR_VERIFICATION' AND NEW.binding_state IN ('RELEASED', 'INVALIDATED'))
     );
 END;
 
@@ -147,19 +177,19 @@ CREATE TABLE worker_claims (
     task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
     attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
     contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
-    claimed_files_json TEXT NOT NULL CHECK (
-        json_valid(claimed_files_json) = 1 AND
-        json_type(claimed_files_json) = 'array'
-    ),
     reported_head_sha TEXT NOT NULL CHECK (
-        LENGTH(reported_head_sha) BETWEEN 7 AND 40 AND
-        NOT (reported_head_sha GLOB '*[^0-9a-f]*')
+        LENGTH(reported_head_sha) BETWEEN 7 AND 40
+        AND NOT (reported_head_sha GLOB '*[^0-9a-f]*')
     ),
-    claim_payload_json TEXT NOT NULL CHECK (
-        json_valid(claim_payload_json) = 1 AND
-        json_type(claim_payload_json) = 'object'
+    payload_json TEXT NOT NULL CHECK (
+        json_valid(payload_json) = 1
+        AND json_type(payload_json, '$.claimed_files_changed') = 'array'
+        AND json_type(payload_json, '$.tests') = 'array'
+        AND json_type(payload_json, '$.textual_claims') = 'array'
     ),
-    persisted_at TEXT NOT NULL CHECK (LENGTH(persisted_at) > 0),
+    created_at_epoch_ms INTEGER NOT NULL CHECK (
+        typeof(created_at_epoch_ms) = 'integer' AND created_at_epoch_ms > 0
+    ),
     FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT
 );
 
@@ -189,21 +219,89 @@ BEGIN
 END;
 ```
 
-### Decision 3: Append-Only Lease History, Partial Unique Index & Reclaim Matrix (P04-ARCH-R11-002)
+### Decision 2: Hardened In-Memory Git Collector & Clean Worktree Allowlist (P04-ARCH-R10-001)
 
-1. **Append-Only Lease History**:
-   - `lease_id TEXT PRIMARY KEY`.
-   - All identity, timestamp, and token columns are immutable: `task_id`, `attempt_id`, `contract_id`, `worker_id`, `fencing_token`, `acquired_at_epoch_ms`, `ttl_seconds`, `expires_at_epoch_ms`, `predecessor_lease_id`.
-   - `UNIQUE(attempt_id, fencing_token)` ensures monotonically increasing tokens.
-2. **Single Active Lease Guarantee**:
-   - Partial unique indexes guarantee at most one `ACTIVE` lease per task and attempt:
-     `CREATE UNIQUE INDEX idx_leases_single_active_attempt ON task_verification_leases(attempt_id) WHERE state = 'ACTIVE';`
-     `CREATE UNIQUE INDEX idx_leases_single_active_task ON task_verification_leases(task_id) WHERE state = 'ACTIVE';`
-3. **CAS State Transitions & Reclaim**:
-   - `ACTIVE -> COMPLETED | EXPIRED | REVOKED`.
-   - `EXPIRED -> RECLAIMED`.
-   - Immutability trigger strictly prevents modifying `worker_id` or tokens during terminal transitions, and prevents `RECLAIMED -> ACTIVE` on the same row.
-   - Atomic reclaim: (1) Predecessor is updated: `state = 'RECLAIMED', released_at_epoch_ms = now` where `state = 'EXPIRED'`; (2) New lease is inserted with `state = 'ACTIVE'`, `fencing_token = predecessor.fencing_token + 1`, and `predecessor_lease_id = predecessor.lease_id`.
+1. **Clean Worktree Policy (v1)**:
+   - Worker must commit all changes; workspace worktree and index must be clean at report intake.
+   - Transaction A rolls back if staged, unstaged, or untracked changes exist; task state remains `RUNNING` preserved (no blanket transition to BLOCKED).
+   - In a separate diagnostic transaction executed after rollback: inserts an ACTIVE hold row into `review_integrity_holds` (`hold_reason = 'DIRTY_WORKTREE_DETECTED'`) and records audit event `EVIDENCE_COLLECTION_FAILED` with deterministic event_id (`event_id = SHA256(lineage + ":" + reason + ":" + sanitized_input_fingerprint)`).
+   - If the diagnostic transaction rolls back, fail-closed without claiming the audit event was recorded.
+2. **Hardened Allowlist**:
+   - `git status --porcelain=v1 -z --untracked-files=all`: Evaluates clean worktree and untracked files.
+   - `git diff-index --quiet HEAD --`: Evaluates clean index state.
+   - `git rev-parse --verify --quiet <ref>^{commit}`: Resolves commit SHA.
+   - `git diff --raw -z --no-renames --no-ext-diff <base> <head> --`: Parses modified files.
+   - `git diff --numstat --no-renames <base> <head> --`: Computes diff statistics.
+   - `git rev-list --count <base>..<head>`: Validates commit distance.
+   - `git ls-tree -rz --full-tree <head>`: Walks commit tree for snapshot manifest.
+   - `git cat-file --batch`: Streams file contents for snapshot extraction.
+   - `git rev-parse --git-path index`: Resolves linked worktree index file.
+   - `git rev-parse --absolute-git-dir`: Resolves primary repository git directory (restored).
+3. **Execution Environment**:
+   - Strictly isolated environment variables (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_OPTIONAL_LOCKS=0`, clean system environment, no user config).
+
+### Decision 3: Windows Verification Isolation Security Boundary & Job Containment
+
+1. **Explicit Handle Inheritance via Attribute Lists**:
+   - `bInheritHandles = TRUE` in `CreateProcessW`.
+   - `STARTUPINFOEXW` configures `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` passing *only* the specific write handles for stdout, stderr, and the read handle for stdin. All database and network handles remain non-inherited.
+2. **Atomic Job Object Assignment**:
+   - `PROC_THREAD_ATTRIBUTE_JOB_LIST` atomically assigns the child process to a Windows Job Object upon creation.
+   - `JOB_OBJECT_LIMIT_BREAKAWAY_OK` is explicitly omitted, preventing subprocess escape.
+   - `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` is configured, guaranteeing process termination if the daemon closes the handle or crashes.
+3. **Authoritative Process-Death Proof for Lease Reclaim**:
+   - TTL expiration alone is insufficient to reclaim a verification lease. The engine must possess authoritative proof of worker process termination:
+     (a) Within the running daemon, the verification runner joins the Job Object / process handle and confirms termination (`GetExitCodeProcess`).
+     (b) Across daemon restart, host exclusivity (ADR-017 / P03-004 machine lock) combined with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` guarantees prior processes died with the previous host process.
+   - If authoritative proof cannot be established, the engine must fail-closed and refuse to allocate a successor lease.
+4. **AppContainer Isolation**:
+   - Ephemeral AppContainer SID generated per verification attempt.
+   - Read-only DACLs granted to snapshot directory; read-write DACLs granted only to ephemeral scratch dir.
+   - Network capabilities omitted entirely.
+
+### Decision 4: Verification Authority & Crash-Safe Latency Semantics via PROPOSAL-P04-002 (P04-ARCH-R11-001)
+
+1. **ReviewBundle Assembly Diagnostic Interval**:
+   - `evidence_finalized_at_epoch_ms`: Durably committed timestamp from Transaction B.
+   - `bundle_assembled_at_epoch_ms`: Timestamp captured when ReviewBundle JSON assembly, RFC 8785 JCS canonicalization, and schema validation succeed, immediately before initiating Transaction C commit.
+   - `compilation_latency_ms = bundle_assembled_at_epoch_ms - evidence_finalized_at_epoch_ms`: Designated strictly as an in-process synthesis assembly diagnostic interval, separate from canonical NFR-008.
+   - Canonical NFR-008 compliance status is held strictly as `UNVERIFIED` in Schema v9 (`nfr008_compliance_status TEXT NOT NULL CHECK (nfr008_compliance_status = 'UNVERIFIED')`).
+2. **Telemetry Decoupling & Deadlock Elimination**:
+   - The proposed audit event `REVIEW_BUNDLE_GENERATED` emitted in Transaction C does NOT contain `commit_duration_ms`.
+   - `commit_duration_ms` is measured post-commit purely as best-effort in-process monotonic telemetry.
+   - Eliminates database deadlocks during recovery; Transaction C advances task state to `REVIEWING`.
+
+### Decision 5: Three Durable Pipeline Transactions, Admission & Bounded Fencing (P04-ARCH-R10-002, R10-004, R10-005)
+
+1. **Model 1 Persistence Ownership Discipline**:
+   - **Subtask P04A**: Owns Schema Migration v6 and Transaction A.
+   - **Subtask P04B**: Pure in-memory Git evidence collection; ZERO SQLite writes.
+   - **Subtask P04C**: Pure in-memory verification runner; ZERO SQLite writes.
+   - **Subtask P04D**: Pipeline Orchestrator and SOLE SQLite CAS persistence orchestrator for Schema Migration v9 (`task_verification_leases`, `evidence_sets`, `review_artifacts`, `review_bundles`), Content-Addressed Store, leases, Transaction B, Transaction C, and audit events.
+2. **Lease TTL Bounds & Mathematical Enforcement**:
+   - `task_verification_leases.ttl_seconds CHECK (ttl_seconds BETWEEN 1 AND 600)`.
+   - `CHECK (expires_at_epoch_ms = acquired_at_epoch_ms + (ttl_seconds * 1000))` enforced in SQLite DDL.
+   - CAS state transition trigger enforces valid transitions and fencing token increments on reclaim.
+3. **ReviewBundle Replay and Conflict State Matrix (Pure Canonical States)**:
+   - Compile failure: Transaction C rolls back, task remains `EVIDENCE_READY`, emits `REVIEW_BUNDLE_COMPILATION_REJECTED`.
+   - Idempotent replay: Returns existing bundle, task remains `REVIEWING`.
+   - Hash conflict: Tampering conflict, task remains `REVIEWING`, Transaction C rolls back, emits `REVIEW_BUNDLE_COMPILATION_REJECTED` (`BUNDLE_HASH_CONFLICT`), locks automated review decision approval.
+   - Database invariant corruption: Task transitions to `BLOCKED`, admission is closed, emits `REVIEW_BUNDLE_COMPILATION_REJECTED` (`INVARIANT_CORRUPTION_DETECTED`).
+
+1. **Linear Lease Chain Design (P04-ARCH-R12-002)**:
+   - Eliminates the `RECLAIMED` state and in-place row mutations. Predecessors stay permanently `EXPIRED` with their original `released_at_epoch_ms`.
+   - Each lease row references its immutable predecessor via `predecessor_lease_id TEXT NULL UNIQUE REFERENCES task_verification_leases(lease_id)`.
+   - First lease: `predecessor_lease_id IS NULL` and `fencing_token = 1`.
+   - Successor lease: `predecessor_lease_id IS NOT NULL`, predecessor must match `(task_id, attempt_id, contract_id)`, predecessor state must be `EXPIRED`, and `NEW.fencing_token = predecessor.fencing_token + 1`.
+   - Exactly one active lease is enforced by partial unique indexes `WHERE state = 'ACTIVE'`.
+   - Terminal CAS: `ACTIVE` only transitions to `COMPLETED`, `EXPIRED`, or `REVOKED`. `released_at_epoch_ms` is written strictly once and can never be rewritten.
+   - Transaction B CAS: Verifies exact `(lease_id, worker_id, fencing_token, state='ACTIVE')` along with evidence and `REPORT_READY -> EVIDENCE_READY`.
+2. **Durable Integrity Holds (P04-ARCH-R12-003)**:
+   - Table `review_integrity_holds` tracks intake and invariant rejections with exact attempt lineage.
+   - Partial unique index ensures at most one `ACTIVE` hold per attempt.
+   - Resolution is permitted only via approved human reconciliation authority (`hold_state = 'RESOLVED'`, `resolved_by_principal`).
+   - All intake, verification (Tx B), compilation (Tx C), and approval paths fail-closed when an ACTIVE hold exists.
+   - Startup recovery scans for ACTIVE holds before opening admission.
 
 ```sql
 -- Schema v9: task_verification_leases (Owned by Subtask P04D)
@@ -212,20 +310,34 @@ CREATE TABLE task_verification_leases (
     task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
     attempt_id TEXT NOT NULL REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
     contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
-    fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
-    state TEXT NOT NULL CHECK (state IN ('ACTIVE', 'COMPLETED', 'EXPIRED', 'RECLAIMED', 'REVOKED')),
+    fencing_token INTEGER NOT NULL CHECK (
+        typeof(fencing_token) = 'integer' AND fencing_token >= 1 AND fencing_token <= 9223372036854775807
+    ),
+    state TEXT NOT NULL CHECK (state IN ('ACTIVE', 'COMPLETED', 'EXPIRED', 'REVOKED')),
     worker_id TEXT NOT NULL CHECK (LENGTH(worker_id) > 0),
-    ttl_seconds INTEGER NOT NULL CHECK (ttl_seconds BETWEEN 1 AND 600),
-    acquired_at_epoch_ms INTEGER NOT NULL CHECK (acquired_at_epoch_ms > 0),
-    expires_at_epoch_ms INTEGER NOT NULL,
-    released_at_epoch_ms INTEGER NULL,
-    predecessor_lease_id TEXT NULL REFERENCES task_verification_leases(lease_id) ON DELETE RESTRICT,
+    ttl_seconds INTEGER NOT NULL CHECK (
+        typeof(ttl_seconds) = 'integer' AND ttl_seconds BETWEEN 1 AND 600
+    ),
+    acquired_at_epoch_ms INTEGER NOT NULL CHECK (
+        typeof(acquired_at_epoch_ms) = 'integer'
+        AND acquired_at_epoch_ms > 0
+        AND acquired_at_epoch_ms <= (9223372036854775807 - (ttl_seconds * 1000))
+    ),
+    expires_at_epoch_ms INTEGER NOT NULL CHECK (typeof(expires_at_epoch_ms) = 'integer'),
+    released_at_epoch_ms INTEGER NULL CHECK (
+        released_at_epoch_ms IS NULL OR (
+            typeof(released_at_epoch_ms) = 'integer' AND released_at_epoch_ms >= acquired_at_epoch_ms
+        )
+    ),
+    predecessor_lease_id TEXT NULL UNIQUE REFERENCES task_verification_leases(lease_id) ON DELETE RESTRICT,
     FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT,
     UNIQUE(attempt_id, fencing_token),
     CHECK (expires_at_epoch_ms = acquired_at_epoch_ms + (ttl_seconds * 1000)),
+    CHECK (predecessor_lease_id IS NULL OR predecessor_lease_id != lease_id),
+    CHECK ((predecessor_lease_id IS NULL AND fencing_token = 1) OR (predecessor_lease_id IS NOT NULL AND fencing_token > 1)),
     CHECK (
         (state = 'ACTIVE' AND released_at_epoch_ms IS NULL) OR
-        (state IN ('COMPLETED', 'EXPIRED', 'RECLAIMED', 'REVOKED') AND released_at_epoch_ms IS NOT NULL AND released_at_epoch_ms >= acquired_at_epoch_ms)
+        (state IN ('COMPLETED', 'EXPIRED', 'REVOKED') AND released_at_epoch_ms IS NOT NULL)
     )
 );
 
@@ -244,14 +356,16 @@ BEGIN
           AND a.contract_id = NEW.contract_id
     );
 
-    SELECT RAISE(ABORT, 'predecessor lease mismatch: predecessor must be RECLAIMED and have lower fencing token')
+    SELECT RAISE(ABORT, 'predecessor lease mismatch: predecessor must match attempt/contract, be EXPIRED, and fencing_token must be predecessor.fencing_token + 1')
     WHERE NEW.predecessor_lease_id IS NOT NULL AND NOT EXISTS (
         SELECT 1 FROM task_verification_leases p
         WHERE p.lease_id = NEW.predecessor_lease_id
           AND p.task_id = NEW.task_id
           AND p.attempt_id = NEW.attempt_id
-          AND p.state = 'RECLAIMED'
-          AND p.fencing_token < NEW.fencing_token
+          AND p.contract_id = NEW.contract_id
+          AND p.state = 'EXPIRED'
+          AND p.released_at_epoch_ms IS NOT NULL
+          AND NEW.fencing_token = (p.fencing_token + 1)
     );
 END;
 
@@ -271,11 +385,11 @@ BEGIN
        OR NEW.expires_at_epoch_ms != OLD.expires_at_epoch_ms
        OR (NEW.predecessor_lease_id IS NOT OLD.predecessor_lease_id);
 
-    SELECT RAISE(ABORT, 'illegal lease state transition')
-    WHERE NOT (
-        (OLD.state = 'ACTIVE' AND NEW.state IN ('COMPLETED', 'EXPIRED', 'REVOKED')) OR
-        (OLD.state = 'EXPIRED' AND NEW.state = 'RECLAIMED')
-    );
+    SELECT RAISE(ABORT, 'released_at_epoch_ms rewrite forbidden')
+    WHERE OLD.released_at_epoch_ms IS NOT NULL AND NEW.released_at_epoch_ms != OLD.released_at_epoch_ms;
+
+    SELECT RAISE(ABORT, 'illegal lease state transition: ACTIVE only transitions to COMPLETED, EXPIRED, or REVOKED')
+    WHERE NOT (OLD.state = 'ACTIVE' AND NEW.state IN ('COMPLETED', 'EXPIRED', 'REVOKED'));
 END;
 
 CREATE TRIGGER trg_task_verification_leases_no_delete
@@ -283,65 +397,88 @@ BEFORE DELETE ON task_verification_leases
 BEGIN
     SELECT RAISE(ABORT, 'task_verification_leases is immutable');
 END;
+
+-- Schema v9: review_integrity_holds (Owned by Subtask P04D)
+CREATE TABLE review_integrity_holds (
+    hold_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
+    attempt_id TEXT NOT NULL REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+    contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
+    hold_reason TEXT NOT NULL CHECK (
+        hold_reason IN (
+            'DIRTY_WORKTREE_DETECTED',
+            'BUNDLE_HASH_CONFLICT',
+            'INVARIANT_MISMATCH',
+            'UNVERIFIED_CLAIM_DETECTED',
+            'SECURITY_POLICY_VIOLATION'
+        )
+    ),
+    hold_state TEXT NOT NULL CHECK (hold_state IN ('ACTIVE', 'RESOLVED')),
+    rejection_audit_event_id TEXT NOT NULL CHECK (LENGTH(rejection_audit_event_id) > 0),
+    resolution_audit_event_id TEXT NULL,
+    resolved_by_principal TEXT NULL,
+    created_at_epoch_ms INTEGER NOT NULL CHECK (
+        typeof(created_at_epoch_ms) = 'integer' AND created_at_epoch_ms > 0
+    ),
+    resolved_at_epoch_ms INTEGER NULL CHECK (
+        resolved_at_epoch_ms IS NULL OR (
+            typeof(resolved_at_epoch_ms) = 'integer' AND resolved_at_epoch_ms >= created_at_epoch_ms
+        )
+    ),
+    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT,
+    CHECK (
+        (hold_state = 'ACTIVE' AND resolved_at_epoch_ms IS NULL AND resolution_audit_event_id IS NULL AND resolved_by_principal IS NULL) OR
+        (hold_state = 'RESOLVED' AND resolved_at_epoch_ms IS NOT NULL AND resolution_audit_event_id IS NOT NULL AND resolved_by_principal IS NOT NULL)
+    )
+);
+
+CREATE UNIQUE INDEX idx_review_integrity_holds_single_active
+ON review_integrity_holds(attempt_id) WHERE hold_state = 'ACTIVE';
+
+CREATE TRIGGER trg_review_integrity_holds_lineage_guard
+BEFORE INSERT ON review_integrity_holds
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'lineage mismatch: attempt_id does not match task_id or contract_id in task_attempts')
+    WHERE NOT EXISTS (
+        SELECT 1 FROM task_attempts a
+        WHERE a.attempt_id = NEW.attempt_id
+          AND a.task_id = NEW.task_id
+          AND a.contract_id = NEW.contract_id
+    );
+END;
+
+CREATE TRIGGER trg_review_integrity_holds_cas_guard
+BEFORE UPDATE ON review_integrity_holds
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'immutable column modified in review_integrity_holds')
+    WHERE NEW.hold_id != OLD.hold_id
+       OR NEW.task_id != OLD.task_id
+       OR NEW.attempt_id != OLD.attempt_id
+       OR NEW.contract_id != OLD.contract_id
+       OR NEW.hold_reason != OLD.hold_reason
+       OR NEW.rejection_audit_event_id != OLD.rejection_audit_event_id
+       OR NEW.created_at_epoch_ms != OLD.created_at_epoch_ms;
+
+    SELECT RAISE(ABORT, 'illegal hold state transition: ACTIVE only transitions to RESOLVED')
+    WHERE NOT (OLD.hold_state = 'ACTIVE' AND NEW.hold_state = 'RESOLVED');
+END;
+
+CREATE TRIGGER trg_review_integrity_holds_no_delete
+BEFORE DELETE ON review_integrity_holds
+BEGIN
+    SELECT RAISE(ABORT, 'review_integrity_holds is immutable');
+END;
 ```
 
-#### Lease Reclaim & Crash Matrix
+### Decision 6: Durable Content-Addressed Artifact Store, Review Schema & Proposed Audit Events (P04-ARCH-R10-001, R10-004)
 
-| Initial State | Event / Trigger | Preconditions | Database Action | Outcome & Invariants |
-| :--- | :--- | :--- | :--- | :--- |
-| No lease | Acquisition | Attempt in `REPORT_READY` | `INSERT INTO task_verification_leases (..., state='ACTIVE', token=1)` | Success. Single active lease guaranteed by partial index. |
-| `ACTIVE` | Concurrent Acquisition | Another worker attempts acquisition | `INSERT INTO task_verification_leases (..., state='ACTIVE')` | **Rejected**. Unique index conflict on `idx_leases_single_active_attempt`. |
-| `ACTIVE` | Normal Completion | Verification succeeds before TTL | `UPDATE ... SET state='COMPLETED', released_at=? WHERE state='ACTIVE' AND worker_id=?` | Success. Lease marked `COMPLETED`. Next stage unlocked. |
-| `ACTIVE` | Expiration | Wall clock exceeds `expires_at` | `UPDATE ... SET state='EXPIRED', released_at=? WHERE state='ACTIVE'` | Success. Lease marked `EXPIRED`. Active lease slot vacated. |
-| `EXPIRED` | Atomic Reclaim | Old worker confirmed dead | Tx: `UPDATE ... SET state='RECLAIMED'` then `INSERT ... state='ACTIVE', token=token+1, pred=old_id` | Success. Old lease becomes `RECLAIMED`; new lease becomes `ACTIVE`. |
-| `EXPIRED` | Concurrent Reclaim Race | Two workers attempt reclaim | Both attempt `UPDATE ... SET state='RECLAIMED' WHERE state='EXPIRED'` | First commits; second sees 0 rows affected and aborts without inserting duplicate. |
-| `RECLAIMED` | Late Stalled Worker Write | Stalled worker attempts release | `UPDATE ... WHERE lease_id=? AND state='ACTIVE' AND token=old_token` | **Zero rows updated**. Stalled worker detects CAS failure and aborts. |
-| `ACTIVE` | Daemon Crash & Restart | Daemon crashes mid-verification | Recovery scan detects expired lease or dead worker PID | Recovery scanner marks `EXPIRED`. Allows subsequent atomic reclaim. |
-
-### Decision 4: ReviewBundle Latency Semantics & Diagnostic Measurement (P04-ARCH-R11-001)
-
-1. **ReviewBundle Assembly Diagnostic**:
-   - `evidence_finalized_at_epoch_ms`: Application timestamp chosen before Transaction B commit and persisted durably by Transaction B.
-   - `bundle_assembled_at_epoch_ms`: Application timestamp captured upon ReviewBundle payload assembly, RFC 8785 canonicalization, and validation, before initiating Transaction C commit.
-   - `compilation_latency_ms`: The deterministic difference representing the assembly diagnostic latency:
-     `compilation_latency_ms = bundle_assembled_at_epoch_ms - evidence_finalized_at_epoch_ms`.
-2. **Canonical NFR-008 Compliance Held as UNVERIFIED**:
-   - Canonical NFR-008 measures from worker completion. The supervisor control plane cannot self-declare NFR-008 as met using the internal assembly diagnostic interval.
-   - `nfr008_compliance_status TEXT NOT NULL CHECK (nfr008_compliance_status = 'UNVERIFIED')` is strictly enforced at the SQLite layer.
-3. **Telemetry Separation**:
-   - `REVIEW_BUNDLE_GENERATED` is inserted inside Transaction C without `commit_duration_ms`.
-   - `commit_duration_ms` is measured using in-process monotonic clock after `tx.Commit()` returns, purely as best-effort in-process telemetry (structured logging/metrics).
-
-### Decision 5: TaskState Graph Discipline & Invariant Mismatch Protocol (P04-ARCH-R11-003)
-
-1. **No Blanket Transition Rules**:
-   - The non-canonical blanket rule transitioning "any non-REVIEWING state with a bundle to BLOCKED" is eliminated.
-2. **Invariant Mismatch Handling**:
-   - If an invariant mismatch is detected (e.g. existing bundle found while task is in an unexpected state):
-     * TaskState remains preserved in its current state.
-     * Automated review approval and intake admission are locked.
-     * Escalation requires human supervisor reconciliation (`HUMAN_SUPERVISOR_RECONCILIATION_REQUIRED`).
-     * Zero non-canonical state transitions are performed.
-3. **Isolated Diagnostic Transactions on Rejection**:
-   - When ReviewBundle compilation or hash verification fails:
-     * Transaction C rolls back completely.
-     * TaskState remains preserved in `EVIDENCE_READY`.
-     * Proposed audit event `REVIEW_BUNDLE_COMPILATION_REJECTED` is appended in a separate diagnostic transaction after rollback using an idempotency key (`audit:<attempt_id>:BUNDLE_HASH_CONFLICT`).
-     * If the diagnostic transaction fails, a compound failure error is returned without claiming audit was recorded. Automated review approval remains locked.
-
-### Decision 6: Durable Content-Addressed Store, Stream Limits & Artifacts Schema (P04-ARCH-R11-004)
-
-1. **Strict Inequality of Stream Limits**:
-   - `CHECK (hard_safety_limit_bytes > capture_limit_bytes)` is enforced at the database level.
-2. **Bounded Overflow Reader Algorithm**:
-   - The supervisor stream reader reads up to at most `hard_safety_limit_bytes + 1` bytes.
-   - Observing byte `hard_safety_limit_bytes + 1` triggers immediate process termination and terminates stream reading.
-3. **Mutually Exclusive Stream States & Precedence**:
-   - Precedence 1: Hard limit breach -> `HARD_LIMIT_TERMINATED` (`total = hard + 1`, `captured = capture`, `is_truncated = 1`, `full_stream_sha256 = NULL`).
-   - Precedence 2: Timeout abort -> `TIMEOUT_ABORTED` (`total <= hard`, `captured = MIN(total, capture)`, `is_truncated = 1`, `full_stream_sha256 = NULL`).
-   - Precedence 3: Clean EOF:
-     * `total <= capture` -> `COMPLETE_EOF` (`captured = total`, `is_truncated = 0`, `full_stream_sha256 = captured_sha256 IS NOT NULL`).
-     * `capture < total <= hard` -> `TRUNCATED_AT_CAPTURE_LIMIT` (`captured = capture`, `is_truncated = 1`, `full_stream_sha256 IS NOT NULL`).
+1. **Artifact Streaming & Exact Limits**:
+   - Separate capture limit (10 MB saved to disk) from hard safety limit (50 MB process termination).
+   - Strict mathematical bounds enforced across `stream_state` combinations.
+2. **Content-Addressed Storage Layout**:
+   - Canonical path exact equality: `canonical_relative_path = 'artifacts/' || substr(captured_sha256, 1, 2) || '/' || captured_sha256`.
 
 ```sql
 -- Schema v9: evidence_sets (Owned by Subtask P04D)
@@ -350,7 +487,9 @@ CREATE TABLE evidence_sets (
     task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
     attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
     contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
-    fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
+    fencing_token INTEGER NOT NULL CHECK (
+        typeof(fencing_token) = 'integer' AND fencing_token >= 1 AND fencing_token <= 9223372036854775807
+    ),
     git_evidence_json TEXT NOT NULL CHECK (
         json_valid(git_evidence_json) = 1 AND
         json_type(git_evidence_json, '$.actual_changed_files') = 'array'
@@ -361,7 +500,9 @@ CREATE TABLE evidence_sets (
     ),
     policy_findings_json TEXT NOT NULL CHECK (json_valid(policy_findings_json) = 1),
     unverified_claims_json TEXT NOT NULL CHECK (json_valid(unverified_claims_json) = 1),
-    evidence_finalized_at_epoch_ms INTEGER NOT NULL CHECK (evidence_finalized_at_epoch_ms > 0),
+    evidence_finalized_at_epoch_ms INTEGER NOT NULL CHECK (
+        typeof(evidence_finalized_at_epoch_ms) = 'integer' AND evidence_finalized_at_epoch_ms > 0
+    ),
     collected_at TEXT NOT NULL CHECK (LENGTH(collected_at) > 0),
     FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT
 );
@@ -412,15 +553,31 @@ CREATE TABLE review_artifacts (
             LENGTH(full_stream_sha256) = 64 AND NOT (full_stream_sha256 GLOB '*[^0-9a-f]*')
         )
     ),
-    capture_limit_bytes INTEGER NOT NULL CHECK (capture_limit_bytes > 0),
-    hard_safety_limit_bytes INTEGER NOT NULL CHECK (hard_safety_limit_bytes > capture_limit_bytes),
-    captured_bytes INTEGER NOT NULL CHECK (captured_bytes >= 0 AND captured_bytes <= capture_limit_bytes),
-    total_observed_bytes INTEGER NOT NULL CHECK (total_observed_bytes >= captured_bytes),
+    capture_limit_bytes INTEGER NOT NULL CHECK (
+        typeof(capture_limit_bytes) = 'integer' AND capture_limit_bytes > 0
+    ),
+    hard_safety_limit_bytes INTEGER NOT NULL CHECK (
+        typeof(hard_safety_limit_bytes) = 'integer'
+        AND hard_safety_limit_bytes > capture_limit_bytes
+        AND hard_safety_limit_bytes <= 9223372036854775806
+    ),
+    captured_bytes INTEGER NOT NULL CHECK (
+        typeof(captured_bytes) = 'integer'
+        AND captured_bytes >= 0
+        AND captured_bytes <= capture_limit_bytes
+    ),
+    total_observed_bytes INTEGER NOT NULL CHECK (
+        typeof(total_observed_bytes) = 'integer'
+        AND total_observed_bytes >= captured_bytes
+        AND total_observed_bytes <= 9223372036854775807
+    ),
     is_truncated INTEGER NOT NULL CHECK (is_truncated IN (0, 1)),
     stream_state TEXT NOT NULL CHECK (
         stream_state IN ('COMPLETE_EOF', 'TRUNCATED_AT_CAPTURE_LIMIT', 'HARD_LIMIT_TERMINATED', 'TIMEOUT_ABORTED')
     ),
-    created_at_epoch_ms INTEGER NOT NULL CHECK (created_at_epoch_ms > 0),
+    created_at_epoch_ms INTEGER NOT NULL CHECK (
+        typeof(created_at_epoch_ms) = 'integer' AND created_at_epoch_ms > 0
+    ),
     FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT,
     CHECK (
         canonical_relative_path = 'artifacts/' || substr(captured_sha256, 1, 2) || '/' || captured_sha256 AND
@@ -481,9 +638,14 @@ CREATE TABLE review_bundles (
     bundle_hash TEXT NOT NULL CHECK (
         LENGTH(bundle_hash) = 64 AND NOT (bundle_hash GLOB '*[^0-9a-f]*')
     ),
-    evidence_finalized_at_epoch_ms INTEGER NOT NULL CHECK (evidence_finalized_at_epoch_ms > 0),
-    bundle_assembled_at_epoch_ms INTEGER NOT NULL CHECK (bundle_assembled_at_epoch_ms >= evidence_finalized_at_epoch_ms),
+    evidence_finalized_at_epoch_ms INTEGER NOT NULL CHECK (
+        typeof(evidence_finalized_at_epoch_ms) = 'integer' AND evidence_finalized_at_epoch_ms > 0
+    ),
+    bundle_assembled_at_epoch_ms INTEGER NOT NULL CHECK (
+        typeof(bundle_assembled_at_epoch_ms) = 'integer' AND bundle_assembled_at_epoch_ms >= evidence_finalized_at_epoch_ms
+    ),
     compilation_latency_ms INTEGER NOT NULL CHECK (
+        typeof(compilation_latency_ms) = 'integer' AND
         compilation_latency_ms >= 0 AND
         compilation_latency_ms = (bundle_assembled_at_epoch_ms - evidence_finalized_at_epoch_ms)
     ),
@@ -501,19 +663,12 @@ CREATE TRIGGER trg_review_bundles_lineage_guard
 BEFORE INSERT ON review_bundles
 FOR EACH ROW
 BEGIN
-    SELECT RAISE(ABORT, 'lineage mismatch: attempt_id does not match task_id or contract_id in task_attempts')
-    WHERE NOT EXISTS (
-        SELECT 1 FROM task_attempts a
-        WHERE a.attempt_id = NEW.attempt_id
-          AND a.task_id = NEW.task_id
-          AND a.contract_id = NEW.contract_id
-    );
-    SELECT RAISE(ABORT, 'lineage mismatch: evidence_set_id does not match attempt_id in evidence_sets')
+    SELECT RAISE(ABORT, 'lineage mismatch: evidence_set_id does not match task_id, attempt_id, contract_id in evidence_sets')
     WHERE NOT EXISTS (
         SELECT 1 FROM evidence_sets e
         WHERE e.evidence_set_id = NEW.evidence_set_id
-          AND e.attempt_id = NEW.attempt_id
           AND e.task_id = NEW.task_id
+          AND e.attempt_id = NEW.attempt_id
           AND e.contract_id = NEW.contract_id
           AND e.evidence_finalized_at_epoch_ms = NEW.evidence_finalized_at_epoch_ms
     );
@@ -534,43 +689,30 @@ END;
 
 ---
 
-## 3. Consequences
+## 5. Consequences
 
-### Positive Consequences
-- **Append-Only Lease History**: Guarantees complete auditability of verification attempts, eliminates in-place lease row mutations, and enforces single active lease invariants via partial unique indexes.
-- **Strict Stream Limits & Precedence**: DDL enforces `hard_safety_limit_bytes > capture_limit_bytes` and resolves race conditions cleanly across all 4 stream states.
-- **Accurate NFR-008 Governance**: Separates internal ReviewBundle assembly diagnostic latency from canonical worker-completion NFR-008 compliance, keeping status `UNVERIFIED` until an approved origin is established.
-- **Causality Integrity**: Eliminates causality violations by omitting post-commit disk telemetry from atomic SQLite transactions.
-- **Canonical TaskState Invariant Protection**: Avoids illegal state graph edges, preserving task state on invariant mismatch and requiring human supervisor reconciliation.
+### Positive
+- Strict, kernel-enforced process and network security boundary for all verification commands via Windows AppContainer.
+- Complete lineage, immutability, and CAS transition enforcement across all pipeline tables.
+- Pure in-memory separation for Subtasks P04B and P04C, eliminating concurrency bugs and orphaned records.
+- Deadlock-free crash recovery across daemon restarts with mathematically verified lease and stream constraints.
 
-### Negative Consequences
-- **Increased Table Volume**: Historical leases accumulate across retries and reclaims; mitigated by indexed lookups and compact row sizes.
-- **Explicit Diagnostic Separation**: Requires separate diagnostic transactions after rollback for failure audit logging.
-
----
-
-## 4. Compliance and Traceability Matrix
-
-| Requirement / Invariant | Implementation Mechanism | Enforcement Layer | Status |
-| :--- | :--- | :--- | :--- |
-| **Model 1 Persistence Ownership** | P04A owns v6; P04B/C in-memory only; P04D owns v9 & CAS | Architecture Division | **ENFORCED** |
-| **Append-Only Lease History** | `lease_id PRIMARY KEY`, partial unique index on `ACTIVE` | SQLite Schema v9 | **ENFORCED** |
-| **Lease Reclaim CAS Guards** | `BEFORE UPDATE` trigger blocks `worker_id` mutation & illegal transitions | SQLite Triggers | **ENFORCED** |
-| **ReviewBundle Assembly Diagnostic** | `compilation_latency_ms = bundle_assembled - evidence_finalized` | SQLite CHECK Constraint | **ENFORCED** |
-| **NFR-008 Compliance Governance** | `nfr008_compliance_status = 'UNVERIFIED'` | SQLite CHECK Constraint | **ENFORCED** |
-| **Telemetry Causality** | Monotonic `commit_duration_ms` emitted post-commit only | Go In-Process Telemetry | **ENFORCED** |
-| **Canonical State Preservation** | Invariant mismatch preserves TaskState; closes admission | Pipeline Orchestrator | **ENFORCED** |
-| **Stream Limit Inequality** | `CHECK (hard_safety_limit_bytes > capture_limit_bytes)` | SQLite Schema v9 | **ENFORCED** |
-| **Mutual Exclusion of Stream States**| Compound CHECK constraint covering all 4 stream states | SQLite Schema v9 | **ENFORCED** |
+### Negative / Trade-offs
+- Verification execution duration is bounded by real test execution physics rather than sub-3-second expectations (reconciled cleanly via PROPOSAL-P04-002).
+- Clean worktree policy v1 requires workers to keep worktree and index completely clean at report time.
 
 ---
 
-## 5. References
+## 6. Migration and Schema Ownership
 
-- Canonical Architecture: `docs/04_ARCHITECTURE.md` (Section 7)
-- Domain Model: `docs/05_DOMAIN_MODEL.md`
-- Workflow State Machine: `docs/06_WORKFLOW_STATE_MACHINE.md`
-- Review Bundle Specification: `docs/10_REVIEW_BUNDLE.md`
-- Change Governance: `docs/24_CHANGE_GOVERNANCE.md`
-- Latency Semantics Proposal: `docs/proposals/PROPOSAL-P04-002-review-bundle-latency-semantics.md` (Revision 6)
-- External Re-Audit 010: `docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_010.md`
+- **Schema v6 (Owned by Subtask P04A)**:
+  - `attempt_workspace_bindings` table, indexes, and triggers.
+  - `worker_claims` table, indexes, and triggers.
+- **Schema v9 (Owned by Subtask P04D)**:
+  - `task_verification_leases` table, indexes, and triggers.
+  - `review_integrity_holds` table, indexes, and triggers.
+  - `evidence_sets` table, indexes, and triggers.
+  - `review_artifacts` table, indexes, and triggers.
+  - `review_bundles` table, indexes, and triggers.
+- **Subtasks P04B & P04C**:
+  - Pure in-memory execution; zero migration ownership, zero runtime SQLite writes.
