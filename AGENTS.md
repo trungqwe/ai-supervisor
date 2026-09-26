@@ -98,19 +98,26 @@ This document establishes immutable operational directives for all AI coding age
 > External Supervisor approved and released `CONTRACT-TASK-P03-003D-01` from candidate commit `7701b8b02c68006c4e692a1c8a61609c72a6c033`, blob `604c4786281354565c8e37238f0b5ba95542e4f9`, code base `583e700eb125a08cc6bd7d63b6b27a6f3d4cc527` (`docs/audits/P03_TASK_003D_CONTRACT_RELEASE_AUDIT.md`).
 > Historical 3B release: External Supervisor released CONTRACT-TASK-P03-003B-01 from candidate SHA `ae8deb9ee41479d0e0868dced53ed89135252923`, blob `84bd84535352c2d28dbc1eba820aa8b22382dd99`, with code base SHA `b8b0c95576d87677e8d48210d9838cc2f599752a`.
 
-> External Supervisor final exit gate re-audit in docs/audits/P03_EXIT_GATE_EXTERNAL_REAUDIT_002.md confirmed all findings CLOSED (P03-EXIT-R1-001..004 CLOSED; P03-EXIT-R2-001 CLOSED_WITH_BYTE_EXACT_RECOVERY_AND_PROVENANCE_LIMITATION). P03 Exit Gate is approved (P03_EXIT_GATE = EXTERNAL_AUDIT_APPROVED). Phase P03 is COMPLETE (PHASE_P03 = COMPLETE). Active gate transitions to P04_CONTRACT_PLANNING. P04 code writing remains held pending Task Contract release (P04_CODE = HELD_PENDING_TASK_CONTRACT_RELEASE). P05_CODE = NOT_AUTHORIZED. Candidate artifact preserved externally in D:\TU_CODE\ai-supervisor-user-wip-recovery\P03-EXIT-R2-001 (never restore or merge into source code). AUTOMATIC_RESTORE = DISABLED; host principal, Live AO and Stage B runtime remain UNVERIFIED.
+> Phase P04 Pre-Contract Architecture Planning active per PROPOSAL-P04-001, DRAFT-ADR-018, and PLAN-P04-EVIDENCE-REVIEW. Four critical design blockers are open: DESIGN_BLOCKER_P04_WORKTREE_BINDING, DESIGN_BLOCKER_P04_VERIFICATION_ISOLATION, DESIGN_BLOCKER_P04_REVIEW_SCHEMA_RECONCILIATION, and DESIGN_BLOCKER_P04_EVIDENCE_ATOMICITY. Task Contract for P04 is NOT_RELEASED. Code writing for Phase P04 remains strictly held pending approved architecture and task contract release (P04_CODE = HELD_PENDING_APPROVED_ARCHITECTURE_AND_TASK_CONTRACT). P05_CODE = NOT_AUTHORIZED. ACTIVE_GATE = P04_PRECONTRACT_ARCHITECTURE_AUDIT.
 >
-1. **PHASE P03 COMPLETE & P04 CONTRACT PLANNING DIRECTIVES**:
+1. **PHASE P04 PRE-CONTRACT ARCHITECTURE PLANNING DIRECTIVES**:
    - `PHASE_P03 = COMPLETE`; `P03_EXIT_GATE = EXTERNAL_AUDIT_APPROVED`.
-   - `ACTIVE_GATE = P04_CONTRACT_PLANNING`; `P04_CODE = HELD_PENDING_TASK_CONTRACT_RELEASE`.
-   - All 7 Phase P03 work packages (TASK-P03-001, 002, 003A, 003B, 003C, 003D, 004 Rev 2) are formally approved and merged into `main`.
-   - Daemon bootstrap, machine exclusivity, and host quiescence are fully implemented, approved, and merged at library and daemon scope (`HOST_QUIESCENCE_INTEGRATION = IMPLEMENTED_AT_LIBRARY_AND_DAEMON_SCOPE`, `DESIGN_BLOCKER_3D_STARTUP_WIRING = CLOSED_AT_IMPLEMENTATION_SCOPE`).
-   - Candidate WIP artifact preserved externally in `D:\TU_CODE\ai-supervisor-user-wip-recovery\P03-EXIT-R2-001`; never restore, overwrite, merge, or delete candidate.
-   - Next Approved Action: Read Phase P04 canonical specifications, `docs/sources/SOURCE_REGISTRY.md`, `docs/sources/REUSE_MATRIX.md`, system architecture and change governance (`docs/24_CHANGE_GOVERNANCE.md`) to prepare P04 Task Contract scope. Zero production or test code for Phase P04 may be written until formal Task Contract release (`P04_CODE = HELD_PENDING_TASK_CONTRACT_RELEASE`).
-   - Zero code for Phase P05 may be written in this stage (`P05_CODE = NOT_AUTHORIZED`).
+   - `ACTIVE_GATE = P04_PRECONTRACT_ARCHITECTURE_AUDIT`.
+   - `P04_TASK_CONTRACT = NOT_RELEASED`; `P04_CODE = HELD_PENDING_APPROVED_ARCHITECTURE_AND_TASK_CONTRACT`.
+   - `P05_CODE = NOT_AUTHORIZED`.
+   - Four Open Architecture Design Blockers:
+     * `DESIGN_BLOCKER_P04_WORKTREE_BINDING = OPEN`
+     * `DESIGN_BLOCKER_P04_VERIFICATION_ISOLATION = OPEN`
+     * `DESIGN_BLOCKER_P04_REVIEW_SCHEMA_RECONCILIATION = OPEN`
+     * `DESIGN_BLOCKER_P04_EVIDENCE_ATOMICITY = OPEN`
+   - Governing Pre-Contract Documents Submitted:
+     * Proposal: `docs/proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md` (`PENDING_EXTERNAL_REVIEW`)
+     * Draft ADR: `docs/adr/DRAFT-ADR-018-evidence-review-and-verification-isolation.md` (`DRAFT_PENDING_EXTERNAL_APPROVAL`)
+     * Execution Plan: `docs/plans/PLAN-P04-EVIDENCE-REVIEW.md` (`PLANNING_PENDING_EXTERNAL_AUDIT`)
+   - Next Approved Action: External Supervisor architecture audit of PROPOSAL-P04-001, DRAFT-ADR-018, and PLAN-P04-EVIDENCE-REVIEW. Zero production or test code writing for Phase P04 or P05 until formal Task Contract release.
    - Maintain strict fail-closed dependencies: `AUTOMATIC_RESTORE = DISABLED`; operator restore and linked stop remain disabled until verified operator principal reaches trusted boundary (`VERIFIED_OPERATOR_PRINCIPAL = OPEN_FAIL_CLOSED_DEPENDENCY`).
    - Stage B runtime catalog is deferred: `STAGE_B_RUNTIME_CATALOG = DEFERRED_TO_P04_RUNTIME_INTEGRATION`.
-   - Preserve three-track evidence: (1) Automated Library/Mock AO unit and integration tests in CI (verified); (2) Real Windows binary verification (`cmd/supervisor`) for lock exclusivity, admission, and drain (verified); (3) Live AO proof (`LIVE_AO_INTEGRATION = UNVERIFIED_EVIDENCE_TRACK`, non-blocking for automated harness exit gate).
+   - Candidate WIP artifact preserved externally in `D:\TU_CODE\ai-supervisor-user-wip-recovery\P03-EXIT-R2-001`; never restore, overwrite, merge, or delete candidate.
 
 2. **HISTORICAL SUBTASK CLEARANCE RECORD**:
    - `TASK_P03_001 = EXTERNAL_AUDIT_APPROVED` & `MERGED`.
@@ -121,12 +128,12 @@ This document establishes immutable operational directives for all AI coding age
    - `TASK_P03_003D = EXTERNAL_AUDIT_APPROVED` & `MERGED`.
    - `TASK_P03_004 = EXTERNAL_AUDIT_APPROVED` & `MERGED` (`CONTRACT_TASK_P03_004_02`).
 
-3. **EXPLICITLY FORBIDDEN IN THIS PHASE TRANSITION STAGE**:
-   - Absolutely NO writing of Phase P04 Evidence & Review Engine code until formal Task Contract release (`P04_CODE = HELD_PENDING_TASK_CONTRACT_RELEASE`);
+3. **EXPLICITLY FORBIDDEN IN THIS PRE-CONTRACT PLANNING STAGE**:
+   - Absolutely NO writing of Phase P04 Evidence & Review Engine code until formal Task Contract release (`P04_CODE = HELD_PENDING_APPROVED_ARCHITECTURE_AND_TASK_CONTRACT`);
    - Absolutely NO writing of Phase P05 ChatGPT Tool Interface code (`P05_CODE = NOT_AUTHORIZED`);
    - Absolutely NO enabling of `AUTOMATIC_RESTORE`;
-   - Absolutely NO restoring candidate recovery artifact into `internal/store/session_lifecycle.go` or merging it into source code;
-   - Absolutely NO modifying accepted ADRs (ADR-016, ADR-017) or released Task Contracts.
+   - Absolutely NO modifying accepted ADRs (ADR-016, ADR-017) or released Task Contracts;
+   - Absolutely NO restoring candidate recovery artifact into `internal/store/session_lifecycle.go` or merging it into source code.
 
 4. **FINAL GOVERNANCE STATE**:
    - `P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED` (Historical Baseline A)
@@ -158,18 +165,18 @@ This document establishes immutable operational directives for all AI coding age
    - `TASK_P03_004_MERGE_AUDIT = VERIFIED` (`docs/audits/P03_TASK_004_MERGE_INTEGRATION_AUDIT.md`, commit `e57a87fcc764ca38578daa6e109eed084a6980c3`)
    - `HOST_QUIESCENCE_INTEGRATION = IMPLEMENTED_AT_LIBRARY_AND_DAEMON_SCOPE`
    - `DESIGN_BLOCKER_3D_STARTUP_WIRING = CLOSED_AT_IMPLEMENTATION_SCOPE`
-   - `FINDING_P03_004_R1_001_THROUGH_005 = CLOSED`
-   - `FINDING_P03_004_R2_001 = CLOSED`
-   - `FINDING_P03_004_R3_001 = CLOSED`
-   - `FINDING_P03_004_R3_002 = CLOSED`
-   - `FINDING_P03_004_R4_001 = CLOSED`
    - `FINDING_P03_EXIT_R1_001_THROUGH_004 = CLOSED` (`docs/audits/P03_EXIT_GATE_EXTERNAL_REAUDIT_001.md`)
    - `FINDING_P03_EXIT_R2_001 = CLOSED_WITH_BYTE_EXACT_RECOVERY_AND_PROVENANCE_LIMITATION` (`docs/audits/P03_EXIT_GATE_EXTERNAL_REAUDIT_002.md`)
    - `CANDIDATE_WIP_STATUS = CLOSED_WITH_BYTE_EXACT_RECOVERY_AND_PROVENANCE_LIMITATION` (preserved externally in `D:\TU_CODE\ai-supervisor-user-wip-recovery\P03-EXIT-R2-001`)
    - `P03_EXIT_GATE = EXTERNAL_AUDIT_APPROVED`
    - `PHASE_P03 = COMPLETE`
-   - `ACTIVE_GATE = P04_CONTRACT_PLANNING`
-   - `P04_CODE = HELD_PENDING_TASK_CONTRACT_RELEASE`
+   - `DESIGN_BLOCKER_P04_WORKTREE_BINDING = OPEN`
+   - `DESIGN_BLOCKER_P04_VERIFICATION_ISOLATION = OPEN`
+   - `DESIGN_BLOCKER_P04_REVIEW_SCHEMA_RECONCILIATION = OPEN`
+   - `DESIGN_BLOCKER_P04_EVIDENCE_ATOMICITY = OPEN`
+   - `P04_TASK_CONTRACT = NOT_RELEASED`
+   - `P04_CODE = HELD_PENDING_APPROVED_ARCHITECTURE_AND_TASK_CONTRACT`
+   - `ACTIVE_GATE = P04_PRECONTRACT_ARCHITECTURE_AUDIT`
    - `P05_CODE = NOT_AUTHORIZED`
    - `AUTOMATIC_RESTORE = DISABLED`
    - `LIVE_AO_INTEGRATION = UNVERIFIED_EVIDENCE_TRACK`
