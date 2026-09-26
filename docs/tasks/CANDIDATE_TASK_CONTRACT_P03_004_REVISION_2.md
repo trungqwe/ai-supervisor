@@ -86,20 +86,20 @@
     "Binary readiness probe on cmd/supervisor proves socket refused before Run, and 200 OK only after Run Complete; zero Pair HTTP routes or effectful Supervisor API on daemon listener",
     "Pair hold and 5 AO exit gate steps proven via P03 Integration Test Harness directly invoking approved library APIs without P04/P05 dependencies",
     "All 8 operational policies remain UNSET in documentation, failing closed at runtime if missing; AUTOMATIC_RESTORE remains DISABLED",
-    "Poller error notification constraint: recovery.Poller must expose Done() <-chan struct{} fresh per Start and Err() error with synchronized access; Err recorded before Done close; clean Stop/context cancel yields nil Err; host watcher observes closed channel and marks admission unavailable fail-closed via SetUnavailable() without crashing daemon or releasing lock; watcher joined during host shutdown",
-    "AO workspace read constraint: ao.Client.GetWorkspaceFile must enforce context cancellation, close response body on all paths, validate JSON WorkspaceFileResponse envelope (sessionId, path, required fields), reject binary/deleted/contentTruncated and trailing payload fail-closed, distinguish wire envelope limit from content limit opts.MaxBytes, block overflow with max+1, and preserve TransportError/APIError/ProtocolError without domain WorkerReport/TaskState parsing"
+    "Poller error notification constraint: recovery.Poller must expose Done() <-chan struct{} fresh per Start and Err() error with synchronized access; single close on done avoiding double close; Err recorded before done close; clean Stop/context cancel yields nil Err; host watcher observes closed channel and marks admission unavailable fail-closed via SetUnavailable() without crashing daemon or releasing lock; watcher joined during host shutdown",
+    "AO workspace read constraint: WorkspaceReadOptions must explicitly accept MaxWireBytes and MaxBytes independently (both >0) with overflow pre-check; no MaxBytes+64KB or implicit fallback; read at most MaxWireBytes+1 via LimitReader; validate presence and types of all required fields of WorkspaceFileResponse preventing zero-value masking; reject binary, deleted, contentTruncated, and trailing payload fail-closed; HTTP 200 with deleted=true returns ErrWorkspaceFileDeleted without fabricating 404 APIError; check content byte length <= MaxBytes with ErrPayloadTooLarge; preserve TransportError/APIError/ProtocolError without domain WorkerReport/TaskState parsing"
   ],
   "acceptance_criteria": [
     "AC-004-01: cmd/supervisor implements Windows exclusive sidecar lock file handle (.owner.lock) with share mode 0, failing closed on contention",
     "AC-004-02: Path lock key derivation is strictly distinguished from physical file ID; aliases (subst, junctions, casing) are only admitted upon runtime probe proof of convergence to identical canonical lock key, otherwise fail-closed without unconditional support promises",
     "AC-004-03: Host holds pinned DB handle (no FILE_SHARE_DELETE) preventing file substitution during entire Store lifecycle; converts validated Win32 DOS path to Store DBPath while UNC/device paths fail-closed; invokes store.Open(ctx, store.Config{DBPath, BusyTimeoutMs}) without inspecting private DB pragmas; physical identity validations compare VolumeSerialNumber and 128-bit FileId between OS handles and parent volume, closing Store and failing closed on any mismatch",
     "AC-004-04: Shutdown drain sequence closes pipe listener, drains callers, closes Store, cleans metadata if instance matches, and closes lock handle LAST",
-    "AC-004-05: Named Pipe takeover verifies caller SID via Impersonation and token check, reverts context via RevertToSelf(), and treats owner_instance_id as freshness marker",
+    "AC-004-05: Named Pipe takeover verifies caller SID via ImpersonateNamedPipeClient and token check, reverts context via RevertToSelf(), and treats owner_instance_id as freshness marker",
     "AC-004-06: Binary readiness probe proves port closed before Run and open after Complete; Pair hold proven via Store/admission guards in harness",
     "AC-004-07: P03 Integration Test Harness verifies 5 AO exit gate steps (session create, dispatch, observation reconciliation, raw file read, teardown) via internal library APIs",
     "AC-004-08: Zero effectful HTTP routes on daemon; 8 policies remain UNSET and fail closed; AUTOMATIC_RESTORE remains DISABLED; test suite passes with -race",
-    "AC-004-09: recovery.Poller exports Done() <-chan struct{} (fresh per Start) and Err() error with synchronized lifecycle; host watcher joins on shutdown, distinguishes clean cancellation (Err==nil) from background failure (Err!=nil), transitions /readyz to HTTP 503 and marks admission unavailable via SetUnavailable() without process crash or lock release",
-    "AC-004-10: ao.Client provides GetWorkspaceFile decoding WorkspaceFileResponse JSON envelope from pinned AO (15e9ea971f1711ec8b50e157d6eb300db6cbe0d6), validating sessionId/path match, rejecting binary/deleted/contentTruncated/trailing bytes, enforcing bounded wire and content limits with ErrPayloadTooLarge, and preserving TransportError/APIError/ProtocolError without domain state parsing; P03 integration test harness verifies positive control and negative error rejection via typed client API"
+    "AC-004-09: recovery.Poller exports Done() <-chan struct{} (fresh per Start) and Err() error with synchronized lifecycle and single close; host watcher joins on shutdown, distinguishes clean cancellation (Err==nil) from background failure (Err!=nil), transitions /readyz to HTTP 503 and marks admission unavailable via SetUnavailable() without process crash or lock release; regression tests cover real PollOnce error, clean stop, cancel, restart, and race",
+    "AC-004-10: ao.Client provides GetWorkspaceFile accepting independent MaxWireBytes and MaxBytes (>0 with overflow check); reads at most MaxWireBytes+1; decodes WorkspaceFileResponse JSON from pinned AO (15e9ea971f1711ec8b50e157d6eb300db6cbe0d6) validating presence and types of all required fields; rejects trailing data, binary, contentTruncated, and deleted files (HTTP 200 with deleted=true returns ErrWorkspaceFileDeleted); verifies content byte length <= MaxBytes with ErrPayloadTooLarge; preserves TransportError/APIError/ProtocolError without domain WorkerReport/TaskState parsing; mock harness tests large envelope with small content, wire overflow, content overflow, exact boundary, and negative cases"
   ],
   "verification_requests": [
     {
@@ -212,7 +212,7 @@
 | `supersedes_contract_id` | `null` | `CONTRACT-TASK-P03-004-01` | Explicit supersedes lineage link |
 | `allowed_scope` | `cmd/supervisor/**`, `internal/host/**`, `test/integration/**` | + `internal/recovery/poller.go`, `internal/recovery/poller_test.go`, `internal/ao/client.go`, `internal/ao/types.go`, `internal/ao/client_test.go` | Narrowest whitelist expansion to resolve Seams 1 & 2 per PROPOSAL-P03-006 |
 | `forbidden_scope` | Broad subsystem globs | Fine-grained file-level exclusions for all non-whitelisted files in `recovery` and `ao` | Enforces Task Scope Immutability on untouched files |
-| `constraints` | 8 baseline constraints | 8 baseline + 2 new (Poller synchronized error notification & AO JSON envelope validation) | Formalizes asynchronous signal & bounded read guards |
+| `constraints` | 8 baseline constraints | 8 baseline + 2 new (Poller synchronized single-close notification & AO JSON envelope validation with independent MaxWireBytes and MaxBytes) | Formalizes asynchronous signal & bounded read guards |
 | `acceptance_criteria` | `AC-004-01` .. `AC-004-08` | `AC-004-01` .. `AC-004-08` + `AC-004-09` + `AC-004-10` | Distinct IDs for new verifiable acceptance criteria |
 | `verification_requests` | 3 requests (host, cmd, integration) | 3 baseline + 2 new (`VR-P03-004-RECOVERY-POLLER-TESTS`, `VR-P03-004-AO-CLIENT-TESTS`) | Targets specific unit tests for modified recovery and ao packages |
 | `required_evidence` | 10 baseline evidence items | 10 baseline + 2 new (`poller_async_error_notification_evidence`, `ao_workspace_file_typed_client_evidence`) | Verifiable claims required in worker report |
@@ -224,7 +224,7 @@
 
 > [!NOTE]
 > The evaluation policy catalog registered in `docs/audits/P03_ADR_017_EXTERNAL_REAUDIT_005.md` defined `package` enum with 3 paths.
-> The following delta is **PROPOSED** for Revision 2 and remains **NOT YET APPROVED** until formal release audit by External Supervisor:
+> The following catalog delta expanding the enum to 5 packages is **APPROVED_AT_DESIGN_LEVEL**; Stage B host runtime remains **UNVERIFIED** until task dispatch:
 
 ```json
 {
