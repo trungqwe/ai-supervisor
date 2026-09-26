@@ -1,4 +1,4 @@
-# DRAFT TASK CONTRACT: TASK-P03-004 (REVISION 2)
+# CANDIDATE TASK CONTRACT: TASK-P03-004 (REVISION 2)
 
 > **Contract ID**: `CONTRACT-TASK-P03-004-02`
 > **Task ID**: `TASK-P03-004` (Host Quiescence & Daemon Bootstrap Integration)
@@ -6,7 +6,7 @@
 > **Supersedes Contract ID**: `CONTRACT-TASK-P03-004-01`
 > **Phase ID**: `P03`
 > **Base SHA**: `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea`
-> **Status**: `PROPOSED (Dự thảo phục vụ Change Governance theo PROPOSAL-P03-006)`
+> **Status**: `NOT_RELEASED (Hồ sơ ứng viên chờ External Supervisor thẩm định và phê duyệt)`
 > **Authority**: Formulated pursuant to accepted `ADR-017` (§2.6, §4.1, §4.2), `ADR-016`, approved `PROPOSAL-P03-005`, and proposed `PROPOSAL-P03-006`.
 > **Implementation Scope**: Authorized strictly within `allowed_scope` on branch `codex/p03-004` upon formal release.
 > **Runtime Invariants**: `AUTOMATIC_RESTORE = DISABLED`; verified host principal remains `OPEN` dependency at trusted boundary; zero Phase P04/P05 dependencies.
