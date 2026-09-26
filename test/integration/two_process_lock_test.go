@@ -486,3 +486,196 @@ func TestDaemonReadinessLifecycle(t *testing.T) {
 	}
 	t.Log("PASS: /readyz correctly refused after daemon shutdown")
 }
+
+
+// TestDaemonPollerFailureMidRunProbe proves P03-004-R3-002:
+// 1. Starts daemon with -test-fail-poller-file trigger and -poll-interval=50ms.
+// 2. Verifies daemon starts up, signals ready, and /readyz returns HTTP 200 OK.
+// 3. Verifies owner lock is held (contender rejected with exit code 32).
+// 4. Triggers real PollOnce failure mid-run by writing the trigger file.
+// 5. Verifies /readyz transitions to HTTP 503 Service Unavailable (host admission closed).
+// 6. Verifies daemon process does NOT crash and owner lock (.owner.lock) is STILL held (contender exit code 32).
+// 7. Executes graceful shutdown via stop CLI command, verifying that shutdown
+//    cleanly joins the watcher and the Poller (which already stopped due to failure).
+// 8. Verifies that after daemon exits, lock is released and a new contender can acquire it.
+func TestDaemonPollerFailureMidRunProbe(t *testing.T) {
+	tempDir := t.TempDir()
+	binPath := filepath.Join(tempDir, "supervisor.exe")
+	dbPath := filepath.Join(tempDir, "poll_fail.db")
+	readyFile := filepath.Join(tempDir, "ready_signal.txt")
+	failTriggerFile := filepath.Join(tempDir, "fail_poller.trigger")
+
+	buildCmd := exec.Command("go", "build", "-o", binPath, "../../cmd/supervisor")
+	if err := buildCmd.Run(); err != nil {
+		t.Fatalf("failed to build supervisor binary: %v", err)
+	}
+
+	policyArgs := []string{
+		"-http-timeout=5s",
+		"-health-timeout=2s",
+		"-spawn-timeout=10s",
+		"-send-timeout=5s",
+		"-poll-interval=50ms",
+		"-deadline=30s",
+		"-kill-timeout=5s",
+		"-workspace-timeout=5s",
+	}
+
+	p1Args := append([]string{
+		"run",
+		"-db=" + dbPath,
+		"-http-addr=127.0.0.1:0",
+		"-instance-id=proc-poller-midrun-fail",
+		"-ready-signal-file=" + readyFile,
+		"-test-fail-poller-file=" + failTriggerFile,
+	}, policyArgs...)
+
+	p1 := exec.Command(binPath, p1Args...)
+	p1Done := make(chan error, 1)
+	if err := p1.Start(); err != nil {
+		t.Fatalf("failed to start daemon: %v", err)
+	}
+	go func() {
+		p1Done <- p1.Wait()
+	}()
+	defer func() {
+		if p1.Process != nil {
+			_ = p1.Process.Kill()
+		}
+	}()
+
+	// 1. Wait for readiness signal file
+	var httpAddr string
+	for start := time.Now(); time.Since(start) < 10*time.Second; time.Sleep(50 * time.Millisecond) {
+		if data, err := os.ReadFile(readyFile); err == nil && len(data) > 0 {
+			httpAddr = strings.TrimSpace(string(data))
+			break
+		}
+	}
+	if httpAddr == "" {
+		t.Fatal("timed out waiting for readiness signal file")
+	}
+
+	// 2. Probe /readyz returns HTTP 200 OK initially
+	resp, err := http.Get("http://" + httpAddr + "/readyz")
+	if err != nil {
+		t.Fatalf("failed to probe /readyz before failure: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected /readyz 200 OK before failure, got %d", resp.StatusCode)
+	}
+	t.Log("PASS: /readyz returned 200 OK initially")
+
+	// 3. Verify owner lock is held initially (contender rejected with code 32)
+	p2Args := append([]string{
+		"run",
+		"-db=" + dbPath,
+		"-http-addr=127.0.0.1:0",
+		"-instance-id=proc-midrun-contender",
+	}, policyArgs...)
+	p2 := exec.Command(binPath, p2Args...)
+	out, err := p2.CombinedOutput()
+	if err == nil {
+		t.Fatal("expected contender to fail with lock contention initially, but succeeded")
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 32 {
+		t.Fatalf("expected contender exit code 32 initially, got %v: %s", err, string(out))
+	}
+	t.Log("PASS: Contender correctly rejected (code 32) initially")
+
+	// 4. Trigger real PollOnce failure mid-run
+	if err := os.WriteFile(failTriggerFile, []byte("fail"), 0644); err != nil {
+		t.Fatalf("failed to write fail trigger file: %v", err)
+	}
+
+	// 5. Poll /readyz until it transitions to HTTP 503 Service Unavailable
+	var ready503 bool
+	for start := time.Now(); time.Since(start) < 5*time.Second; time.Sleep(50 * time.Millisecond) {
+		resp, err := http.Get("http://" + httpAddr + "/readyz")
+		if err == nil {
+			status := resp.StatusCode
+			resp.Body.Close()
+			if status == http.StatusServiceUnavailable {
+				ready503 = true
+				break
+			}
+		}
+	}
+	if !ready503 {
+		t.Fatal("expected /readyz to transition to 503 Service Unavailable after poller error, but it did not")
+	}
+	t.Log("PASS: /readyz transitioned to 503 Service Unavailable upon background poller failure")
+
+	// 6. Verify daemon process has NOT crashed
+	select {
+	case exitErr := <-p1Done:
+		t.Fatalf("daemon crashed or exited unexpectedly on poller failure: %v", exitErr)
+	default:
+		t.Log("PASS: Daemon process is still alive and did not crash on poller failure")
+	}
+
+	// 7. Verify owner lock is STILL held despite poller failure and closed admission
+	p3 := exec.Command(binPath, p2Args...)
+	out3, err3 := p3.CombinedOutput()
+	if err3 == nil {
+		t.Fatal("contender acquired lock while daemon should still hold it after poller failure")
+	}
+	exitErr3, ok3 := err3.(*exec.ExitError)
+	if !ok3 || exitErr3.ExitCode() != 32 {
+		t.Fatalf("expected contender exit code 32 after poller failure, got %v: %s", err3, string(out3))
+	}
+	t.Log("PASS: Owner lock is STILL held by daemon after poller failure (contender code 32)")
+
+	// 8. Graceful shutdown via stop CLI command
+	stopCmd := exec.Command(binPath, "stop", "-db="+dbPath, "-timeout=5s")
+	stopOut, stopErr := stopCmd.CombinedOutput()
+	if stopErr != nil {
+		t.Fatalf("stop command failed during teardown: %v, output: %s", stopErr, string(stopOut))
+	}
+	t.Logf("PASS: Stop command succeeded: %s", strings.TrimSpace(string(stopOut)))
+
+	// 9. Verify daemon exits cleanly (shutdown joins watcher and stopped poller)
+	select {
+	case p1Err := <-p1Done:
+		if p1Err != nil {
+			t.Logf("daemon exited after stop (exit: %v)", p1Err)
+		} else {
+			t.Log("PASS: Daemon process exited cleanly with code 0")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for daemon to exit after stop command")
+	}
+
+	// 10. Verify that now contender can acquire lock and start
+	contenderReadyFile := filepath.Join(tempDir, "contender_ready.txt")
+	p4Args := append([]string{
+		"run",
+		"-db=" + dbPath,
+		"-http-addr=127.0.0.1:0",
+		"-instance-id=proc-post-shutdown-contender",
+		"-ready-signal-file=" + contenderReadyFile,
+	}, policyArgs...)
+	p4 := exec.Command(binPath, p4Args...)
+	if err := p4.Start(); err != nil {
+		t.Fatalf("failed to start contender after daemon stop: %v", err)
+	}
+	defer func() {
+		if p4.Process != nil {
+			_ = p4.Process.Kill()
+		}
+	}()
+
+	var contenderReady bool
+	for start := time.Now(); time.Since(start) < 5*time.Second; time.Sleep(50 * time.Millisecond) {
+		if data, err := os.ReadFile(contenderReadyFile); err == nil && len(data) > 0 {
+			contenderReady = true
+			break
+		}
+	}
+	if !contenderReady {
+		t.Fatal("contender could not acquire lock / start after daemon shutdown")
+	}
+	t.Log("PASS: New contender acquired lock and became ready after daemon shutdown")
+}

@@ -105,6 +105,7 @@ func runDaemon(args []string) error {
 	testHoldPermitDuration := fs.Duration("test-hold-permit-duration", 0, "Test hook: hold an active permit to test drain timeout")
 	testPauseBeforeCreateDuration := fs.Duration("test-pause-before-create-duration", 0, "Test hook: pause after lock acquisition before CREATE_NEW")
 	testLockAcquiredSignal := fs.String("test-lock-acquired-signal", "", "Test hook: write file when owner lock is acquired before CREATE_NEW")
+	testFailPollerFile := fs.String("test-fail-poller-file", "", "Test hook: path to file that triggers real PollOnce failure when present")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -266,6 +267,14 @@ func runDaemon(args []string) error {
 		Interval: policies.SupervisorActivityPollInterval,
 		Actor:    "HOST_POLLER",
 	}
+	if *testFailPollerFile != "" {
+		poller.TestFailHook = func() error {
+			if _, err := os.Stat(*testFailPollerFile); err == nil {
+				return errors.New("test-fault-injected: real background PollOnce error triggered via test file")
+			}
+			return nil
+		}
+	}
 	pollerCtx, cancelPoller := context.WithCancel(ctx)
 	if err := poller.Start(pollerCtx); err != nil {
 		return fmt.Errorf("failed to start poller: %w", err)
@@ -328,7 +337,7 @@ func runDaemon(args []string) error {
 		case <-pollerCtx.Done():
 			return
 		case <-pollerDone:
-			if err := poller.Err(); err != nil && pollerCtx.Err() == nil {
+			if err := poller.ErrFor(pollerDone); err != nil && pollerCtx.Err() == nil {
 				setUnhealthy("Poller", err)
 			}
 		}
