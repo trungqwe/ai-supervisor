@@ -1,15 +1,15 @@
 # ADR-018: Evidence & Review Engine Architecture, Execution Isolation, and Verification Governance
 
-> **Status**: `DRAFT_PENDING_EXTERNAL_APPROVAL (REVISION 16)`
-> **Date**: 2026-09-26
-> **Audited Baseline**: `e349f32994edca259405465a2ecda576c29e62f2`
+> **Status**: `DRAFT_PENDING_EXTERNAL_APPROVAL (REVISION 17)`
+> **Date**: 2026-09-27
+> **Audited Baseline**: `43b22bafa4f8b7c4e99ec17e80d8e076c0ab80a6`
 > **Preservation Baseline Commit**: `6e1993da150031a9465901a7019c71257de44312` (Revision 11)
-> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_15`
+> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_16`
 > **Deciders**: AI Engineering Supervisor Architecture Council, External Supervisor
 > **Related Architecture**: `docs/04_ARCHITECTURE.md` (Section 7), `docs/05_DOMAIN_MODEL.md`, `docs/10_REVIEW_BUNDLE.md`
 > **Related Requirements**: `docs/02_REQUIREMENTS.md` (FR-008, NFR-008 via PROPOSAL-P04-002)
-> **Supersedes**: `DRAFT-ADR-018` Revision 15
-> **External Audit Tracking**: Remediates Findings `P04-ARCH-R15-001` and `P04-ARCH-R15-002` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_014.md`).
+> **Supersedes**: `DRAFT-ADR-018` Revision 16
+> **External Audit Tracking**: Remediates Finding `P04-ARCH-R16-001` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_015.md`).
 
 ---
 
@@ -17,26 +17,31 @@
 
 Phase P04 implements the **Evidence & Review Engine**, providing independent, tamper-proof verification of AI worker outputs under canonical architecture (`docs/04_ARCHITECTURE.md` Section 7) and requirements (`docs/02_REQUIREMENTS.md`).
 
-External Re-Audit 014 (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_014.md`) evaluated Round 14 remediation at commit `e349f32994edca259405465a2ecda576c29e62f2`, recording verdict `REVISION_15_REQUIRED`. It confirmed design-level closure on `P04-ARCH-R14-001` (canonical audit model alignment: actor column, `details_json.actor_role`, mandatory `pair_id`, sanitized replay comparison, and UNIQUE `event_id` conflict), partially closed `P04-ARCH-R14-002`, and opened findings `P04-ARCH-R15-001` (elimination of circular self-reference in `hold_id` derivation) and `P04-ARCH-R15-002` (resolution crash/replay semantics and concurrent caller race handling).
+External Re-Audit 014 (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_014.md`) evaluated Round 14 remediation at commit `e349f32994edca259405465a2ecda576c29e62f2`, recording verdict `REVISION_15_REQUIRED`. It confirmed design-level closure on `P04-ARCH-R14-001` (canonical audit model alignment), partially closed `P04-ARCH-R14-002`, and opened findings `P04-ARCH-R15-001` (elimination of circular self-reference in `hold_id` derivation) and `P04-ARCH-R15-002` (resolution crash/replay semantics and concurrent caller race handling).
 
-Revision 16 establishes complete design-level resolution of findings `P04-ARCH-R15-001` and `P04-ARCH-R15-002` via surgical patches applied directly to the Revision 15 architecture:
-1. `P04-ARCH-R15-001`: Elimination of Circular Self-Reference in `hold_id` Derivation. Decoupled hold and rejection event derivation into two distinct RFC 8785 JCS descriptors: (A) `hold_identity_descriptor` containing `version=1`, `kind='review_integrity_hold'`, `pair_id`, `task_id`, `contract_id`, `attempt_id`, `hold_reason`, `diagnostic_fingerprint`, and `occurrence_number`, yielding `hold_id = 'hold-' + SHA256(RFC8785_JCS(hold_identity_descriptor))` without self-reference; (B) `rejection_event_identity_descriptor` containing `version=1`, `event_type`, `pair_id`, `task_id`, `contract_id`, `attempt_id`, `reason`, `diagnostic_fingerprint`, `sanitized_input_fingerprint`, `occurrence_number`, and pre-computed `hold_id`, yielding deterministic `rejection_event_id`. Prohibits UUID/random fallback; unified algorithm across all hold producers.
-2. `P04-ARCH-R15-002`: Resolution Crash/Replay & Concurrent Caller Race Handling. Defined deterministic `resolution_event_id` from RFC 8785 JCS descriptor including `version=1`, `kind='review_integrity_resolution_event'`, `event_type='REVIEW_INTEGRITY_HOLD_RESOLVED'`, exact lineage, `hold_id`, `occurrence_number`, verified operator principal, and `sanitized_resolution_rationale_fingerprint`. Formalized atomic resolution transaction: pre-transaction principal authentication and rationale sanitization (fail-closed on key collision); in-transaction CAS with `affected_rows == 1`; if already `RESOLVED`, exact semantic readback match succeeds idempotently without duplicate audit insert, while differing payload fails closed with `ALREADY_RESOLVED_CONFLICT`; if CAS rowcount is 0, losing caller rolls back completely, ensuring zero unlinked/orphan resolution audit events.
+External Re-Audit 015 (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_015.md`) evaluated Round 15 remediation at commit `43b22bafa4f8b7c4e99ec17e80d8e076c0ab80a6`, recording verdict `REVISION_16_REQUIRED`. It confirmed design-level closure on `P04-ARCH-R15-001` and `P04-ARCH-R15-002`, but recorded follow-up finding `P04-ARCH-R16-001` regarding persistence ownership alignment and contract sequencing. Specifically, Revision 16 required Subtask P04A to record dirty-intake diagnostics by writing into `review_integrity_holds`, yet the DDL for `review_integrity_holds` was located in Schema v9 owned by Subtask P04D. Furthermore, the specification ambiguously designated Subtask P04D as a blanket persistence orchestrator for all audit events, contradicting P04A's autonomous ownership of Transaction A and intake diagnostic transactions.
 
-### Revision 11 to Revision 16 Preservation Matrix
-| Revision 11 Section | Revision 16 Section & Location | Status & Surgical Changes |
+Revision 17 establishes complete design-level resolution of finding `P04-ARCH-R16-001` via surgical patches applied directly to the Revision 16 architecture:
+1. `review_integrity_holds` Relocation to Schema v6 (Owned by P04A): The DDL, partial unique active index (`idx_review_integrity_holds_active_dedup`), and triggers (`trg_review_integrity_holds_lineage_guard`, `trg_review_integrity_holds_cas_guard`, `trg_review_integrity_holds_no_delete`) are relocated to Schema Migration v6, owned by Subtask P04A. Schema Migration v9 (owned by Subtask P04D) contains `task_verification_leases`, `evidence_sets`, `review_artifacts`, and `review_bundles`, upgrading from Schema v6 without recreating `review_integrity_holds`.
+2. Demarcation of Mutation Authority: Subtask P04A is the sole persistence owner of Schema v6 and Transaction A. Upon report intake failure (dirty worktree/index), P04A rolls back Transaction A and in a separate diagnostic transaction appends `EVIDENCE_COLLECTION_FAILED` and inserts an `ACTIVE` hold into `review_integrity_holds`. Subtask P04D owns Schema v9, verification leases, Transaction B, Transaction C, ReviewBundle synthesis, diagnostic hold creation from Tx B/Tx C failures (`REVIEW_INTEGRITY_CONFLICT`), hold resolution orchestration (`REVIEW_INTEGRITY_HOLD_RESOLVED`, Descriptor C), and startup recovery scanning for active holds before opening runtime admission. Subtasks P04B and P04C remain pure in-memory collectors with ZERO SQLite writes, ZERO audit event appends, and ZERO hold mutations.
+3. Precise Persistence Ownership Boundaries: Eliminated ambiguous blanket orchestrator claims across pipeline transactions. Every audit event must be appended by its authoritative transaction owner, ensuring atomicity with database state changes. No two subtasks share ownership of a single transaction or define DDL for the same table.
+4. Strict Contract Sequencing (P04A -> P04B -> P04C -> P04D): Subtask P04A can complete its schema migrations, store primitives, and behavior tests independently. P04 runtime admission remains closed upon P04A/B/C completion; only opened by P04D after startup recovery. Schema Migration v9 upgrades from a schema that already contains `review_integrity_holds`. Both fresh migration (`v0 -> v6 -> v9`) and historical migration (`v6 -> v9`) are verified with `foreign_keys = ON`.
+
+### Revision 11 to Revision 17 Preservation Matrix
+| Revision 11 Section | Revision 17 Section & Location | Status & Surgical Changes |
 | :--- | :--- | :--- |
-| Section 1: Context & Problem Statement | Section 1: Context & Problem Statement | Preserved; updated with Re-Audit 014 findings and baseline tracking. |
+| Section 1: Context & Problem Statement | Section 1: Context & Problem Statement | Preserved; updated with Re-Audit 015 findings, R16-001 resolution, and baseline tracking. |
 | Section 2: Decision Drivers | Section 2: Decision Drivers | Preserved verbatim. |
 | Section 3: Considered Options | Section 3: Considered Options | Preserved verbatim. |
-| Section 4, Decision 1: Worktree Authority & Schema v6 | Section 4, Decision 1 | Preserved full Schema v6 (`terminal_generation TEXT`, canonical worktree, hex checks, triggers, integer typing, canonical WorkerClaim array checks). |
-| Section 4, Decision 2: Hardened Git Collector & Allowlist | Section 4, Decision 2 | Preserved clean worktree policy, 10-command allowlist, snapshot extraction; updated two-step descriptor derivation for `hold_id` and rejection event (`P04-ARCH-R15-001`). |
+| Section 4, Decision 1: Worktree Authority & Schema v6 | Section 4, Decision 1 | Preserved full Schema v6 (`terminal_generation TEXT`, canonical worktree, hex checks, triggers, integer typing, canonical WorkerClaim array checks); updated to include `review_integrity_holds` DDL, active index, and triggers owned by Subtask P04A (`P04-ARCH-R16-001`). |
+| Section 4, Decision 2: Hardened Git Collector & Allowlist | Section 4, Decision 2 | Preserved clean worktree policy, 10-command allowlist, snapshot extraction, two-step descriptor derivation (`P04-ARCH-R15-001`). |
 | Section 4, Decision 3: Windows Verification Isolation | Section 4, Decision 3 | Preserved AppContainer handle list, Job Object assignment/limits, authoritative process-death proof requirement. |
 | Section 4, Decision 4: Verification Authority & Latency | Section 4, Decision 4 | Preserved ReviewBundle assembly diagnostic; confirmed NFR-008 UNVERIFIED status; commit_duration_ms decoupled from Tx C. |
-| Section 4, Decision 5: Pipeline Transactions & Fencing | Section 4, Decision 5 | Preserved 3 pipeline transactions; linear lease chain; preserved replay matrix; updated durable holds with non-self-referencing `hold_id` derivation (`P04-ARCH-R15-001`) and atomic resolution crash/replay algorithm (`P04-ARCH-R15-002`). |
-| Section 4, Decision 6: Artifact Store & Schema v9 | Section 4, Decision 6 | Preserved artifact streaming and ReviewBundle DDL; updated canonical event ID derivation with all 3 distinct descriptors (hold, rejection, resolution) (`P04-ARCH-R15-001`, `R15-002`). |
-| Section 5: Consequences | Section 5: Consequences | Preserved and updated with non-self-referencing hold derivation and race-safe resolution semantics. |
-| Section 6: Migration & Schema Ownership | Section 6: Migration & Schema Ownership | Preserved and updated to include Schema v9 `review_integrity_holds` occurrence lifecycle. |
+| Section 4, Decision 5: Pipeline Transactions & Fencing | Section 4, Decision 5 | Preserved 3 pipeline transactions; linear lease chain; preserved replay matrix; non-self-referencing `hold_id` derivation (`P04-ARCH-R15-001`) and atomic resolution crash/replay algorithm (`P04-ARCH-R15-002`); clarified Model 1 persistence ownership boundaries; removed duplicate `review_integrity_holds` DDL (`P04-ARCH-R16-001`). |
+| Section 4, Decision 6: Artifact Store & Schema v9 | Section 4, Decision 6 | Preserved artifact streaming and ReviewBundle DDL; Schema v9 upgrades from Schema v6 without recreating `review_integrity_holds`; updated audit event producer table with explicit transaction owners (`P04-ARCH-R16-001`). |
+| Section 5: Consequences | Section 5: Consequences | Preserved; updated with precise persistence ownership boundaries and contract sequencing. |
+| Section 6: Migration & Schema Ownership | Section 6: Migration & Schema Ownership | Preserved; updated Schema v6 to include `review_integrity_holds`; Schema v9 reuses `review_integrity_holds`; contract sequencing P04A -> P04B -> P04C -> P04D (`P04-ARCH-R16-001`). |
+| Section 7: Final Architecture Readiness Matrix | Section 7: Final Architecture Readiness Matrix | Added comprehensive readiness matrix for all six tracked design blockers (`READY_FOR_EXTERNAL_APPROVAL`). |
 
 ---
 
@@ -215,6 +220,90 @@ BEFORE DELETE ON worker_claims
 BEGIN
     SELECT RAISE(ABORT, 'worker_claims is immutable');
 END;
+
+-- Schema v6: review_integrity_holds (Owned by Subtask P04A, P04-ARCH-R16-001)
+CREATE TABLE review_integrity_holds (
+    hold_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
+    attempt_id TEXT NOT NULL REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+    contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
+    hold_reason TEXT NOT NULL CHECK (
+        hold_reason IN (
+            'DIRTY_WORKTREE_DETECTED',
+            'BUNDLE_HASH_CONFLICT',
+            'INVARIANT_MISMATCH',
+            'UNVERIFIED_CLAIM_DETECTED',
+            'SECURITY_POLICY_VIOLATION'
+        )
+    ),
+    hold_state TEXT NOT NULL CHECK (hold_state IN ('ACTIVE', 'RESOLVED')),
+    diagnostic_fingerprint TEXT NOT NULL CHECK (
+        LENGTH(diagnostic_fingerprint) = 64 AND NOT (diagnostic_fingerprint GLOB '*[^0-9a-f]*')
+    ),
+    occurrence_number INTEGER NOT NULL CHECK (
+        typeof(occurrence_number) = 'integer' AND occurrence_number > 0
+    ),
+    rejection_audit_event_id TEXT NOT NULL UNIQUE REFERENCES audit_events(event_id) ON DELETE RESTRICT,
+    resolution_audit_event_id TEXT NULL UNIQUE REFERENCES audit_events(event_id) ON DELETE RESTRICT,
+    resolved_by_principal TEXT NULL CHECK (
+        resolved_by_principal IS NULL OR LENGTH(TRIM(resolved_by_principal)) > 0
+    ),
+    created_at_epoch_ms INTEGER NOT NULL CHECK (
+        typeof(created_at_epoch_ms) = 'integer' AND created_at_epoch_ms > 0
+    ),
+    resolved_at_epoch_ms INTEGER NULL CHECK (
+        resolved_at_epoch_ms IS NULL OR (
+            typeof(resolved_at_epoch_ms) = 'integer' AND resolved_at_epoch_ms >= created_at_epoch_ms
+        )
+    ),
+    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT,
+    UNIQUE(attempt_id, hold_reason, diagnostic_fingerprint, occurrence_number),
+    CHECK (
+        (hold_state = 'ACTIVE' AND resolved_at_epoch_ms IS NULL AND resolution_audit_event_id IS NULL AND resolved_by_principal IS NULL) OR
+        (hold_state = 'RESOLVED' AND resolved_at_epoch_ms IS NOT NULL AND resolution_audit_event_id IS NOT NULL AND resolved_by_principal IS NOT NULL AND LENGTH(TRIM(resolved_by_principal)) > 0)
+    )
+);
+
+CREATE UNIQUE INDEX idx_review_integrity_holds_active_dedup
+ON review_integrity_holds(attempt_id, hold_reason, diagnostic_fingerprint) WHERE hold_state = 'ACTIVE';
+
+CREATE TRIGGER trg_review_integrity_holds_lineage_guard
+BEFORE INSERT ON review_integrity_holds
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'lineage mismatch: attempt_id does not match task_id or contract_id in task_attempts')
+    WHERE NOT EXISTS (
+        SELECT 1 FROM task_attempts a
+        WHERE a.attempt_id = NEW.attempt_id
+          AND a.task_id = NEW.task_id
+          AND a.contract_id = NEW.contract_id
+    );
+END;
+
+CREATE TRIGGER trg_review_integrity_holds_cas_guard
+BEFORE UPDATE ON review_integrity_holds
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'immutable column modified in review_integrity_holds')
+    WHERE NEW.hold_id != OLD.hold_id
+       OR NEW.task_id != OLD.task_id
+       OR NEW.attempt_id != OLD.attempt_id
+       OR NEW.contract_id != OLD.contract_id
+       OR NEW.hold_reason != OLD.hold_reason
+       OR NEW.diagnostic_fingerprint != OLD.diagnostic_fingerprint
+       OR NEW.occurrence_number != OLD.occurrence_number
+       OR NEW.rejection_audit_event_id != OLD.rejection_audit_event_id
+       OR NEW.created_at_epoch_ms != OLD.created_at_epoch_ms;
+
+    SELECT RAISE(ABORT, 'illegal hold state transition: ACTIVE only transitions to RESOLVED')
+    WHERE NOT (OLD.hold_state = 'ACTIVE' AND NEW.hold_state = 'RESOLVED');
+END;
+
+CREATE TRIGGER trg_review_integrity_holds_no_delete
+BEFORE DELETE ON review_integrity_holds
+BEGIN
+    SELECT RAISE(ABORT, 'review_integrity_holds is immutable');
+END;
 ```
 
 ### Decision 2: Hardened In-Memory Git Collector & Clean Worktree Allowlist (P04-ARCH-R10-001)
@@ -271,11 +360,12 @@ END;
 
 ### Decision 5: Three Durable Pipeline Transactions, Admission & Bounded Fencing (P04-ARCH-R10-002, R10-004, R10-005)
 
-1. **Model 1 Persistence Ownership Discipline**:
-   - **Subtask P04A**: Owns Schema Migration v6 and Transaction A.
-   - **Subtask P04B**: Pure in-memory Git evidence collection; ZERO SQLite writes.
-   - **Subtask P04C**: Pure in-memory verification runner; ZERO SQLite writes.
-   - **Subtask P04D**: Pipeline Orchestrator and SOLE SQLite CAS persistence orchestrator for Schema Migration v9 (`task_verification_leases`, `evidence_sets`, `review_artifacts`, `review_bundles`), Content-Addressed Store, leases, Transaction B, Transaction C, and audit events.
+1. **Model 1 Persistence Ownership Discipline (P04-ARCH-R16-001)**:
+   - **Subtask P04A**: Sole persistence owner of Schema Migration v6 (`attempt_workspace_bindings`, `worker_claims`, `review_integrity_holds`), Transaction A (report intake), and intake failure diagnostic transactions (`EVIDENCE_COLLECTION_FAILED` + active hold insert). Owns shared hold creation primitives and Descriptors A and B. Implements behavior tests for dirty intake, replay, occurrence increment, and rollback atomicity. Completing P04A does NOT open runtime admission for Phase P04.
+   - **Subtask P04B**: Pure in-memory Git evidence collection; returns `GitEvidenceResult` in memory; ZERO SQLite writes, ZERO audit event appends, ZERO hold mutations.
+   - **Subtask P04C**: Pure in-memory verification runner; returns `TestEvidenceResult` and artifact streams in memory; ZERO SQLite writes, ZERO audit event appends, ZERO hold mutations.
+   - **Subtask P04D**: Sole persistence owner of Schema Migration v9 (`task_verification_leases`, `evidence_sets`, `review_artifacts`, `review_bundles`), Content-Addressed Store, lease lifecycle, Transaction B, Transaction C, and ReviewBundle synthesis. Owns diagnostic hold creation arising from Tx B/Tx C failures (`REVIEW_INTEGRITY_CONFLICT`), hold resolution orchestration (`REVIEW_INTEGRITY_HOLD_RESOLVED`, Descriptor C), and startup recovery scanning for active holds before opening runtime admission. Reuses the identical `review_integrity_holds` schema and store API created by P04A without duplicate DDL.
+   - **Audit Event Ownership Discipline**: Every audit event must be appended by its authoritative transaction owner, ensuring atomicity with database state changes. No two subtasks share ownership of a single transaction or define DDL for the same table.
 2. **Lease TTL Bounds & Mathematical Enforcement**:
    - `task_verification_leases.ttl_seconds CHECK (ttl_seconds BETWEEN 1 AND 600)`.
    - `CHECK (expires_at_epoch_ms = acquired_at_epoch_ms + (ttl_seconds * 1000))` enforced in SQLite DDL.
@@ -462,89 +552,7 @@ BEGIN
     SELECT RAISE(ABORT, 'task_verification_leases is immutable');
 END;
 
--- Schema v9: review_integrity_holds (Owned by Subtask P04D, P04-ARCH-R13-002, P04-ARCH-R13-003, P04-ARCH-R14-002)
-CREATE TABLE review_integrity_holds (
-    hold_id TEXT PRIMARY KEY,
-    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
-    attempt_id TEXT NOT NULL REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
-    contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
-    hold_reason TEXT NOT NULL CHECK (
-        hold_reason IN (
-            'DIRTY_WORKTREE_DETECTED',
-            'BUNDLE_HASH_CONFLICT',
-            'INVARIANT_MISMATCH',
-            'UNVERIFIED_CLAIM_DETECTED',
-            'SECURITY_POLICY_VIOLATION'
-        )
-    ),
-    hold_state TEXT NOT NULL CHECK (hold_state IN ('ACTIVE', 'RESOLVED')),
-    diagnostic_fingerprint TEXT NOT NULL CHECK (
-        LENGTH(diagnostic_fingerprint) = 64 AND NOT (diagnostic_fingerprint GLOB '*[^0-9a-f]*')
-    ),
-    occurrence_number INTEGER NOT NULL CHECK (
-        typeof(occurrence_number) = 'integer' AND occurrence_number > 0
-    ),
-    rejection_audit_event_id TEXT NOT NULL UNIQUE REFERENCES audit_events(event_id) ON DELETE RESTRICT,
-    resolution_audit_event_id TEXT NULL UNIQUE REFERENCES audit_events(event_id) ON DELETE RESTRICT,
-    resolved_by_principal TEXT NULL CHECK (
-        resolved_by_principal IS NULL OR LENGTH(TRIM(resolved_by_principal)) > 0
-    ),
-    created_at_epoch_ms INTEGER NOT NULL CHECK (
-        typeof(created_at_epoch_ms) = 'integer' AND created_at_epoch_ms > 0
-    ),
-    resolved_at_epoch_ms INTEGER NULL CHECK (
-        resolved_at_epoch_ms IS NULL OR (
-            typeof(resolved_at_epoch_ms) = 'integer' AND resolved_at_epoch_ms >= created_at_epoch_ms
-        )
-    ),
-    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT,
-    UNIQUE(attempt_id, hold_reason, diagnostic_fingerprint, occurrence_number),
-    CHECK (
-        (hold_state = 'ACTIVE' AND resolved_at_epoch_ms IS NULL AND resolution_audit_event_id IS NULL AND resolved_by_principal IS NULL) OR
-        (hold_state = 'RESOLVED' AND resolved_at_epoch_ms IS NOT NULL AND resolution_audit_event_id IS NOT NULL AND resolved_by_principal IS NOT NULL AND LENGTH(TRIM(resolved_by_principal)) > 0)
-    )
-);
-
-CREATE UNIQUE INDEX idx_review_integrity_holds_active_dedup
-ON review_integrity_holds(attempt_id, hold_reason, diagnostic_fingerprint) WHERE hold_state = 'ACTIVE';
-
-CREATE TRIGGER trg_review_integrity_holds_lineage_guard
-BEFORE INSERT ON review_integrity_holds
-FOR EACH ROW
-BEGIN
-    SELECT RAISE(ABORT, 'lineage mismatch: attempt_id does not match task_id or contract_id in task_attempts')
-    WHERE NOT EXISTS (
-        SELECT 1 FROM task_attempts a
-        WHERE a.attempt_id = NEW.attempt_id
-          AND a.task_id = NEW.task_id
-          AND a.contract_id = NEW.contract_id
-    );
-END;
-
-CREATE TRIGGER trg_review_integrity_holds_cas_guard
-BEFORE UPDATE ON review_integrity_holds
-FOR EACH ROW
-BEGIN
-    SELECT RAISE(ABORT, 'immutable column modified in review_integrity_holds')
-    WHERE NEW.hold_id != OLD.hold_id
-       OR NEW.task_id != OLD.task_id
-       OR NEW.attempt_id != OLD.attempt_id
-       OR NEW.contract_id != OLD.contract_id
-       OR NEW.hold_reason != OLD.hold_reason
-       OR NEW.diagnostic_fingerprint != OLD.diagnostic_fingerprint
-       OR NEW.occurrence_number != OLD.occurrence_number
-       OR NEW.rejection_audit_event_id != OLD.rejection_audit_event_id
-       OR NEW.created_at_epoch_ms != OLD.created_at_epoch_ms;
-
-    SELECT RAISE(ABORT, 'illegal hold state transition: ACTIVE only transitions to RESOLVED')
-    WHERE NOT (OLD.hold_state = 'ACTIVE' AND NEW.hold_state = 'RESOLVED');
-END;
-
-CREATE TRIGGER trg_review_integrity_holds_no_delete
-BEFORE DELETE ON review_integrity_holds
-BEGIN
-    SELECT RAISE(ABORT, 'review_integrity_holds is immutable');
-END;
+-- Note: review_integrity_holds is defined and created under Schema v6 (Owned by Subtask P04A, P04-ARCH-R16-001) and reused by P04D without duplicate DDL.
 ```
 
 ### Decision 6: Durable Content-Addressed Artifact Store, Review Schema & Proposed Audit Events (P04-ARCH-R10-001, R10-004)
@@ -877,11 +885,33 @@ END;
 - **Schema v6 (Owned by Subtask P04A)**:
   - `attempt_workspace_bindings` table, indexes, and triggers.
   - `worker_claims` table, indexes, and triggers.
+  - `review_integrity_holds` table, indexes, and triggers.
 - **Schema v9 (Owned by Subtask P04D)**:
   - `task_verification_leases` table, indexes, and triggers.
-  - `review_integrity_holds` table, indexes, and triggers.
   - `evidence_sets` table, indexes, and triggers.
   - `review_artifacts` table, indexes, and triggers.
   - `review_bundles` table, indexes, and triggers.
+  - *(Schema v9 upgrades from a database that already contains `review_integrity_holds` and does NOT recreate it).*
 - **Subtasks P04B & P04C**:
-  - Pure in-memory execution; zero migration ownership, zero runtime SQLite writes.
+  - Pure in-memory execution; zero migration ownership, zero runtime SQLite writes, zero audit event appends, zero hold mutations.
+- **Contract Sequencing & Admission Lifecycle**:
+  - Execution sequence strictly follows P04A -> P04B -> P04C -> P04D.
+  - Subtask P04A completes its schema migrations, store primitives, and behavior tests independently.
+  - P04 runtime admission remains closed upon P04A, P04B, and P04C completion; only Subtask P04D opens admission after executing startup active-hold recovery.
+  - Both fresh migration (`v0 -> v6 -> v9`) and historical migration (`v6 -> v9`) must be validated with `foreign_keys = ON`.
+  - Subtask P04D cannot alter hold semantics or DDL without an approved contract revision.
+
+---
+
+## 7. Final Architecture Readiness Matrix (P04 Pre-Contract Remediation)
+
+The following matrix documents the architectural resolution, concrete mechanism, falsification testing, remaining external dependencies, and proposed audit disposition for all six tracked design blockers:
+
+| Design Blocker ID | Normative Section | Concrete Architectural Mechanism | Falsification Test | Remaining External Dependency | Proposed Audit Disposition |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `DESIGN_BLOCKER_P04_WORKTREE_BINDING` | `PROPOSAL-P04-001` §3.1, §3.2; `DRAFT-ADR-018` Decision 1 | Two-transaction workspace lifecycle (`attempt_workspace_bindings` in Schema v6 owned by P04A); Win32 `FileIdInfo` volume serial and file ID binding before dispatch; immutable CAS state transitions (`ACTIVE` -> `RETAINED_FOR_VERIFICATION` -> `RELEASED`/`INVALIDATED`). | Directory move / NTFS hardlink swap probe; SQLite triggers abort unauthorized modification of binding identity (`trg_attempt_workspace_bindings_cas_guard`). | Win32 API filesystem handle support at runtime daemon integration. | `READY_FOR_EXTERNAL_APPROVAL` |
+| `DESIGN_BLOCKER_P04_GIT_EVIDENCE_AUTHORITY` | `PROPOSAL-P04-001` §4.1, §4.2; `DRAFT-ADR-018` Decision 2 | Hardened in-memory Git collector (Subtask P04B, zero SQLite writes); strict clean worktree/index verification; 10-command allowlist with `-z` null-byte parsing; dirty worktree triggers atomic diagnostic transaction recording `EVIDENCE_COLLECTION_FAILED` and inserting `review_integrity_holds` without transitioning `TaskState` to `BLOCKED`. | Dirty worktree injection test (staged, unstaged, untracked changes); command injection via shell metacharacters probe (disallowed by argv slice execution). | Subtask P04B implementation against Git binary CLI on host. | `READY_FOR_EXTERNAL_APPROVAL` |
+| `DESIGN_BLOCKER_P04_VERIFICATION_ISOLATION` | `PROPOSAL-P04-001` §5.1, §5.2; `DRAFT-ADR-018` Decision 3 | Windows AppContainer sandboxing (`CreateProcessW` with `STARTUPINFOEXW`, explicit `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` for stdio only, `PROC_THREAD_ATTRIBUTE_JOB_LIST` for atomic Job Object assignment without `BREAKAWAY_OK`, `KILL_ON_JOB_CLOSE`, and network restriction SID). | Subprocess breakaway attempt test; network socket bind probe (fails with access denied); parent daemon kill test (child terminates authoritatively via Job Object). | Windows 10/11 / Server OS runtime host capability. | `READY_FOR_EXTERNAL_APPROVAL` |
+| `DESIGN_BLOCKER_P04_REVIEW_SCHEMA_RECONCILIATION` | `PROPOSAL-P04-001` §3.2, §7.3, §7.4; `DRAFT-ADR-018` Decision 1 & 6 | Schema v6 (`attempt_workspace_bindings`, `worker_claims`, `review_integrity_holds`) owned by Subtask P04A; Schema v9 (`task_verification_leases`, `evidence_sets`, `review_artifacts`, `review_bundles`) owned by Subtask P04D; composite foreign keys enforcing task, attempt, and contract lineage; RFC 8785 JCS canonicalization. | Foreign key violation probes with `foreign_keys = ON`; schema migration compilation tests (`v0 -> v6 -> v9` and `v6 -> v9`); JSON schema validation test against `review-bundle.schema.json`. | Task Contract release for Subtasks P04A and P04D. | `READY_FOR_EXTERNAL_APPROVAL` |
+| `DESIGN_BLOCKER_P04_EVIDENCE_ATOMICITY` | `PROPOSAL-P04-001` §7.1, §7.2, §8; `DRAFT-ADR-018` Decision 5 & 6 | Strict Model 1 persistence ownership; P04A owns Schema v6, Tx A, and intake diagnostic tx; P04D owns Schema v9, leases, Tx B (evidence commit), Tx C (bundle CAS compilation), and hold resolution; P04B/C are pure in-memory (zero SQLite writes); two-step descriptor hold derivation (`P04-ARCH-R15-001`); atomic CAS resolution with zero orphan audit events (`P04-ARCH-R15-002`); single transaction owner per audit event. | SQLite rollback probe on simulated disk/lease failure; concurrent operator resolution race probe; zero orphan audit events probe on lost CAS races (`test_probes_r17.py`). | Subtask P04D SQLite CAS store implementation. | `READY_FOR_EXTERNAL_APPROVAL` |
+| `DESIGN_BLOCKER_P04_INERT_AO_HARNESS` | `PROPOSAL-P04-001` §6.1, §6.2; `DRAFT-ADR-018` Decision 4 | Inert fake AO adapter harness for verification pipeline testing; synthetic session endpoints returning deterministic JSON fixtures without spawning live processes; live AO integration held in unverified evidence track; `AUTOMATIC_RESTORE = DISABLED`. | Integration test suite runs in fully disconnected / offline environment with zero network calls and zero live AO processes spawned. | Subtask P04D test harness execution. | `READY_FOR_EXTERNAL_APPROVAL` |
