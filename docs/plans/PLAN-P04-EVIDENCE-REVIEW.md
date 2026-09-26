@@ -1,15 +1,15 @@
 # PLAN-P04: Evidence & Review Engine Implementation & Governance Plan
 
 > **Plan ID**: `PLAN-P04-EVIDENCE-REVIEW`
-> **Revision**: 11
-> **Status**: DRAFT (`REVISION_11_REQUIRED` / Remediated to Revision 11)
+> **Revision**: 12
+> **Status**: DRAFT (`REVISION_12_REQUIRED` / Remediated to Revision 12)
 > **Date**: 2026-09-26
-> **Audited Baseline**: `cd0417e641468abfac254cc57cca29be54d1e8e1`
-> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_10`
+> **Audited Baseline**: `6e1993da150031a9465901a7019c71257de44312`
+> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_11`
 > **Author**: AI Engineering Supervisor Architecture Team
-> **Governing ADR**: `docs/adr/DRAFT-ADR-018-evidence-review-and-verification-isolation.md` (Revision 11)
-> **Related Proposals**: `docs/proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md` (Revision 11), `docs/proposals/PROPOSAL-P04-002-review-bundle-latency-semantics.md` (Revision 5)
-> **External Audit Tracking**: Remediates Findings `P04-ARCH-R10-001` through `P04-ARCH-R10-005` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_009.md`).
+> **Governing ADR**: `docs/adr/DRAFT-ADR-018-evidence-review-and-verification-isolation.md` (Revision 12)
+> **Related Proposals**: `docs/proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md` (Revision 12), `docs/proposals/PROPOSAL-P04-002-review-bundle-latency-semantics.md` (Revision 6)
+> **External Audit Tracking**: Remediates Findings `P04-ARCH-R11-001` through `P04-ARCH-R11-004` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_010.md`).
 
 ---
 
@@ -22,37 +22,39 @@ Phase P04 implements the **Evidence & Review Engine**, providing independent, ta
 ```mermaid
 flowchart TD
     subgraph PreExecution [Pre-Execution / Governance]
-        ADR18[DRAFT-ADR-018 Revision 11]
-        PROP1[PROPOSAL-P04-001 Revision 11]
-        PROP2[PROPOSAL-P04-002 Revision 5]
-        Audit009[External Re-Audit 009]
+        ADR18[DRAFT-ADR-018 Revision 12]
+        PROP1[PROPOSAL-P04-001 Revision 12]
+        PROP2[PROPOSAL-P04-002 Revision 6]
+        Audit010[External Re-Audit 010]
     end
 
-    subgraph P04A [Subtask P04A: Seam, Clean Intake & Workspace Binding Authority]
-        P04A_Contract[CONTRACT-TASK-P04-001]
-        P04A_Mig[Schema Migration v6]
-        P04A_Clean[Clean Worktree & Index Verification]
-        P04A_Intake[Transaction A & Verbatim WorkerClaim]
+    subgraph P04A [Subtask P04A: Intake & Workspace Validation]
+        T1[Schema Migration v6]
+        T2[Verbatim Claim Mapping]
+        T3[Clean Worktree & Index Check]
+        T4[Transaction A: RUNNING -> REPORT_READY]
+        T5[Dirty Worktree Rollback & Isolated Diagnostic Audit]
     end
 
-    subgraph P04B [Subtask P04B: Hardened Git Evidence Collector - Pure In-Memory]
-        P04B_Collector[Pure In-Memory Git Collector]
-        P04B_Allowlist[Hardened Git Allowlist with Locks=0]
-        P04B_Snapshot[Source Snapshot Extractor]
+    subgraph P04B [Subtask P04B: Hardened Git Collector]
+        T6[Git Read-Only Command Allowlist]
+        T7[Immutable Commit Snapshot Provisioning]
+        T8[Pure In-Memory GitEvidence Output - ZERO DB Writes]
     end
 
-    subgraph P04C [Subtask P04C: Verification Runner & Security Boundary - Pure In-Memory]
-        P04C_Sandbox[Windows AppContainer & Explicit Handles]
-        P04C_Stream[Stream Capture & Hard Limit Separation]
-        P04C_Execution[Pure In-Memory Test Execution]
+    subgraph P04C [Subtask P04C: Isolated Test Runner]
+        T9[Windows AppContainer Process Isolation]
+        T10[Handle Whitelisting & Network Denial]
+        T11[Pure In-Memory TestEvidence Output - ZERO DB Writes]
     end
 
-    subgraph P04D [Subtask P04D: Pipeline Orchestrator, CAS Store & ReviewBundle]
-        P04D_Mig[Schema Migration v9 & CAS Store]
-        P04D_Lease[Bounded Lease Lifecycle & Reclaim]
-        P04D_TxB[Transaction B Evidence Finalization]
-        P04D_TxC[Transaction C Atomic ReviewBundle Commit]
-        P04D_Replay[Idempotent Replay & Hash Conflict Guard]
+    subgraph P04D [Subtask P04D: Pipeline Orchestrator & CAS Persistence]
+        T12[Schema Migration v9: Leases, Sets, Artifacts, Bundles]
+        T13[Append-Only Lease History & Partial Unique Index]
+        T14[Transaction B: REPORT_READY -> EVIDENCE_READY]
+        T15[ReviewBundle Assembly Diagnostic & RFC 8785 Canonicalization]
+        T16[Transaction C: EVIDENCE_READY -> REVIEWING]
+        T17[Post-Commit In-Process Monotonic Telemetry]
     end
 
     PreExecution --> P04A
@@ -61,114 +63,102 @@ flowchart TD
     P04C --> P04D
 ```
 
-### 1.2. Key Architectural Invariants
-1. **Model 1 Persistence Ownership Discipline (P04-ARCH-R10-002)**:
-   - Subtask P04A owns Schema Migration v6 and Transaction A.
-   - Subtasks P04B and P04C are pure in-memory collectors with ZERO SQLite writes.
-   - Subtask P04D is the SOLE SQLite CAS orchestrator owning Schema Migration v9, Content-Addressed Store, leases, Transaction B, Transaction C, and audit events.
-2. **Complete Lineage, Immutability & Content-Address Equality (P04-ARCH-R10-001)**:
-   - All tables enforce foreign keys and lineage triggers across task, attempt, and contract.
-   - Immutable delete and update triggers prevent tampering with historical records.
-   - `canonical_relative_path = 'artifacts/' || substr(captured_sha256, 1, 2) || '/' || captured_sha256` is strictly verified.
-3. **Mathematical Lease & Stream Bounds (P04-ARCH-R10-004)**:
-   - Lease expires exactly at `acquired_at_epoch_ms + ttl_seconds * 1000`.
-   - CAS trigger enforces allowed lease state transitions and fencing token increments on reclaim.
-   - Stream state combinations strictly checked against capture limit (10 MB) and hard safety limit (50 MB).
-4. **Crash-Safe Latency Metrics & Pre-Commit Assembly Boundary (P04-ARCH-R10-003)**:
-   - Measurement boundary strictly measures ReviewBundle assembly and validation before Transaction C commit.
-   - Telemetry captures commit return duration in audit event `REVIEW_BUNDLE_GENERATED`.
-   - Truth table CHECK constraints eliminate SQLite persistence deadlocks.
-5. **Canonical TaskState Discipline (P04-ARCH-R10-005)**:
-   - Zero compound states or transitions outside `docs/06_WORKFLOW_STATE_MACHINE.md`.
-   - Dirty report intake preserves `RUNNING` state.
-   - Hash conflict at `REVIEWING` preserves `REVIEWING` state while locking automated approval.
+---
+
+## 2. Subtask Breakdown & Implementation Scope
+
+### 2.1. Subtask P04A: Report Intake, Workspace Verification & Schema v6
+- **Persistence Ownership**: Schema Migration v6 (`attempt_workspace_bindings` and `worker_claims`).
+- **Scope**:
+  1. Validate worker report JSON against `docs/schemas/worker-report.schema.json`.
+  2. Map `reported_head_sha` verbatim (accepts 7-40 hex characters).
+  3. Validate physical workspace handle (`FileIdInfo` volume serial and file ID).
+  4. Validate clean index and working tree via `git rev-parse --absolute-git-dir` and `git status --porcelain=v1 --untracked-files=all`.
+  5. Commit Transaction A (`RUNNING -> REPORT_READY`), binding workspace and persisting `WorkerClaim`.
+  6. **Dirty Worktree Rollback**: On dirty worktree, Transaction A rolls back completely and task state remains `RUNNING`. Diagnostic audit event `EVIDENCE_COLLECTION_FAILED` is appended in a separate diagnostic transaction after rollback using an idempotency key (`audit:<attempt_id>:DIRTY_WORKTREE_DETECTED`).
+
+### 2.2. Subtask P04B: Hardened Read-Only Git Evidence Collector
+- **Persistence Ownership**: Pure in-memory collector with **ZERO SQLite writes**.
+- **Scope**:
+  1. Execute strictly read-only Git commands from hardened allowlist (`git rev-parse`, `git ls-tree`, `git cat-file`, `git diff`, `git log`, `git merge-base`).
+  2. Provision read-only snapshot `<SUPERVISOR_STATE_ROOT>/snapshots/<attempt_id>/` from verified HEAD commit.
+  3. Extract changed files list, exact byte diffs, commit ancestry, and scope containment against `allowed_scope`.
+  4. Return in-memory `GitEvidence` entity.
+
+### 2.3. Subtask P04C: Isolated Verification Runner & AppContainer Boundary
+- **Persistence Ownership**: Pure in-memory execution engine with **ZERO SQLite writes**.
+- **Scope**:
+  1. Spawn verification commands strictly inside isolated Windows AppContainers.
+  2. Restrict process handle inheritance to explicit stdin/stdout/stderr pipes; enforce network isolation (`NoNetwork`).
+  3. Stream stdout and stderr with capture limit (10 MB) and hard safety limit (50 MB) using bounded overflow reader (`hard + 1` bytes).
+  4. Compute exit codes, stream states (`COMPLETE_EOF`, `TRUNCATED_AT_CAPTURE_LIMIT`, `HARD_LIMIT_TERMINATED`, `TIMEOUT_ABORTED`), and artifact hashes.
+  5. Return in-memory `TestEvidence` and artifact payloads.
+
+### 2.4. Subtask P04D: Pipeline Orchestrator, Append-Only Leases & CAS Persistence
+- **Persistence Ownership**: **SOLE SQLite persistence authority** for Schema Migration v9 (`task_verification_leases`, `evidence_sets`, `review_artifacts`, `review_bundles`).
+- **Scope**:
+  1. Manage append-only verification leases: `lease_id PRIMARY KEY`, partial unique index ensuring single active lease, CAS terminal transitions, and atomic reclaim.
+  2. Transaction B (`REPORT_READY -> EVIDENCE_READY`): Commit `evidence_sets` and `review_artifacts`, mark active lease `COMPLETED`, persist pre-commit application timestamp `evidence_finalized_at_epoch_ms`.
+  3. Stage and flush content-addressed artifacts to `artifacts/<first-two-hex>/<captured_sha256>` with exact path equality.
+  4. Synthesize ReviewBundle payload, perform RFC 8785 JCS canonicalization, compute bundle hash, and mark pre-commit timestamp `bundle_assembled_at_epoch_ms`.
+  5. Compute ReviewBundle assembly diagnostic: `compilation_latency_ms = bundle_assembled_at_epoch_ms - evidence_finalized_at_epoch_ms`.
+  6. Transaction C (`EVIDENCE_READY -> REVIEWING`): Atomically insert `review_bundles` with `nfr008_compliance_status = 'UNVERIFIED'`, insert proposed audit event `REVIEW_BUNDLE_GENERATED` (without `commit_duration_ms`), and advance task state to `REVIEWING`.
+  7. Post-commit telemetry: Compute in-process monotonic `commit_duration_ms` after commit returns, purely as best-effort in-process telemetry.
+  8. Invariant mismatch handling: Preserve current TaskState; close admission; require human supervisor reconciliation (`HUMAN_SUPERVISOR_RECONCILIATION_REQUIRED`).
 
 ---
 
-## 2. Decoupling of Historical Proof Track & Runtime Validation
+## 3. Crash, Replay & Concurrent Lease Reclaim Matrix
 
-Phase P04 strictly maintains the two-track validation discipline:
-1. **Automated CI / Test Suite Track**:
-   - Pure in-memory unit and integration tests verifying schema migrations, DDL constraints, state transitions, JCS serialization, and error branches.
-   - Executes across all development environments and automated test runners.
-2. **Real Windows OS Security Boundary Track**:
-   - Integration tests executing actual `CreateProcessW` calls with `STARTUPINFOEXW`, `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, `PROC_THREAD_ATTRIBUTE_JOB_LIST`, and AppContainer SIDs on physical Windows hosts.
-   - Validates that DACLs deny unauthorized file access, network traffic is blocked, and processes cannot break out of Job Objects.
-
----
-
-## 3. Work Breakdown Structure (Subtasks P04A – P04D)
-
-### 3.1. Subtask P04A: Dispatch Seam, Clean Intake & Workspace Binding Authority
-- **Objective**: Implement workspace binding creation prior to dispatch and Transaction A report intake upon worker completion.
-- **Scope**:
-  - Implement Schema Migration v6 (`attempt_workspace_bindings`, `worker_claims`).
-  - Implement pre-intake cleanliness probe: invoke `git status --porcelain=v1 -z --untracked-files=all` and `git diff-index --quiet HEAD --` with `GIT_OPTIONAL_LOCKS=0`.
-  - If dirty, roll back Transaction A, preserve task state `RUNNING`, and log `EVIDENCE_COLLECTION_FAILED` (`DIRTY_WORKTREE_DETECTED`).
-  - Implement `WorkerReport` schema validation via Go JSON schema engine.
-  - Implement RFC 8785 JCS canonicalization.
-  - Store verbatim `reported_head_sha` (`CHECK (LENGTH BETWEEN 7 AND 40)`).
-  - Update `attempt_workspace_bindings` to `RETAINED_FOR_VERIFICATION` via CAS.
-  - Atomically transition `tasks.state`: `RUNNING -> REPORT_READY`.
-- **Target Schema**: Migration v6.
-
-### 3.2. Subtask P04B: Hardened Git Evidence Collector (Pure In-Memory)
-- **Objective**: Implement in-memory Git evidence collection and immutable source snapshot extraction.
-- **Scope**:
-  - Enforce hardened Git allowlist with `GIT_OPTIONAL_LOCKS=0` (includes `git rev-parse --absolute-git-dir`).
-  - Implement tree walk snapshot extraction using `git ls-tree -rz --full-tree` and `git cat-file --batch`.
-  - Apply read-only ACLs to snapshot directory (`GENERIC_READ | GENERIC_EXECUTE`).
-  - Resolve linked worktree index paths via `git rev-parse --git-path index`.
-  - Collect `actual_base_sha`, `actual_head_sha`, `actual_changed_files`, and `diff_stat`.
-  - **Zero SQLite Writes**: Returns `GitEvidenceResult` in memory.
-- **Dependencies**: Subtask P04A.
-
-### 3.3. Subtask P04C: Verification Runner & Security Boundary (Pure In-Memory)
-- **Objective**: Execute verification test commands inside isolated Windows AppContainers.
-- **Scope**:
-  - Implement Windows process creation with `bInheritHandles = TRUE`, explicit handle attribute lists (`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`), and atomic Job Object assignment (`PROC_THREAD_ATTRIBUTE_JOB_LIST`).
-  - Stream capture with separation between capture limit (10 MB) and hard safety limit (50 MB).
-  - **Zero SQLite Writes**: Returns `TestEvidenceResult` and artifact streams in memory to P04D.
-- **Dependencies**: Subtask P04B.
-
-### 3.4. Subtask P04D: Pipeline Orchestrator, CAS Store & ReviewBundle
-- **Objective**: Centralized CAS orchestrator for Schema Migration v9, leases, Transaction B, Transaction C, and ReviewBundle synthesis.
-- **Scope**:
-  - Implement Schema Migration v9 (`task_verification_leases`, `evidence_sets`, `review_artifacts`, `review_bundles`).
-  - Manage verification lease lifecycle and CAS reclaim with checked TTL arithmetic (`expires_at_epoch_ms = acquired_at_epoch_ms + ttl_seconds * 1000`).
-  - Content-Addressed Store staging, deduplication, and atomic write-through to `artifacts/<first-two-hex>/<captured_sha256>`.
-  - Execute Transaction B: commit `evidence_sets` and `review_artifacts`, release lease, transition `tasks.state`: `REPORT_READY -> EVIDENCE_READY`.
-  - Synthesize RFC 8785 JCS canonical `ReviewBundle` JSON payload; compute SHA-256 bundle hash.
-  - Record pre-commit assembly latency metrics (`compilation_latency_ms = bundle_assembled_at_epoch_ms - evidence_finalized_at_epoch_ms`) and `nfr008_met`.
-  - Implement canonical replay/conflict matrix:
-    * Compile failure: Transaction C rolls back, task remains `EVIDENCE_READY`, emits `REVIEW_BUNDLE_COMPILATION_REJECTED`.
-    * Idempotent replay: Returns existing bundle, task remains `REVIEWING`.
-    * Hash conflict: Tampering conflict, task remains `REVIEWING`, Transaction C rolls back, emits `REVIEW_BUNDLE_COMPILATION_REJECTED` (`BUNDLE_HASH_CONFLICT`), locks automated approval.
-  - Execute Transaction C atomically: insert `review_bundles`, insert proposed audit event `REVIEW_BUNDLE_GENERATED` (with `commit_duration_ms` telemetry), transition `tasks.state`: `EVIDENCE_READY -> REVIEWING`.
-- **Dependencies**: Subtask P04C.
+| Scenario | Trigger / Event | Preconditions | Database Action | Outcome & Invariants |
+| :--- | :--- | :--- | :--- | :--- |
+| **Normal Acquisition** | Report validated | Attempt in `REPORT_READY` | `INSERT INTO task_verification_leases (..., state='ACTIVE', token=1)` | Success. Single active lease guaranteed by partial unique index. |
+| **Concurrent Acquisition Race** | Duplicate worker run | Another worker attempts lease | `INSERT INTO task_verification_leases (..., state='ACTIVE')` | **Rejected**. Unique index conflict on `idx_leases_single_active_attempt`. |
+| **Normal Completion** | Verification done | Active lease, before TTL | `UPDATE ... SET state='COMPLETED', released_at=? WHERE state='ACTIVE' AND worker_id=?` | Success. Lease terminal `COMPLETED`. Next stage unlocked. |
+| **Lease Expiration** | Hang / Timeout | Wall clock exceeds `expires_at` | `UPDATE ... SET state='EXPIRED', released_at=? WHERE state='ACTIVE'` | Success. Lease marked `EXPIRED`. Active lease slot vacated. |
+| **Atomic Reclaim** | Reclaimer runs | Predecessor `EXPIRED`, worker dead | Tx: `UPDATE ... SET state='RECLAIMED'` then `INSERT ... state='ACTIVE', token=token+1, pred=old_id` | Success. Predecessor becomes `RECLAIMED`; new lease becomes `ACTIVE`. |
+| **Concurrent Reclaim Race** | Multiple reclaimers | Predecessor `EXPIRED` | Both attempt `UPDATE ... SET state='RECLAIMED' WHERE state='EXPIRED'` | First commits; second sees 0 rows affected and aborts without duplicate. |
+| **Late Stalled Worker Write**| Worker wakes up | Old token, lease reclaimed | `UPDATE ... WHERE lease_id=? AND state='ACTIVE' AND token=old_token` | **Zero rows updated**. Stalled worker detects CAS failure and aborts. |
+| **Crash & Restart** | Daemon restarts | Crash during `ACTIVE` lease | Recovery scan detects expired lease or dead worker PID | Scanner marks `EXPIRED`. Allows subsequent clean atomic reclaim. |
 
 ---
 
-## 4. Crash Consistency & Replay Matrix
+## 4. Stream Limits & State Precedence Matrix
 
-| Failure Point | State Before Crash | Recovery Action on Restart | Canonical Resulting State |
+### 4.1. Limit Invariants
+- `capture_limit_bytes`: 10 MB (10,485,760 bytes).
+- `hard_safety_limit_bytes`: 50 MB (52,428,800 bytes).
+- Invariant: `CHECK (hard_safety_limit_bytes > capture_limit_bytes)` enforced at DB layer.
+
+### 4.2. Overflow Reader Algorithm & Precedence
+- Reader reads up to at most `hard_safety_limit_bytes + 1` bytes with overflow guard.
+- **Precedence 1 (Hard Limit Breach)**: If total observed bytes reaches `hard + 1`, terminate process immediately -> `HARD_LIMIT_TERMINATED` (`total = hard + 1`, `captured = capture`, `is_truncated = 1`, `full_stream_sha256 = NULL`).
+- **Precedence 2 (Timeout Abort)**: If timeout expires before EOF and `total <= hard` -> `TIMEOUT_ABORTED` (`total <= hard`, `captured = MIN(total, capture)`, `is_truncated = 1`, `full_stream_sha256 = NULL`).
+- **Precedence 3 (Clean EOF)**:
+  * `total <= capture` -> `COMPLETE_EOF` (`captured = total`, `is_truncated = 0`, `full_stream_sha256 = captured_sha256 IS NOT NULL`).
+  * `capture < total <= hard` -> `TRUNCATED_AT_CAPTURE_LIMIT` (`captured = capture`, `is_truncated = 1`, `full_stream_sha256 IS NOT NULL`).
+
+---
+
+## 5. ReviewBundle Latency Semantics & Traceability Matrix
+
+| Requirement | Implementation Mechanism | Enforcement Layer | Status |
 | :--- | :--- | :--- | :--- |
-| Crash during worker execution | `RUNNING` | P03 host recovery detects unconfirmed worker; lease expired | `FAILED` |
-| Dirty worktree at report intake | `RUNNING` | Transaction A rolls back; `DIRTY_WORKTREE_DETECTED` logged | `RUNNING` (Preserved) |
-| Crash after Transaction A | `REPORT_READY` | P04D lease reclaim: daemon restart recovery via host lock & `KILL_ON_JOB_CLOSE` | `REPORT_READY` (Reclaimable) |
-| Verification process exceeds 50 MB hard limit | `REPORT_READY` | Process terminated; `stream_state = 'HARD_LIMIT_TERMINATED'`, `full_stream_sha256 = NULL` | `REPORT_READY` -> `EVIDENCE_READY` (Via Tx B) |
-| Crash after Transaction B | `EVIDENCE_READY` | P04D orchestrator synthesizes ReviewBundle; records `latency_measurement_status = 'RECOVERED_AFTER_RESTART'`, `nfr008_met = 0` | `REVIEWING` (No deadlock) |
-| Transaction C compilation delay > 3.0s | `EVIDENCE_READY` | Transaction C commits with `nfr008_met = 0`, logs diagnostic SLA finding | `REVIEWING` (No deadlock) |
-| ReviewBundle replay with identical hash | `REVIEWING` | Idempotent return of existing ReviewBundle | `REVIEWING` (Preserved) |
-| ReviewBundle replay with conflicting hash | `REVIEWING` | Integrity conflict logged; Transaction C aborted; approval locked | `REVIEWING` (Preserved; human resolution required) |
+| **FR-008 (Independent Evidence)** | Hardened Git collector (P04B) & AppContainer test runner (P04C) | Pipeline Orchestrator | **DESIGN_ALIGNED** |
+| **NFR-008 (Latency Governance)** | ReviewBundle assembly diagnostic (`compilation_latency_ms`); `nfr008_compliance_status = 'UNVERIFIED'` | SQLite CHECK Constraint | **ENFORCED** |
+| **Model 1 Persistence** | P04A owns v6; P04B/C in-memory only; P04D owns v9 & CAS | Subtask Division | **ENFORCED** |
+| **Append-Only Leases** | `lease_id PRIMARY KEY`, partial unique index on `ACTIVE` | SQLite Schema v9 | **ENFORCED** |
+| **Stream Limits Inequality** | `CHECK (hard_safety_limit_bytes > capture_limit_bytes)` | SQLite Schema v9 | **ENFORCED** |
+| **Telemetry Causality** | Monotonic `commit_duration_ms` measured post-commit only | Go In-Process Telemetry | **ENFORCED** |
+| **State Preservation** | Invariant mismatch preserves TaskState; closes admission | Pipeline Orchestrator | **ENFORCED** |
 
 ---
 
-## 5. Requirement Reconciliation Matrix
+## 6. Execution Pre-Conditions & Stop Policy
 
-| Requirement | Canonical Spec Source | Reconciliation Status in Phase P04 |
-| :--- | :--- | :--- |
-| **FR-008** | `docs/02_REQUIREMENTS.md` | Fully satisfied via independent in-memory Git and verification collectors. |
-| **NFR-008** | `docs/02_REQUIREMENTS.md` | Formally reconciled via PROPOSAL-P04-002 Revision 5 into two-interval latency semantics with crash-safe non-deadlocking persistence and assembly pre-commit boundary. Canonical update pending approval. |
-| **P04 Schema v6** | `docs/adr/DRAFT-ADR-018` | Owned by Subtask P04A; introduces `attempt_workspace_bindings` and `worker_claims` (verbatim 7-40 hex SHA). |
-| **P04 Schema v9** | `docs/adr/DRAFT-ADR-018` | Owned by Subtask P04D; introduces `task_verification_leases`, `evidence_sets`, `review_artifacts`, and `review_bundles` with mathematical TTL, stream states, and non-deadlocking latency metrics. |
+1. **Mandatory Audit Approval**: Implementation code for Subtask P04A cannot commence until External Supervisor formally approves `PROPOSAL-P04-001`, `PROPOSAL-P04-002`, and `DRAFT-ADR-018`.
+2. **Task Contract Release**: A formally audited and released Task Contract `CONTRACT-TASK-P04-001` is strictly required before any Go files are authored.
+3. **Execution Guardrails**:
+   - `P04_CODE = HELD_PENDING_APPROVED_ARCHITECTURE_AND_TASK_CONTRACT`
+   - `P05_CODE = NOT_AUTHORIZED`
+   - `AUTOMATIC_RESTORE = DISABLED`
