@@ -28,6 +28,28 @@ type Poller struct {
 	stopping bool
 }
 
+// Done returns a receive-only channel that is closed when the poller stops or encounters an unrecoverable failure.
+// Each call to Start allocates a fresh channel. Access is thread-safe.
+func (p *Poller) Done() <-chan struct{} {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.done
+}
+
+// Err returns the last recorded error that caused the poller loop to terminate.
+// Clean cancellation or intentional Stop leaves Err returning nil. Access is thread-safe.
+func (p *Poller) Err() error {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.lastErr
+}
+
 func (p *Poller) PollOnce(ctx context.Context) error {
 	if p == nil || p.Store == nil || p.AO == nil || p.Owner == nil || p.Interval <= 0 || p.Actor == "" {
 		return errors.New("recovery: poller dependencies and injected cadence required")
@@ -131,13 +153,14 @@ func (p *Poller) Start(ctx context.Context) error {
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	p.cancel = cancel
-	p.done = make(chan struct{})
+	doneChan := make(chan struct{})
+	p.done = doneChan
 	p.running = true
 	p.shutdown = false
 	p.lastErr = nil
 	p.Owner.activePoller = p
-	go func() {
-		defer close(p.done)
+	go func(done chan struct{}) {
+		defer close(done)
 		t := time.NewTicker(p.Interval)
 		defer t.Stop()
 		for {
@@ -151,12 +174,13 @@ func (p *Poller) Start(ctx context.Context) error {
 					}
 					p.mu.Lock()
 					p.lastErr = err
+					p.running = false
 					p.mu.Unlock()
 					return
 				}
 			}
 		}
-	}()
+	}(doneChan)
 	return nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1337,6 +1338,516 @@ func TestClient_ErrorHandlingAndSanitization(t *testing.T) {
 		}
 		if !errors.Is(deadlineErr, context.DeadlineExceeded) {
 			t.Errorf("expected errors.Is(deadlineErr, context.DeadlineExceeded) == true, got: %v", deadlineErr)
+		}
+	})
+}
+func TestClient_GetWorkspaceFile(t *testing.T) {
+	validEnvelopeMap := func(sessionID, filePath, content string) map[string]any {
+		return map[string]any{
+			"sessionId":        sessionID,
+			"path":             filePath,
+			"content":          content,
+			"binary":           false,
+			"deleted":          false,
+			"contentTruncated": false,
+			"size":             int64(len(content)),
+			"status":           "unmodified",
+			"workspaceVersion": "wv-1",
+			"diff":             "--- old\n+++ new\n+added diff lines\n",
+			"diffTruncated":    false,
+			"editable":         true,
+			"fileFingerprint":  "fp-12345",
+			"additions":        1,
+			"deletions":        0,
+		}
+	}
+
+	t.Run("successful_retrieval_with_large_diff_and_small_content", func(t *testing.T) {
+		sessionID := "sess-ws-1"
+		filePath := "src/main.go"
+		content := "package main\n\nfunc main() {}\n"
+		largeDiff := strings.Repeat("+diff line\n", 500)
+
+		m := validEnvelopeMap(sessionID, filePath, content)
+		m["diff"] = largeDiff
+
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				t.Fatalf("expected GET, got %s", r.Method)
+			}
+			if r.URL.Path != "/api/v1/sessions/sess-ws-1/workspace/file" {
+				t.Fatalf("unexpected path: %s", r.URL.Path)
+			}
+			if r.URL.Query().Get("path") != filePath {
+				t.Fatalf("unexpected query path: %s", r.URL.Query().Get("path"))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(m)
+		}))
+		defer ts.Close()
+
+		client, err := NewClient(ts.URL, ts.Client())
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		opts := WorkspaceReadOptions{
+			MaxWireBytes: 64 * 1024,
+			MaxBytes:     1024,
+		}
+		gotBytes, err := client.GetWorkspaceFile(context.Background(), sessionID, filePath, opts)
+		if err != nil {
+			t.Fatalf("GetWorkspaceFile failed: %v", err)
+		}
+		if string(gotBytes) != content {
+			t.Fatalf("content mismatch: got %q, want %q", string(gotBytes), content)
+		}
+	})
+
+	t.Run("wire_overflow_rejects_with_ErrPayloadTooLarge", func(t *testing.T) {
+		sessionID := "sess-ws-wire-overflow"
+		filePath := "test.txt"
+		content := "small content"
+		largeDiff := strings.Repeat("x", 5000)
+
+		m := validEnvelopeMap(sessionID, filePath, content)
+		m["diff"] = largeDiff
+
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(m)
+		}))
+		defer ts.Close()
+
+		client, err := NewClient(ts.URL, ts.Client())
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		opts := WorkspaceReadOptions{
+			MaxWireBytes: 200, // Small wire limit
+			MaxBytes:     1000,
+		}
+		_, err = client.GetWorkspaceFile(context.Background(), sessionID, filePath, opts)
+		if err == nil {
+			t.Fatal("expected ErrPayloadTooLarge on wire overflow, got nil")
+		}
+		if !errors.Is(err, ErrPayloadTooLarge) {
+			t.Fatalf("expected ErrPayloadTooLarge, got: %v", err)
+		}
+	})
+
+	t.Run("content_overflow_rejects_with_ErrPayloadTooLarge_even_with_valid_wire", func(t *testing.T) {
+		sessionID := "sess-ws-content-overflow"
+		filePath := "large.txt"
+		content := strings.Repeat("a", 2000)
+
+		m := validEnvelopeMap(sessionID, filePath, content)
+
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(m)
+		}))
+		defer ts.Close()
+
+		client, err := NewClient(ts.URL, ts.Client())
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		opts := WorkspaceReadOptions{
+			MaxWireBytes: 64 * 1024, // Wire envelope fits
+			MaxBytes:     500,       // Content limit exceeded
+		}
+		_, err = client.GetWorkspaceFile(context.Background(), sessionID, filePath, opts)
+		if err == nil {
+			t.Fatal("expected ErrPayloadTooLarge on content overflow, got nil")
+		}
+		if !errors.Is(err, ErrPayloadTooLarge) {
+			t.Fatalf("expected ErrPayloadTooLarge, got: %v", err)
+		}
+	})
+
+	t.Run("exact_boundaries_wire_and_content", func(t *testing.T) {
+		sessionID := "sess-ws-boundaries"
+		filePath := "boundary.txt"
+		content := "exact10chr"
+
+		m := validEnvelopeMap(sessionID, filePath, content)
+		bodyBytes, err := json.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		exactWireLen := int64(len(bodyBytes))
+
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(bodyBytes)
+		}))
+		defer ts.Close()
+
+		client, err := NewClient(ts.URL, ts.Client())
+		if err != nil {
+			t.Fatalf("NewClient failed: %v", err)
+		}
+
+		// Exact wire limit matches: should succeed
+		got, err := client.GetWorkspaceFile(context.Background(), sessionID, filePath, WorkspaceReadOptions{
+			MaxWireBytes: exactWireLen,
+			MaxBytes:     int64(len(content)),
+		})
+		if err != nil {
+			t.Fatalf("exact boundary match failed: %v", err)
+		}
+		if string(got) != content {
+			t.Fatalf("content mismatch: got %q, want %q", string(got), content)
+		}
+
+		// Wire limit is 1 byte less: should fail with ErrPayloadTooLarge
+		_, err = client.GetWorkspaceFile(context.Background(), sessionID, filePath, WorkspaceReadOptions{
+			MaxWireBytes: exactWireLen - 1,
+			MaxBytes:     int64(len(content)),
+		})
+		if !errors.Is(err, ErrPayloadTooLarge) {
+			t.Fatalf("expected ErrPayloadTooLarge for wire-1, got %v", err)
+		}
+
+		// Content limit is 1 byte less: should fail with ErrPayloadTooLarge
+		_, err = client.GetWorkspaceFile(context.Background(), sessionID, filePath, WorkspaceReadOptions{
+			MaxWireBytes: exactWireLen,
+			MaxBytes:     int64(len(content)) - 1,
+		})
+		if !errors.Is(err, ErrPayloadTooLarge) {
+			t.Fatalf("expected ErrPayloadTooLarge for content-1, got %v", err)
+		}
+	})
+
+	t.Run("missing_required_fields_fails_closed", func(t *testing.T) {
+		requiredFields := []string{
+			"sessionId", "path", "content", "binary", "deleted",
+			"contentTruncated", "size", "status", "workspaceVersion", "diff",
+			"diffTruncated", "editable", "fileFingerprint", "additions", "deletions",
+		}
+
+		for _, missingField := range requiredFields {
+			t.Run("missing_"+missingField, func(t *testing.T) {
+				m := validEnvelopeMap("sess-1", "file.txt", "content")
+				delete(m, missingField)
+
+				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_ = json.NewEncoder(w).Encode(m)
+				}))
+				defer ts.Close()
+
+				client, err := NewClient(ts.URL, ts.Client())
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				_, err = client.GetWorkspaceFile(context.Background(), "sess-1", "file.txt", WorkspaceReadOptions{
+					MaxWireBytes: 10000,
+					MaxBytes:     1000,
+				})
+				if err == nil {
+					t.Fatalf("expected ProtocolError when %s is missing, got nil", missingField)
+				}
+				var protoErr *ProtocolError
+				if !errors.As(err, &protoErr) {
+					t.Fatalf("expected *ProtocolError when %s is missing, got: %T (%v)", missingField, err, err)
+				}
+				if !strings.Contains(protoErr.Reason, "missing required field") {
+					t.Fatalf("unexpected reason: %s", protoErr.Reason)
+				}
+			})
+		}
+	})
+
+	t.Run("trailing_payload_and_second_json_value_rejected", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			m := validEnvelopeMap("sess-1", "file.txt", "hello")
+			b, _ := json.Marshal(m)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(b)
+			_, _ = w.Write([]byte(" {\"second\":\"value\"}"))
+		}))
+		defer ts.Close()
+
+		client, err := NewClient(ts.URL, ts.Client())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = client.GetWorkspaceFile(context.Background(), "sess-1", "file.txt", WorkspaceReadOptions{
+			MaxWireBytes: 10000,
+			MaxBytes:     1000,
+		})
+		if err == nil {
+			t.Fatal("expected ProtocolError on trailing payload, got nil")
+		}
+		var protoErr *ProtocolError
+		if !errors.As(err, &protoErr) {
+			t.Fatalf("expected *ProtocolError, got %v", err)
+		}
+		if !strings.Contains(protoErr.Reason, "trailing data") {
+			t.Fatalf("unexpected reason: %s", protoErr.Reason)
+		}
+	})
+
+	t.Run("status_enum_validation", func(t *testing.T) {
+		for _, status := range []string{"unmodified", "modified", "added"} {
+			t.Run("valid_"+status, func(t *testing.T) {
+				m := validEnvelopeMap("sess-1", "file.txt", "content")
+				m["status"] = status
+
+				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_ = json.NewEncoder(w).Encode(m)
+				}))
+				defer ts.Close()
+
+				client, _ := NewClient(ts.URL, ts.Client())
+				_, err := client.GetWorkspaceFile(context.Background(), "sess-1", "file.txt", WorkspaceReadOptions{
+					MaxWireBytes: 10000,
+					MaxBytes:     1000,
+				})
+				if err != nil {
+					t.Fatalf("valid status %s failed: %v", status, err)
+				}
+			})
+		}
+
+		t.Run("invalid_status_enum", func(t *testing.T) {
+			m := validEnvelopeMap("sess-1", "file.txt", "content")
+			m["status"] = "corrupted_status"
+
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_ = json.NewEncoder(w).Encode(m)
+			}))
+			defer ts.Close()
+
+			client, _ := NewClient(ts.URL, ts.Client())
+			_, err := client.GetWorkspaceFile(context.Background(), "sess-1", "file.txt", WorkspaceReadOptions{
+				MaxWireBytes: 10000,
+				MaxBytes:     1000,
+			})
+			if err == nil {
+				t.Fatal("expected ProtocolError for invalid status, got nil")
+			}
+			var protoErr *ProtocolError
+			if !errors.As(err, &protoErr) {
+				t.Fatalf("expected ProtocolError, got: %v", err)
+			}
+		})
+	})
+
+	t.Run("deleted_file_returns_ErrWorkspaceFileDeleted_not_APIError_404", func(t *testing.T) {
+		// Test deleted=true with status="unmodified"
+		m1 := validEnvelopeMap("sess-1", "file.txt", "")
+		m1["deleted"] = true
+
+		ts1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(m1)
+		}))
+		defer ts1.Close()
+
+		client1, _ := NewClient(ts1.URL, ts1.Client())
+		_, err1 := client1.GetWorkspaceFile(context.Background(), "sess-1", "file.txt", WorkspaceReadOptions{
+			MaxWireBytes: 10000,
+			MaxBytes:     1000,
+		})
+		if !errors.Is(err1, ErrWorkspaceFileDeleted) {
+			t.Fatalf("expected ErrWorkspaceFileDeleted for deleted=true, got: %v", err1)
+		}
+		if errors.Is(err1, ErrNotFound) {
+			t.Fatal("ErrWorkspaceFileDeleted must NOT match ErrNotFound or fake APIError/404")
+		}
+
+		// Test deleted=false with status="deleted"
+		m2 := validEnvelopeMap("sess-1", "file.txt", "")
+		m2["status"] = "deleted"
+
+		ts2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(m2)
+		}))
+		defer ts2.Close()
+
+		client2, _ := NewClient(ts2.URL, ts2.Client())
+		_, err2 := client2.GetWorkspaceFile(context.Background(), "sess-1", "file.txt", WorkspaceReadOptions{
+			MaxWireBytes: 10000,
+			MaxBytes:     1000,
+		})
+		if !errors.Is(err2, ErrWorkspaceFileDeleted) {
+			t.Fatalf("expected ErrWorkspaceFileDeleted for status=deleted, got: %v", err2)
+		}
+	})
+
+	t.Run("binary_file_returns_ProtocolError", func(t *testing.T) {
+		m := validEnvelopeMap("sess-1", "file.bin", "binarycontent")
+		m["binary"] = true
+
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(m)
+		}))
+		defer ts.Close()
+
+		client, _ := NewClient(ts.URL, ts.Client())
+		_, err := client.GetWorkspaceFile(context.Background(), "sess-1", "file.bin", WorkspaceReadOptions{
+			MaxWireBytes: 10000,
+			MaxBytes:     1000,
+		})
+		var protoErr *ProtocolError
+		if !errors.As(err, &protoErr) || !strings.Contains(protoErr.Reason, "binary") {
+			t.Fatalf("expected ProtocolError with binary reason, got: %v", err)
+		}
+	})
+
+	t.Run("content_truncated_returns_ProtocolError", func(t *testing.T) {
+		m := validEnvelopeMap("sess-1", "file.txt", "truncated content")
+		m["contentTruncated"] = true
+
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(m)
+		}))
+		defer ts.Close()
+
+		client, _ := NewClient(ts.URL, ts.Client())
+		_, err := client.GetWorkspaceFile(context.Background(), "sess-1", "file.txt", WorkspaceReadOptions{
+			MaxWireBytes: 10000,
+			MaxBytes:     1000,
+		})
+		var protoErr *ProtocolError
+		if !errors.As(err, &protoErr) || !strings.Contains(protoErr.Reason, "truncated") {
+			t.Fatalf("expected ProtocolError with truncated reason, got: %v", err)
+		}
+	})
+
+	t.Run("session_and_path_mismatch_returns_ProtocolError", func(t *testing.T) {
+		m := validEnvelopeMap("sess-different", "file.txt", "content")
+
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(m)
+		}))
+		defer ts.Close()
+
+		client, _ := NewClient(ts.URL, ts.Client())
+		_, err := client.GetWorkspaceFile(context.Background(), "sess-expected", "file.txt", WorkspaceReadOptions{
+			MaxWireBytes: 10000,
+			MaxBytes:     1000,
+		})
+		var protoErr *ProtocolError
+		if !errors.As(err, &protoErr) || !strings.Contains(protoErr.Reason, "sessionId") {
+			t.Fatalf("expected ProtocolError for sessionId mismatch, got: %v", err)
+		}
+	})
+
+	t.Run("upstream_http_errors_properly_decoded_into_APIError", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error":     "NotFound",
+				"code":      "FILE_NOT_FOUND",
+				"message":   "the requested file does not exist",
+				"requestId": "req-1234",
+			})
+		}))
+		defer ts.Close()
+
+		client, _ := NewClient(ts.URL, ts.Client())
+		_, err := client.GetWorkspaceFile(context.Background(), "sess-1", "missing.txt", WorkspaceReadOptions{
+			MaxWireBytes: 10000,
+			MaxBytes:     1000,
+		})
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) {
+			t.Fatalf("expected *APIError, got %T: %v", err, err)
+		}
+		if apiErr.StatusCode != http.StatusNotFound || apiErr.Code != "FILE_NOT_FOUND" {
+			t.Fatalf("unexpected APIError fields: %+v", apiErr)
+		}
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatal("expected errors.Is(err, ErrNotFound) to match")
+		}
+	})
+
+	t.Run("options_validation_rejects_invalid_parameters", func(t *testing.T) {
+		client, _ := NewClient("http://127.0.0.1:3001", http.DefaultClient)
+
+		// Empty sessionID
+		_, err := client.GetWorkspaceFile(context.Background(), "", "file.txt", WorkspaceReadOptions{MaxWireBytes: 10, MaxBytes: 10})
+		if !errors.Is(err, ErrBadRequest) {
+			t.Fatalf("expected ErrBadRequest for empty sessionID, got %v", err)
+		}
+
+		// Empty filePath
+		_, err = client.GetWorkspaceFile(context.Background(), "sess", "", WorkspaceReadOptions{MaxWireBytes: 10, MaxBytes: 10})
+		if !errors.Is(err, ErrBadRequest) {
+			t.Fatalf("expected ErrBadRequest for empty filePath, got %v", err)
+		}
+
+		// MaxWireBytes <= 0
+		_, err = client.GetWorkspaceFile(context.Background(), "sess", "file.txt", WorkspaceReadOptions{MaxWireBytes: 0, MaxBytes: 10})
+		if !errors.Is(err, ErrBadRequest) {
+			t.Fatalf("expected ErrBadRequest for MaxWireBytes=0, got %v", err)
+		}
+
+		// MaxBytes <= 0
+		_, err = client.GetWorkspaceFile(context.Background(), "sess", "file.txt", WorkspaceReadOptions{MaxWireBytes: 10, MaxBytes: -5})
+		if !errors.Is(err, ErrBadRequest) {
+			t.Fatalf("expected ErrBadRequest for MaxBytes < 0, got %v", err)
+		}
+
+		// MaxWireBytes integer overflow
+		_, err = client.GetWorkspaceFile(context.Background(), "sess", "file.txt", WorkspaceReadOptions{MaxWireBytes: math.MaxInt64, MaxBytes: 10})
+		if !errors.Is(err, ErrBadRequest) {
+			t.Fatalf("expected ErrBadRequest for MaxWireBytes=MaxInt64, got %v", err)
+		}
+	})
+
+	t.Run("context_cancellation_fails_closed", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(50 * time.Millisecond)
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer ts.Close()
+
+		client, _ := NewClient(ts.URL, ts.Client())
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		_, err := client.GetWorkspaceFile(ctx, "sess-1", "file.txt", WorkspaceReadOptions{
+			MaxWireBytes: 10000,
+			MaxBytes:     1000,
+		})
+		if err == nil {
+			t.Fatal("expected error on cancelled context, got nil")
+		}
+		var transportErr *TransportError
+		if !errors.As(err, &transportErr) {
+			t.Fatalf("expected *TransportError, got %T: %v", err, err)
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled unwrap, got %v", err)
 		}
 	})
 }

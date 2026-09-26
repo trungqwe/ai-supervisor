@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -171,11 +171,36 @@ func (m *mockAOServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 5. Workspace file retrieval: GET /api/v1/sessions/{id}/workspace/file
+	// 5. Workspace file retrieval: GET /api/v1/sessions/{id}/workspace/file (returns canonical 15-field JSON envelope)
 	if r.Method == http.MethodGet && strings.Contains(path, "/workspace/file") {
+		parts := strings.Split(path, "/")
+		sessID := ""
+		if len(parts) >= 5 {
+			sessID = parts[4]
+		}
+		filePath := r.URL.Query().Get("path")
+
+		envelope := ao.WorkspaceFileResponse{
+			SessionID:        sessID,
+			Path:             filePath,
+			Content:          m.workspaceFile,
+			Binary:           false,
+			Deleted:          false,
+			ContentTruncated: false,
+			Size:             int64(len(m.workspaceFile)),
+			Status:           string(ao.WorkspaceFileStatusUnmodified),
+			WorkspaceVersion: "wv-p03-004",
+			Diff:             "",
+			DiffTruncated:    false,
+			Editable:         false,
+			FileFingerprint:  "fp-p03-004-harness",
+			Additions:        0,
+			Deletions:        0,
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(m.workspaceFile))
+		_ = json.NewEncoder(w).Encode(envelope)
 		return
 	}
 
@@ -363,31 +388,15 @@ func TestP03IntegrationHarness5StepsViaLibrarySaga(t *testing.T) {
 		t.Fatalf("Step 3 PollOnce failed: %v", err)
 	}
 
-	// Step 4: Workspace File Retrieval (raw workspace transport)
-	// Reads and inspects raw report bytes (R1-005)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+fmt.Sprintf("/api/v1/sessions/%s/workspace/file?path=%s", sessionID, reportPath), nil)
+	// Step 4: Workspace File Retrieval via typed library API (R1-005 / AC-004-10)
+	// Reads and inspects report content using approved ao.Client.GetWorkspaceFile
+	workspaceOpts := ao.WorkspaceReadOptions{
+		MaxWireBytes: 10 * 1024 * 1024, // 10MB wire envelope limit
+		MaxBytes:     10 * 1024 * 1024, // 10MB decoded content limit
+	}
+	reportBytes, err := client.GetWorkspaceFile(ctx, sessionID, reportPath, workspaceOpts)
 	if err != nil {
-		t.Fatalf("Step 4 create request failed: %v", err)
-	}
-	resp, err := ts.Client().Do(req)
-	if err != nil {
-		t.Fatalf("Step 4 workspace read failed: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected HTTP 200 for workspace read, got %d", resp.StatusCode)
-	}
-
-	// Harness-level bounded read guard (reads up to limit+1, rejects if payload > limit).
-	// NOTE (R1-005): This harness check is strictly a defensive client-side guard, NOT
-	// an approved solution for the missing upstream typed seam API.
-	maxWorkspaceBytes := int64(10 << 20) // 10MB limit
-	reportBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxWorkspaceBytes+1))
-	if err != nil {
-		t.Fatalf("Step 4 read body failed: %v", err)
-	}
-	if int64(len(reportBytes)) > maxWorkspaceBytes {
-		t.Fatalf("Step 4 payload exceeded size limit of %d bytes", maxWorkspaceBytes)
+		t.Fatalf("Step 4 client.GetWorkspaceFile failed: %v", err)
 	}
 	if string(reportBytes) != mockServer.workspaceFile {
 		t.Fatalf("report bytes mismatch: got %q, want %q", string(reportBytes), mockServer.workspaceFile)
@@ -405,13 +414,20 @@ func TestP03IntegrationHarness5StepsViaLibrarySaga(t *testing.T) {
 		t.Fatalf("unexpected parsed report contents: %+v", parsedReport)
 	}
 
-	// Verify context cancellation contract (R1-005): cancelled context must fail closed
+	// Verify context cancellation contract (R1-005): cancelled context must fail closed via typed API
 	cancelledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
-	cancelReq, _ := http.NewRequestWithContext(cancelledCtx, http.MethodGet, ts.URL+fmt.Sprintf("/api/v1/sessions/%s/workspace/file?path=%s", sessionID, reportPath), nil)
-	if cancelResp, err := ts.Client().Do(cancelReq); err == nil {
-		cancelResp.Body.Close()
-		t.Fatal("expected request with cancelled context to fail, but succeeded")
+	if _, err := client.GetWorkspaceFile(cancelledCtx, sessionID, reportPath, workspaceOpts); err == nil {
+		t.Fatal("expected GetWorkspaceFile with cancelled context to fail, but succeeded")
+	}
+
+	// Negative probe: Bounded reading limits wire overflow fail-closed
+	smallWireOpts := ao.WorkspaceReadOptions{
+		MaxWireBytes: 20, // tiny limit smaller than envelope
+		MaxBytes:     10 * 1024 * 1024,
+	}
+	if _, err := client.GetWorkspaceFile(ctx, sessionID, reportPath, smallWireOpts); !errors.Is(err, ao.ErrPayloadTooLarge) {
+		t.Fatalf("expected ErrPayloadTooLarge on wire overflow, got: %v", err)
 	}
 
 	// Step 5: Teardown / Stop Session via stop.Coordinator.Start

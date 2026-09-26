@@ -319,15 +319,26 @@ func runDaemon(args []string) error {
 		}
 	}()
 
-	// Note on Poller failure notification (R1-004 / BLOCKER-P03-004-POLLER-ASYNC-NOTIFICATION):
-	// recovery.Poller runs in a background goroutine launched by poller.Start(ctx).
-	// Because recovery.Poller's done channel and lastErr are unexported and recovery is in
-	// forbidden_scope, the host does not have an asynchronous notification channel while
-	// running. The host joins poller during shutdown drain via poller.Stop().
+	// Poller asynchronous error notification watcher (R1-004 / AC-004-09)
+	pollerDone := poller.Done()
+	pollerWatcherDone := make(chan struct{})
+	go func() {
+		defer close(pollerWatcherDone)
+		select {
+		case <-pollerCtx.Done():
+			return
+		case <-pollerDone:
+			if err := poller.Err(); err != nil && pollerCtx.Err() == nil {
+				setUnhealthy("Poller", err)
+			}
+		}
+	}()
 
 	pollerCloser := &fnCloser{fn: func() error {
 		cancelPoller()
-		return poller.Stop()
+		err := poller.Stop()
+		<-pollerWatcherDone
+		return err
 	}}
 	timeoutCloser := &fnCloser{fn: func() error {
 		cancelTimeout()

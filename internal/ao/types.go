@@ -1,6 +1,9 @@
 package ao
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // DaemonServiceAO is the pinned upstream service identifier returned by the AO daemon in health and readiness probes.
 const DaemonServiceAO = "agent-orchestrator-daemon"
@@ -152,3 +155,44 @@ type ResumeWorkerResult struct {
 	RestoreMode RestoreMode
 	Session     WorkerStatus
 }
+// WorkspaceReadOptions defines bounded limits for reading workspace files from AO.
+type WorkspaceReadOptions struct {
+	MaxWireBytes int64 // Maximum allowed wire envelope payload size in bytes (> 0)
+	MaxBytes     int64 // Maximum allowed decoded file content size in bytes (> 0)
+}
+
+// WorkspaceFileStatus defines valid enum values for WorkspaceFileResponse.Status.
+type WorkspaceFileStatus string
+
+const (
+	WorkspaceFileStatusUnmodified WorkspaceFileStatus = "unmodified"
+	WorkspaceFileStatusModified   WorkspaceFileStatus = "modified"
+	WorkspaceFileStatusAdded      WorkspaceFileStatus = "added"
+	WorkspaceFileStatusDeleted    WorkspaceFileStatus = "deleted"
+)
+
+// WorkspaceFileResponse represents the JSON envelope returned by GET /api/v1/sessions/{sessionId}/workspace/file
+// pursuant to Untrivial-ai/agent-orchestrator v0.13.0 (commit 15e9ea971f1711ec8b50e157d6eb300db6cbe0d6).
+type WorkspaceFileResponse struct {
+	SessionID        string `json:"sessionId"`
+	Path             string `json:"path"`
+	Content          string `json:"content"`
+	Binary           bool   `json:"binary"`
+	Deleted          bool   `json:"deleted"`
+	ContentTruncated bool   `json:"contentTruncated"`
+	Size             int64  `json:"size"`
+	Status           string `json:"status"` // "unmodified" | "modified" | "added" | "deleted"
+	WorkspaceVersion string `json:"workspaceVersion"`
+	Diff             string `json:"diff"`
+	DiffTruncated    bool   `json:"diffTruncated"`
+	Editable         bool   `json:"editable"`
+	FileFingerprint  string `json:"fileFingerprint"`
+	Additions        int    `json:"additions"`
+	Deletions        int    `json:"deletions"`
+}
+
+// Workspace file retrieval errors
+var (
+	ErrPayloadTooLarge      = errors.New("ao: payload exceeds maximum allowed size")
+	ErrWorkspaceFileDeleted = errors.New("ao: workspace file is marked deleted")
+)
