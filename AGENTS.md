@@ -98,10 +98,10 @@ This document establishes immutable operational directives for all AI coding age
 > External Supervisor approved and released `CONTRACT-TASK-P03-003D-01` from candidate commit `7701b8b02c68006c4e692a1c8a61609c72a6c033`, blob `604c4786281354565c8e37238f0b5ba95542e4f9`, code base `583e700eb125a08cc6bd7d63b6b27a6f3d4cc527` (`docs/audits/P03_TASK_003D_CONTRACT_RELEASE_AUDIT.md`).
 > Historical 3B release: External Supervisor released CONTRACT-TASK-P03-003B-01 from candidate SHA `ae8deb9ee41479d0e0868dced53ed89135252923`, blob `84bd84535352c2d28dbc1eba820aa8b22382dd99`, with code base SHA `b8b0c95576d87677e8d48210d9838cc2f599752a`.
 
-> External Supervisor completed final re-audit of implementation commit `d9b7c1344a8a41cfad6e3bd8bb4db87080afcc03`: closed finding P03-004-R4-001; approved TASK_P03_004_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED in docs/audits/P03_TASK_004_EXTERNAL_REAUDIT_004.md. Authorized merge of exact SHA d9b7c134 into main. Active gate transitions to P03_EXIT_GATE_AUDIT. Do not merge P04/P05; do not declare P03 COMPLETE. AUTOMATIC_RESTORE=DISABLED; host principal, Live AO and Stage B runtime remain UNVERIFIED.
+> External Supervisor approved merge integration: exact implementation commit `d9b7c1344a8a41cfad6e3bd8bb4db87080afcc03` merged into main at merge commit `aea182a060e85e91d2a6d7f11f007fc22e6c1da9` (zero-diff on all 15 implementation paths). Audited in docs/audits/P03_TASK_004_MERGE_INTEGRATION_AUDIT.md. Status: TASK_P03_004_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED; TASK_P03_004_CODE = MERGED; HOST_QUIESCENCE_INTEGRATION = IMPLEMENTED_AT_LIBRARY_AND_DAEMON_SCOPE; DESIGN_BLOCKER_3D_STARTUP_WIRING = CLOSED_AT_IMPLEMENTATION_SCOPE; ACTIVE_GATE = P03_EXIT_GATE_AUDIT. Do not open P04/P05; do not declare P03 COMPLETE. AUTOMATIC_RESTORE=DISABLED; host principal, Live AO and Stage B runtime remain UNVERIFIED.
 >
-1. **TASK-P03-004 IMPLEMENTATION GATE (REVISION 2 REMEDIATION)**:
-   - `TASK_P03_004 = RELEASED (Revision 2)`; `TASK_P03_004_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED`.
+1. **P03 EXIT GATE AUDIT (TASK-P03-004 MERGED)**:
+   - `TASK_P03_004 = RELEASED (Revision 2)`; `TASK_P03_004_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED`; `TASK_P03_004_CODE = MERGED`.
    - Formally released pursuant to `docs/audits/P03_TASK_004_REVISION_2_RELEASE_AUDIT.md`.
    - Implement only `docs/tasks/TASK_CONTRACT_P03_004_REVISION_2.md` (`CONTRACT-TASK-P03-004-02`), from code base SHA `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea` on branch `codex/p03-004`.
    - Allowed scope: `cmd/supervisor/**`, `internal/host/**`, `internal/recovery/poller.go`, `internal/recovery/poller_test.go`, `internal/ao/client.go`, `internal/ao/types.go`, `internal/ao/client_test.go`, `test/integration/**`.
