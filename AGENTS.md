@@ -102,12 +102,12 @@ This document establishes immutable operational directives for all AI coding age
 >
 1. **PHASE P04 PRE-CONTRACT ARCHITECTURE REMEDIATION DIRECTIVES**:
    - `PHASE_P03 = COMPLETE`; `P03_EXIT_GATE = EXTERNAL_AUDIT_APPROVED`.
-   - `ACTIVE_GATE = P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_12`.
-   - `PROPOSAL_P04_001 = REVISION_12_REQUIRED`; Remediated to Revision 13 — `PENDING_EXTERNAL_REVIEW`.
+   - `ACTIVE_GATE = P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_13`.
+   - `PROPOSAL_P04_001 = REVISION_13_REQUIRED`; Remediated to Revision 14 — `PENDING_EXTERNAL_REVIEW`.
    - `PROPOSAL_P04_002 = REVISION_6_REQUIRED`; Remediated to Revision 7 — `PENDING_EXTERNAL_REVIEW` (`docs/proposals/PROPOSAL-P04-002-review-bundle-latency-semantics.md`).
-   - `ADR_018 = REVISION_12_REQUIRED`; Remediated to Revision 13 — `DRAFT_PENDING_EXTERNAL_APPROVAL`.
-   - `PLAN_P04_EVIDENCE_REVIEW = REVISION_12_REQUIRED`; Remediated to Revision 13 — `PLANNING_PENDING_EXTERNAL_AUDIT`.
-   - External Re-Audit 011 (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_011.md`): findings `P04-ARCH-R11-001 = CLOSED_AT_DESIGN_LEVEL`, `P04-ARCH-R11-002 = NOT_CLOSED`, `P04-ARCH-R11-003 = PARTIALLY_CLOSED`, `P04-ARCH-R11-004 = SUBSTANTIVELY_CLOSED_WITH_R12_FOLLOWUP`, and four new findings `P04-ARCH-R12-001..004` recorded with remediation submitted.
+   - `ADR_018 = REVISION_13_REQUIRED`; Remediated to Revision 14 — `DRAFT_PENDING_EXTERNAL_APPROVAL`.
+   - `PLAN_P04_EVIDENCE_REVIEW = REVISION_13_REQUIRED`; Remediated to Revision 14 — `PLANNING_PENDING_EXTERNAL_AUDIT`.
+   - External Re-Audit 012 (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_012.md`): findings `P04-ARCH-R12-001 = PARTIALLY_CLOSED`, `P04-ARCH-R12-002 = CLOSED_AT_DESIGN_LEVEL`, `P04-ARCH-R12-003 = PARTIALLY_CLOSED`, `P04-ARCH-R12-004 = CLOSED_AT_DESIGN_LEVEL`, and four new findings `P04-ARCH-R13-001..004` recorded with remediation submitted.
    - Proof Plan & Contract: `docs/plans/PLAN-P04-WORKTREE-BINDING-PROOF.md` Revision 5 (`HISTORICAL_DEFERRED_NON_BLOCKING`); `docs/tasks/DRAFT_TASK_CONTRACT_P04_WORKTREE_BINDING_PROOF.md` (`RETIRED_NON_EXECUTABLE_DRAFT`, Model A Draft Lineage, status invariant: `NOT_RELEASED`). Decoupled from execution graph; Subtask P04A is unblocked as first releaseable task.
    - `P04_TASK_CONTRACT = NOT_RELEASED`.
    - `P04_CODE = HELD_PENDING_APPROVED_ARCHITECTURE_AND_TASK_CONTRACT`.
@@ -119,15 +119,15 @@ This document establishes immutable operational directives for all AI coding age
      * `DESIGN_BLOCKER_P04_REVIEW_SCHEMA_RECONCILIATION = REMEDIATION_SUBMITTED`
      * `DESIGN_BLOCKER_P04_EVIDENCE_ATOMICITY = REMEDIATION_SUBMITTED`
      * `DESIGN_BLOCKER_P04_INERT_AO_HARNESS = REMEDIATION_SUBMITTED`
-   - Remediated Pre-Contract Documents Submitted (Revision 12 / Revision 6 / Revision 5 / Model A Draft):
-     * Proposal 001: `docs/proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md` (`PENDING_EXTERNAL_REVIEW`, Revision 12)
-     * Proposal 002: `docs/proposals/PROPOSAL-P04-002-review-bundle-latency-semantics.md` (`PENDING_EXTERNAL_REVIEW`, Revision 6)
-     * Draft ADR: `docs/adr/DRAFT-ADR-018-evidence-review-and-verification-isolation.md` (`DRAFT_PENDING_EXTERNAL_APPROVAL`, Revision 12)
-     * Execution Plan: `docs/plans/PLAN-P04-EVIDENCE-REVIEW.md` (`PLANNING_PENDING_EXTERNAL_AUDIT`, Revision 12)
+   - Remediated Pre-Contract Documents Submitted (Revision 14 / Revision 7 / Revision 5 / Model A Draft):
+     * Proposal 001: `docs/proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md` (`PENDING_EXTERNAL_REVIEW`, Revision 14)
+     * Proposal 002: `docs/proposals/PROPOSAL-P04-002-review-bundle-latency-semantics.md` (`PENDING_EXTERNAL_REVIEW`, Revision 7)
+     * Draft ADR: `docs/adr/DRAFT-ADR-018-evidence-review-and-verification-isolation.md` (`DRAFT_PENDING_EXTERNAL_APPROVAL`, Revision 14)
+     * Execution Plan: `docs/plans/PLAN-P04-EVIDENCE-REVIEW.md` (`PLANNING_PENDING_EXTERNAL_AUDIT`, Revision 14)
      * Bounded Proof Plan: `docs/plans/PLAN-P04-WORKTREE-BINDING-PROOF.md` (`HISTORICAL_DEFERRED_NON_BLOCKING`, Revision 5)
      * Bounded Proof Draft Contract: `docs/tasks/DRAFT_TASK_CONTRACT_P04_WORKTREE_BINDING_PROOF.md` (`RETIRED_NON_EXECUTABLE_DRAFT`, Model A Draft Lineage; validated against `docs/schemas/task-contract.schema.json`)
-     * Re-Audit 010 Record: `docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_010.md` (`REVISION_11_REQUIRED`)
-   - Next Approved Action: Await External Supervisor re-audit of Revision 12 remediation deliverables. Zero production or test code writing for Phase P04 or P05 until formal Task Contract release.
+     * Re-Audit 012 Record: `docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_012.md` (`REVISION_13_REQUIRED`)
+   - Next Approved Action: Await External Supervisor re-audit of Revision 14 remediation deliverables. Zero production or test code writing for Phase P04 or P05 until formal Task Contract release.
    - Maintain strict fail-closed dependencies: `AUTOMATIC_RESTORE = DISABLED`; operator restore and linked stop remain disabled until verified operator principal reaches trusted boundary (`VERIFIED_OPERATOR_PRINCIPAL = OPEN_FAIL_CLOSED_DEPENDENCY`).
    - Stage B runtime catalog is deferred: `STAGE_B_RUNTIME_CATALOG = DEFERRED_TO_P04_RUNTIME_INTEGRATION`.
    - Candidate WIP artifact preserved externally in `D:\TU_CODE\ai-supervisor-user-wip-recovery\P03-EXIT-R2-001`; never restore, overwrite, or touch.
@@ -206,16 +206,17 @@ This document establishes immutable operational directives for all AI coding age
    - `P04_REAUDIT_009 = REVISION_10_REQUIRED` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_009.md`)
    - `P04_REAUDIT_010 = REVISION_11_REQUIRED` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_010.md`)
    - `P04_REAUDIT_011 = REVISION_12_REQUIRED` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_011.md`)
-   - `PROPOSAL_P04_001 = REVISION_12_REQUIRED` (Remediated: Revision 13 submitted)
+   - `P04_REAUDIT_012 = REVISION_13_REQUIRED` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_012.md`)
+   - `PROPOSAL_P04_001 = REVISION_13_REQUIRED` (Remediated: Revision 14 submitted)
    - `PROPOSAL_P04_002 = REVISION_6_REQUIRED` (Remediated: Revision 7 submitted)
-   - `ADR_018 = REVISION_12_REQUIRED` (Remediated: Revision 13 submitted)
-   - `PLAN_P04_EVIDENCE_REVIEW = REVISION_12_REQUIRED` (Remediated: Revision 13 submitted)
-   - `P04-ARCH-R11-001 = CLOSED_AT_DESIGN_LEVEL`
-   - `P04-ARCH-R11-002 = NOT_CLOSED`
-   - `P04-ARCH-R11-003 = PARTIALLY_CLOSED`
-   - `P04-ARCH-R11-004 = SUBSTANTIVELY_CLOSED_WITH_R12_FOLLOWUP`
-   - `P04-ARCH-R12-001..004 = REMEDIATION_SUBMITTED`
-   - `ACTIVE_GATE = P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_12`
+   - `ADR_018 = REVISION_13_REQUIRED` (Remediated: Revision 14 submitted)
+   - `PLAN_P04_EVIDENCE_REVIEW = REVISION_13_REQUIRED` (Remediated: Revision 14 submitted)
+   - `P04-ARCH-R12-001 = PARTIALLY_CLOSED`
+   - `P04-ARCH-R12-002 = CLOSED_AT_DESIGN_LEVEL`
+   - `P04-ARCH-R12-003 = PARTIALLY_CLOSED`
+   - `P04-ARCH-R12-004 = CLOSED_AT_DESIGN_LEVEL`
+   - `P04-ARCH-R13-001..004 = REMEDIATION_SUBMITTED`
+   - `ACTIVE_GATE = P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_13`
    - `P05_CODE = NOT_AUTHORIZED`
    - `AUTOMATIC_RESTORE = DISABLED`
    - `LIVE_AO_INTEGRATION = UNVERIFIED_EVIDENCE_TRACK`
