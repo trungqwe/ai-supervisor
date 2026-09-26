@@ -1,16 +1,16 @@
 # PLAN-P04: Evidence & Review Engine Implementation & Governance Plan
 
 > **Plan ID**: `PLAN-P04-EVIDENCE-REVIEW`
-> **Revision**: 18
-> **Status**: `PLANNING_PENDING_EXTERNAL_AUDIT (REVISION 18)`
+> **Revision**: 19
+> **Status**: `PLANNING_PENDING_EXTERNAL_AUDIT (REVISION 19)`
 > **Date**: 2026-09-27
-> **Audited Baseline**: `d6fe53c396befd2eacd87787e58bd9b86cc62196`
-> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_17`
+> **Audited Baseline**: `e3cd8bd54f0c3e39e2c6a5599ff66baa004c7aec`
+> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_18`
 > **Deciders**: AI Engineering Supervisor Architecture Council, External Supervisor
 > **Related Architecture**: `docs/04_ARCHITECTURE.md` (Section 7), `docs/05_DOMAIN_MODEL.md`, `docs/10_REVIEW_BUNDLE.md`
-> **Related Requirements**: `docs/02_REQUIREMENTS.md` (FR-008, NFR-008 via PROPOSAL-P04-002 Revision 8)
-> **Supersedes**: `PLAN-P04-EVIDENCE-REVIEW` Revision 17
-> **External Audit Tracking**: Remediates Findings `P04-ARCH-R17-001`, `P04-ARCH-R17-002`, and `P04-ARCH-R17-003` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_016.md`).
+> **Related Requirements**: `docs/02_REQUIREMENTS.md` (FR-008, NFR-008 via PROPOSAL-P04-002 Revision 9)
+> **Supersedes**: `PLAN-P04-EVIDENCE-REVIEW` Revision 18
+> **External Audit Tracking**: Remediates Findings `P04-ARCH-R18-001`, `P04-ARCH-R18-002`, and the remainder of `P04-ARCH-R17-003` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_017.md`).
 
 ---
 
@@ -23,10 +23,10 @@ Phase P04 implements the **Evidence & Review Engine**, providing independent, ta
 ```mermaid
 flowchart TD
     subgraph PreExecution [Pre-Execution / Governance]
-        ADR18[DRAFT-ADR-018 Revision 18]
-        PROP1[PROPOSAL-P04-001 Revision 18]
-        PROP2[PROPOSAL-P04-002 Revision 8]
-        Audit016[External Re-Audit 016]
+        ADR18[DRAFT-ADR-018 Revision 19]
+        PROP1[PROPOSAL-P04-001 Revision 19]
+        PROP2[PROPOSAL-P04-002 Revision 9]
+        Audit017[External Re-Audit 017]
     end
 
     subgraph P04A [Subtask P04A: Seam, Clean Intake & Workspace Binding Authority]
@@ -76,10 +76,10 @@ flowchart TD
    - Lease expires exactly at `acquired_at_epoch_ms + ttl_seconds * 1000`.
    - CAS trigger enforces allowed lease state transitions and fencing token increments on reclaim.
    - Stream state combinations strictly checked against capture limit (10 MB) and hard safety limit (50 MB).
-4. **Crash-Safe Latency Metrics & Pre-Commit Assembly Boundary (P04-ARCH-R10-003)**:
+4. **Crash-Safe Latency Metrics & Pre-Commit Assembly Boundary (P04-ARCH-R10-003, P04-ARCH-R18-001, P04-ARCH-R18-002)**:
    - Measurement boundary strictly measures ReviewBundle assembly and validation before Transaction C commit.
-   - Telemetry captures commit return duration in audit event `REVIEW_BUNDLE_GENERATED`.
-   - Truth table CHECK constraints eliminate SQLite persistence deadlocks.
+   - Telemetry captures commit return duration via post-commit in-process monotonic measurement after `tx.Commit()` returns; it is strictly excluded from `REVIEW_BUNDLE_GENERATED` audit events, database tables, and the audit chain.
+   - Truth table CHECK constraints and decoupled provenance eliminate SQLite persistence deadlocks.
 5. **Canonical TaskState Discipline (P04-ARCH-R10-005)**:
    - Zero compound states or transitions outside `docs/06_WORKFLOW_STATE_MACHINE.md`.
    - Dirty report intake preserves `RUNNING` state.
@@ -147,13 +147,13 @@ Phase P04 strictly maintains the two-track validation discipline:
   - Content-Addressed Store staging, deduplication, and atomic write-through to `artifacts/<first-two-hex>/<captured_sha256>`.
   - Execute Transaction B: exact CAS `(lease_id, worker_id, fencing_token, state='ACTIVE')`, commit `evidence_sets` and `review_artifacts`, release lease, transition `tasks.state`: `REPORT_READY -> EVIDENCE_READY`.
   - Synthesize RFC 8785 JCS canonical `ReviewBundle` JSON payload; compute SHA-256 bundle hash.
-  - Record pre-commit assembly latency metrics (`compilation_latency_ms = bundle_assembled_at_epoch_ms - evidence_finalized_at_epoch_ms`) as assembly diagnostic interval, with `nfr008_compliance_status = 'UNVERIFIED'`.
+  - Record pre-commit assembly latency metrics (`compilation_latency_ms = bundle_assembled_at_epoch_ms - evidence_finalized_at_epoch_ms`) as assembly diagnostic interval, with structural provenance `latency_measurement_status` (`'MEASURED_IN_PROCESS'` vs `'RECOVERED_AFTER_RESTART'` per 2x2 matrix) and `nfr008_compliance_status = 'UNVERIFIED'`.
   - Implement canonical replay/conflict matrix:
     * Compile failure: Transaction C rolls back, task remains `EVIDENCE_READY`, emits `REVIEW_BUNDLE_COMPILATION_REJECTED`.
     * Idempotent replay: Returns existing bundle, task remains `REVIEWING`.
     * Hash conflict: Tampering conflict, task remains `REVIEWING`, Transaction C rolls back, emits `REVIEW_BUNDLE_COMPILATION_REJECTED` (`BUNDLE_HASH_CONFLICT`), locks automated approval.
     * Invariant violation: Transaction C rolls back, current task state is strictly preserved (strictly zero transitions to `BLOCKED`), in a separate diagnostic transaction appends rejection audit event `REVIEW_BUNDLE_COMPILATION_REJECTED` (`INVARIANT_MISMATCH`) first (`actor = 'ai-supervisor-daemon'`, `details_json.actor_role = 'SUPERVISOR'`), then inserts an ACTIVE hold into `review_integrity_holds` (`hold_reason = 'INVARIANT_MISMATCH'`), closes admission and approval, requires authenticated human operator reconciliation. Replay comparison on UNIQUE `event_id` conflict validates sanitized canonical fields (`event_type`, `pair_id`, `task_id`, `contract_id`, `attempt_id`, `actor`, `details_json`), explicitly ignoring `sequence`, `timestamp`, `prev_hash`, `event_hash`.
-  - Execute Transaction C atomically: insert `review_bundles`, insert proposed audit event `REVIEW_BUNDLE_GENERATED` (*without* `commit_duration_ms`), transition `tasks.state`: `EVIDENCE_READY -> REVIEWING`. Capture post-commit duration telemetry purely as best-effort in-process monotonic measurement.
+  - Execute Transaction C atomically: insert `review_bundles`, insert proposed audit event `REVIEW_BUNDLE_GENERATED` (*without* `commit_duration_ms`), transition `tasks.state`: `EVIDENCE_READY -> REVIEWING`. Capture post-commit duration telemetry purely as best-effort in-process monotonic measurement outside the database and audit chain.
 - **Dependencies**: Subtask P04C.
 
 ---
@@ -168,7 +168,7 @@ Phase P04 strictly maintains the two-track validation discipline:
 | Crash after Transaction A | `REPORT_READY` | P04D linear lease reclaim: verified process-death proof (host exclusivity + `KILL_ON_JOB_CLOSE`) allocates successor lease (`token = pred + 1`) | `REPORT_READY` (Reclaimable via linear successor) |
 | Verification process exceeds hard limit | `REPORT_READY` | Process terminated; `stream_state = 'HARD_LIMIT_TERMINATED'`, `full_stream_sha256 = NULL` | `REPORT_READY` -> `EVIDENCE_READY` (Via Tx B) |
 | Crash after Transaction B | `EVIDENCE_READY` | P04D orchestrator synthesizes ReviewBundle; records `latency_measurement_status = 'RECOVERED_AFTER_RESTART'`, `nfr008_compliance_status = 'UNVERIFIED'` | `REVIEWING` (No deadlock) |
-| Transaction C compilation delay > 3.0s | `EVIDENCE_READY` | Transaction C commits with assembly diagnostic, logs diagnostic finding | `REVIEWING` (No deadlock) |
+| Transaction C compilation delay > 3.0s | `EVIDENCE_READY` | Transaction C commits with assembly diagnostic, logs diagnostic finding, retains structural provenance | `REVIEWING` (No deadlock) |
 | ReviewBundle replay with identical hash | `REVIEWING` | Idempotent return of existing ReviewBundle | `REVIEWING` (Preserved) |
 | ReviewBundle replay with conflicting hash | `REVIEWING` | Integrity conflict logged; Transaction C aborted; approval locked | `REVIEWING` (Preserved; human resolution required) |
 
@@ -179,7 +179,7 @@ Phase P04 strictly maintains the two-track validation discipline:
 | Requirement | Canonical Spec Source | Reconciliation Status in Phase P04 |
 | :--- | :--- | :--- |
 | **FR-008** | `docs/02_REQUIREMENTS.md` | Fully satisfied via independent in-memory Git and verification collectors. |
-| **NFR-008** | `docs/02_REQUIREMENTS.md` | Formally reconciled via PROPOSAL-P04-002 Revision 8 into assembly diagnostic latency semantics with crash-safe non-deadlocking persistence, UNVERIFIED compliance status, and RFC 8785 JCS domain-separated event descriptors. Canonical update pending approval. |
+| **NFR-008** | `docs/02_REQUIREMENTS.md` | Formally reconciled via PROPOSAL-P04-002 Revision 9 into assembly diagnostic latency semantics with crash-safe non-deadlocking persistence, UNVERIFIED compliance status, and RFC 8785 JCS domain-separated event descriptors. Canonical update pending approval. |
 | **P04 Schema v6** | `docs/adr/DRAFT-ADR-018` | Owned by Subtask P04A; introduces `attempt_workspace_bindings`, `worker_claims`, and `review_integrity_holds` (verbatim 7-40 hex SHA, multi-diagnostic holds with occurrence lifecycle, non-self-referencing hold derivation, audit FKs, principal trimming, integer typing). |
 | **P04 Schema v9** | `docs/adr/DRAFT-ADR-018` | Owned by Subtask P04D; introduces `task_verification_leases` (linear lease chain), `evidence_sets`, `review_artifacts`, and `review_bundles` with integer typing and overflow guards; upgrades from Schema v6 without recreating `review_integrity_holds`. |
 | **Contract Sequencing** | `docs/plans/PLAN-P04-EVIDENCE-REVIEW` | Enforces P04A -> P04B -> P04C -> P04D; P04A implements independently; P04 runtime admission remains closed until P04D startup recovery. |

@@ -1,19 +1,19 @@
 # PROPOSAL-P04-001: Evidence & Review Engine Architecture, Execution Boundaries, and Verification Isolation
 
 > **Proposal ID**: `PROPOSAL-P04-001`
-> **Revision**: 18
+> **Revision**: 19
 > **Title**: Evidence & Review Engine Architecture, Execution Isolation, and Verification Governance
 > **Author**: AI Engineering Supervisor Team
-> **Status**: `PENDING_EXTERNAL_REVIEW (REVISION 18)`
+> **Status**: `PENDING_EXTERNAL_REVIEW (REVISION 19)`
 > **Date**: 2026-09-27
-> **Audited Baseline**: `d6fe53c396befd2eacd87787e58bd9b86cc62196`
+> **Audited Baseline**: `e3cd8bd54f0c3e39e2c6a5599ff66baa004c7aec`
 > **Preservation Baseline Commit**: `6e1993da150031a9465901a7019c71257de44312` (Revision 11)
-> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_17`
+> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_18`
 > **Deciders**: AI Engineering Supervisor Architecture Council, External Supervisor
 > **Related Architecture**: `docs/04_ARCHITECTURE.md` (Section 7), `docs/05_DOMAIN_MODEL.md`, `docs/10_REVIEW_BUNDLE.md`
-> **Related Requirements**: `docs/02_REQUIREMENTS.md` (FR-008, NFR-008 via PROPOSAL-P04-002 Revision 8)
-> **Supersedes**: `PROPOSAL-P04-001` Revision 17
-> **External Audit Tracking**: Remediates Findings `P04-ARCH-R17-001`, `P04-ARCH-R17-002`, and `P04-ARCH-R17-003` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_016.md`).
+> **Related Requirements**: `docs/02_REQUIREMENTS.md` (FR-008, NFR-008 via PROPOSAL-P04-002 Revision 9)
+> **Supersedes**: `PROPOSAL-P04-001` Revision 18
+> **External Audit Tracking**: Remediates Findings `P04-ARCH-R18-001`, `P04-ARCH-R18-002`, and `P04-ARCH-R17-003` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_017.md`).
 
 ## 1. Context and Problem Statement
 
@@ -29,12 +29,15 @@ Revision 17 establishes complete design-level resolution of finding `P04-ARCH-R1
 3. Precise Persistence Ownership Boundaries: Eliminated ambiguous blanket orchestrator claims across pipeline transactions. Every audit event must be appended by its authoritative transaction owner, ensuring atomicity with database state changes. No two subtasks share ownership of a single transaction or define DDL for the same table.
 4. Strict Contract Sequencing (P04A -> P04B -> P04C -> P04D): Subtask P04A can complete its schema migrations, store primitives, and behavior tests independently. P04 runtime admission remains closed upon P04A/B/C completion; only opened by P04D after startup recovery. Schema Migration v9 upgrades from a schema that already contains `review_integrity_holds`. Both fresh migration (`v0 -> v6 -> v9`) and historical migration (`v6 -> v9`) are verified with `foreign_keys = ON`.
 
-External Re-Audit 016 (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_016.md`) evaluated Round 16 remediation at commit `d6fe53c396befd2eacd87787e58bd9b86cc62196`, recording verdict `REVISION_17_REQUIRED`. It verified finding `P04-ARCH-R16-001` as `CLOSED_AT_DESIGN_LEVEL`, but recorded three follow-up findings: `P04-ARCH-R17-001` (NFR-008 latency reconciliation and delimiter concatenation elimination in `PROPOSAL-P04-002`), `P04-ARCH-R17-002` (evidence classification anomaly in readiness matrix/report), and `P04-ARCH-R17-003` (obsolete revision labels in metadata and diagrams).
+External Re-Audit 016 (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_016.md`) evaluated Round 16 remediation at commit `d6fe53c396befd2eacd87787e58bd9b86cc62196`, recording verdict `REVISION_17_REQUIRED`. It verified finding `P04-ARCH-R16-001` as `CLOSED_AT_DESIGN_LEVEL`, but recorded three follow-up findings: `P04-ARCH-R17-001` (latency reconciliation), `P04-ARCH-R17-002` (evidence classification), and `P04-ARCH-R17-003` (metadata labels).
 
-Revision 18 establishes complete resolution of findings `P04-ARCH-R17-001..003` while preserving the architectural integrity of `P04-ARCH-R16-001` (Schema v6 ownership of `review_integrity_holds` by Subtask P04A, Schema v9 reuse by Subtask P04D, P04B/P04C zero persistence, admission only opened after P04D startup recovery):
-1. Alignment with PROPOSAL-P04-002 Revision 8: Strictly enforces `nfr008_compliance_status = 'UNVERIFIED'`, eliminates all historical boolean compliance flags, references RFC 8785 JCS domain-separated event descriptors, and treats compilation latency as an assembly diagnostic measurement that commits Transaction C without deadlock if exceeding 3,000 ms.
-2. Accurate Evidence Classification in Readiness Matrix: Replaces non-existent scratch script references  and clearly distinguishes between verified SQL model/DDL probes (`SQL_MODEL_PROBE_VERIFIED: PASS`), design consistency verification (`DESIGN_CONSISTENCY_VERIFIED`), and unexecuted runtime behavioral probes (`PLANNED_CONTRACT_ACCEPTANCE_TEST (UNEXECUTED_PENDING_IMPLEMENTATION)`).
-3. Harmonization of Document Suite Metadata: Synchronizes all metadata, cross-references, and diagrams across `PROPOSAL-P04-001` (Revision 18), `PROPOSAL-P04-002` (Revision 8), `DRAFT-ADR-018` (Revision 18), and `PLAN-P04-EVIDENCE-REVIEW` (Revision 18).
+External Re-Audit 017 (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_017.md`) evaluated Round 17 remediation at commit `e3cd8bd54f0c3e39e2c6a5599ff66baa004c7aec`, recording verdict `REVISION_18_REQUIRED`. It verified `P04-ARCH-R17-001` as `SUBSTANTIVELY_CLOSED_WITH_R18_FOLLOWUP`, `P04-ARCH-R17-002` as `CLOSED_AT_DESIGN_LEVEL`, and `P04-ARCH-R17-003` as `PARTIALLY_CLOSED`. Two new findings were recorded: `P04-ARCH-R18-001` (latency measurement provenance decoupled from threshold) and `P04-ARCH-R18-002` (commit return telemetry phrasing).
+
+Revision 19 establishes complete resolution of findings `P04-ARCH-R18-001`, `P04-ARCH-R18-002`, and the remainder of `P04-ARCH-R17-003`:
+1. Alignment with PROPOSAL-P04-002 Revision 9: Decouples `latency_measurement_status` from the 3,000 ms threshold, defining provenance strictly based on execution path (`MEASURED_IN_PROCESS` for continuous execution within same daemon lifetime, `RECOVERED_AFTER_RESTART` for startup recovery). Latency > 3,000 ms records an assembly latency-breach diagnostic without blocking Transaction C, altering TaskState, or creating integrity holds.
+2. Normative Event Descriptor Authority: Cites PROPOSAL-P04-002 Revision 9 as the authoritative normative source for `review_bundle_generated_event_descriptor` and `review_bundle_rejection_event_descriptor`, while Descriptors A, B, and C govern integrity holds.
+3. Decoupled Commit Telemetry: Harmonizes with ADR-018 and Proposal-002, guaranteeing that `REVIEW_BUNDLE_GENERATED` contains no `commit_duration_ms` and that post-commit monotonic telemetry is strictly excluded from database tables and the audit chain.
+4. Comprehensive Suite Synchronization: Synchronizes metadata, diagrams, and cross-references across `PROPOSAL-P04-001` (Revision 19), `PROPOSAL-P04-002` (Revision 9), `DRAFT-ADR-018` (Revision 19), and `PLAN-P04-EVIDENCE-REVIEW` (Revision 19).
 
 ---
 
@@ -54,10 +57,12 @@ Revision 18 establishes complete resolution of findings `P04-ARCH-R17-001..003` 
 | `P04-ARCH-R16-001` | Persistence ownership alignment & contract sequencing: relocated `review_integrity_holds` to Schema v6 (P04A); demarcated mutation authority; clarified Model 1 boundaries (no "sole orchestrator" ambiguity; single transaction owner per audit event); P04A -> P04B -> P04C -> P04D sequencing. | Section 3.2, Section 7.1, Section 7.3, Section 8, Section 9, Section 9.1 |
 | `P04-ARCH-R17-001` | Full latency reconciliation with PROPOSAL-P04-002 Rev 8: strictly `nfr008_compliance_status = 'UNVERIFIED'`, zero boolean compliance flags, RFC 8785 JCS domain-separated event descriptors, deadlock-free assembly diagnostic latency. | Section 1, Section 8, Section 9 |
 | `P04-ARCH-R17-002` | Accurate evidence classification: elimination of uncommitted scratch script citations, distinction of SQL model probe PASS vs unexecuted runtime behavior tests. | Section 9.1 |
-| `P04-ARCH-R17-003` | Elimination of obsolete revision labels; synchronization to Revision 18 suite and Revision 8 for PROPOSAL-P04-002. | Header, Section 1, Section 9, Section 9.1 |
+| `P04-ARCH-R17-003` | Elimination of obsolete revision labels; synchronization to Revision 19 suite and Revision 9 for PROPOSAL-P04-002. | Header, Section 1, Section 9, Section 9.1 |
+| `P04-ARCH-R18-001` | Measurement provenance decoupled from threshold: 2 × 2 provenance matrix via PROPOSAL-P04-002 Rev 9; provenance strictly reflects execution path (continuous vs recovery). | Section 1, Section 7.3, Section 8 |
+| `P04-ARCH-R18-002` | Commit return telemetry strictly decoupled from Transaction C and audit events: post-commit monotonic measurement only; zero commit_duration_ms in audit events or tables. | Section 1, Section 7.3, Section 8 |
 
-### 2.2. Revision 11 to Revision 18 Preservation Matrix
-| Revision 11 Section | Revision 18 Section & Location | Status & Surgical Changes |
+### 2.2. Revision 11 to Revision 19 Preservation Matrix
+| Revision 11 Section | Revision 19 Section & Location | Status & Surgical Changes |
 | :--- | :--- | :--- |
 | Section 1: Context & Problem Statement | Section 1: Context & Problem Statement | Preserved; updated with Re-Audit 015 findings, R16-001 resolution, and baseline tracking. |
 | Section 2: Summary of Architectural Resolutions | Section 2: Summary & Preservation Matrix | Preserved and updated with R16-001 resolution and preservation matrix. |
@@ -846,7 +851,8 @@ The proposed audit events are registered under status `PROPOSED_UNTIL_ADR_ACCEPT
 Because the canonical `audit_events` schema lacks a dedicated `idempotency_key` column, idempotency is mapped deterministically to `audit_events.event_id` using RFC 8785 JSON Canonicalization Scheme (JCS). String concatenation with colons is strictly prohibited.
 
 1. **RFC 8785 JCS Derivation Architecture**:
-   - To eliminate circular self-references and distinguish entity types, three explicit descriptors are defined:
+   - **Normative Event Descriptor Authority (P04-ARCH-R17-001, P04-ARCH-R18-001)**: For ReviewBundle synthesis events (`REVIEW_BUNDLE_GENERATED`) and non-hold compilation rejections (`REVIEW_BUNDLE_COMPILATION_REJECTED`), `PROPOSAL-P04-002 Revision 9` defines the authoritative normative specification for `review_bundle_generated_event_descriptor` and `review_bundle_rejection_event_descriptor`.
+   - **Integrity Hold Descriptors**: To eliminate circular self-references and distinguish hold entity types, three explicit descriptors (Descriptors A, B, and C) govern integrity hold creation and resolution:
      * **Descriptor A: `hold_identity_descriptor`** (for `hold_id`):
        ```json
        {
@@ -940,17 +946,17 @@ Because the canonical `audit_events` schema lacks a dedicated `idempotency_key` 
 
 ## 9. Conclusion & Next Steps
 
-PROPOSAL-P04-001 Revision 18 fully resolves findings `P04-ARCH-R17-001`, `P04-ARCH-R17-002`, and `P04-ARCH-R17-003`, harmonizing the pre-contract architecture deliverables:
-1. Alignment with PROPOSAL-P04-002 Revision 8: strictly enforces `nfr008_compliance_status = 'UNVERIFIED'`, removes all boolean compliance flags, specifies RFC 8785 JCS domain-separated event descriptors, and ensures deadlock-free compilation latency semantics.
-2. Accurate Evidence Classification: removes all scratch script citations  and clearly separates verified static SQL schema/DDL model probes from unexecuted runtime behavioral probes.
-3. Synchronized Suite Metadata: eliminates all obsolete revision labels across the suite.
+PROPOSAL-P04-001 Revision 19 fully resolves findings `P04-ARCH-R18-001`, `P04-ARCH-R18-002`, and the remainder of `P04-ARCH-R17-003`, finalizing the pre-contract architecture deliverables:
+1. Alignment with PROPOSAL-P04-002 Revision 9: decouples `latency_measurement_status` from latency threshold; establishes 2 × 2 provenance matrix; enforces strictly `nfr008_compliance_status = 'UNVERIFIED'`; references normative event descriptors; ensures deadlock-free compilation latency semantics.
+2. Decoupled Commit Return Telemetry: harmonizes across all documents that `commit_duration_ms` is strictly post-commit monotonic telemetry and never present in `REVIEW_BUNDLE_GENERATED` audit events, database tables, or the audit chain.
+3. Synchronized Suite Metadata: eliminates all obsolete revision labels across the suite and updates active gate to `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_18`.
 4. Preserves `P04-ARCH-R16-001` persistence ownership alignment and P04A -> P04B -> P04C -> P04D execution sequencing.
 
 Following External Supervisor review:
-1. `DRAFT-ADR-018` is aligned to Revision 18.
-2. `PROPOSAL-P04-002` is aligned to Revision 8.
-3. `PLAN-P04-EVIDENCE-REVIEW` is updated to Revision 18.
-4. Active gate transitions to `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_17` pending External Supervisor Re-Audit 017 decision.
+1. `DRAFT-ADR-018` is aligned to Revision 19.
+2. `PROPOSAL-P04-002` is aligned to Revision 9.
+3. `PLAN-P04-EVIDENCE-REVIEW` is updated to Revision 19.
+4. Active gate transitions to `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_18` pending External Supervisor decision audit.
 
 ---
 

@@ -1,18 +1,18 @@
 # PROPOSAL-P04-002: ReviewBundle Latency Measurement Semantics (NFR-008 Reconciliation)
 
 > **Proposal ID**: `PROPOSAL-P04-002`
-> **Revision**: 8
+> **Revision**: 9
 > **Title**: Formal Latency Measurement Semantics for ReviewBundle Compilation & Pipeline Reconciliation
 > **Author**: AI Engineering Supervisor Team
-> **Status**: `PENDING_EXTERNAL_REVIEW (REVISION 8)`
+> **Status**: `PENDING_EXTERNAL_REVIEW (REVISION 9)`
 > **Date**: 2026-09-27
 > **Target Requirement**: `docs/02_REQUIREMENTS.md` (NFR-008)
 > **Related Architecture**: `docs/04_ARCHITECTURE.md` (Section 7), `docs/10_REVIEW_BUNDLE.md`, `docs/adr/DRAFT-ADR-018-evidence-review-and-verification-isolation.md`
-> **Audited Baseline**: `d6fe53c396befd2eacd87787e58bd9b86cc62196`
+> **Audited Baseline**: `e3cd8bd54f0c3e39e2c6a5599ff66baa004c7aec`
 > **Preservation Baseline Commit**: `6e1993da150031a9465901a7019c71257de44312` (Revision 11)
-> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_17`
-> **Supersedes**: `PROPOSAL-P04-002` Revision 7
-> **External Audit Tracking**: Remediates Finding `P04-ARCH-R17-001` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_016.md`).
+> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_18`
+> **Supersedes**: `PROPOSAL-P04-002` Revision 8
+> **External Audit Tracking**: Remediates Finding `P04-ARCH-R18-001` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_017.md`).
 
 ---
 
@@ -26,6 +26,14 @@ At the same time, functional requirement **FR-008** and canonical **Architecture
 Running real-world test suites (e.g., `go test -race ./...`, `npm test`, `pytest`) legitimately requires durations ranging from tens of seconds to several minutes, inherently exceeding 3 seconds. If NFR-008's 3-second clock begins at worker report submission and includes external test execution, every realistic engineering task will breach NFR-008 regardless of Supervisor Control Plane efficiency. Conversely, omitting test execution from the ReviewBundle violates audit integrity.
 
 Furthermore, External Re-Audit 011 confirmed finding `P04-ARCH-R11-001` as `CLOSED_AT_DESIGN_LEVEL`, establishing that the pre-commit measurement interval is strictly a ReviewBundle assembly diagnostic interval, separate from canonical NFR-008. Canonical NFR-008 compliance status is held strictly as `UNVERIFIED` pending future canonical reconciliation. Post-commit telemetry is decoupled from Transaction C audit events.
+
+External Re-Audit 017 (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_017.md`) recorded finding `P04-ARCH-R18-001`, directing that `latency_measurement_status` be strictly decoupled from the 3,000 ms threshold and redefined based on structural measurement provenance.
+
+Revision 9 resolves `P04-ARCH-R18-001` by:
+1. Defining `latency_measurement_status` strictly according to execution provenance: `'MEASURED_IN_PROCESS'` (continuous in-process daemon execution) vs `'RECOVERED_AFTER_RESTART'` (P04D startup recovery).
+2. Establishing the canonical 2 × 2 provenance × threshold matrix in Section 3.3.
+3. Specifying that exceeding 3,000 ms emits an assembly diagnostic without blocking Transaction C, altering TaskState, or creating integrity holds.
+4. Serving as the authoritative normative specification for `review_bundle_generated_event_descriptor` and `review_bundle_rejection_event_descriptor` (Section 6).
 
 This proposal establishes a rigorous, crash-safe measurement model that designates compilation latency as an assembly diagnostic interval, decouples post-commit telemetry from atomic database transactions, enforces strict integer typing constraints, and establishes deterministic audit event idempotency mapping.
 
@@ -66,22 +74,25 @@ The columns in `review_bundles` strictly measure the **ReviewBundle Assembly Dia
    `compilation_latency_ms = bundle_assembled_at_epoch_ms - evidence_finalized_at_epoch_ms`
    Designated strictly as an in-process synthesis assembly diagnostic interval, separate from canonical NFR-008.
 4. **`latency_measurement_status`**:
-   - `'MEASURED_IN_PROCESS'`: Measured during continuous execution without process restart.
-   - `'RECOVERED_AFTER_RESTART'`: Measured upon daemon restart recovery; records wall-clock recovery latency as a durable diagnostic.
+   - Represents the structural measurement provenance (continuous execution vs startup restart recovery), strictly decoupled from latency duration or threshold outcomes.
+   - `'MEASURED_IN_PROCESS'`: Transaction B and ReviewBundle assembly to $T_1$ occur continuously within the same daemon lifetime, regardless of whether `compilation_latency_ms` is <= 3,000 ms or > 3,000 ms.
+   - `'RECOVERED_AFTER_RESTART'`: P04D startup recovery resumes an attempt where Transaction B committed in a prior daemon lifetime, regardless of whether `compilation_latency_ms` is <= 3,000 ms or > 3,000 ms.
 5. **`nfr008_compliance_status`**:
    - Strictly `'UNVERIFIED'` in Schema v9 (`CHECK (nfr008_compliance_status = 'UNVERIFIED')`).
    - Canonical reconciliation of NFR-008 remains pending until External Supervisor approval.
 
 ### 3.2. Secondary Telemetry: Decoupled Commit Return Duration
 1. **Decoupled from Transaction C Audit Event**: The proposed audit event `REVIEW_BUNDLE_GENERATED` emitted in Transaction C does NOT contain `commit_duration_ms`.
-2. **Best-Effort Telemetry**: Upon return from SQLite `tx.Commit()` in Transaction C, the orchestrator computes the actual commit duration using in-process monotonic measurement (`time.Since(commitStart)`) purely as best-effort in-process telemetry.
+2. **Best-Effort Telemetry**: Upon return from SQLite `tx.Commit()` in Transaction C, the orchestrator computes the actual commit duration using in-process monotonic measurement (`time.Since(commitStart)`) purely as best-effort in-process telemetry. It is strictly excluded from `audit_events`, `review_bundles`, and the audit chain.
 
-### 3.3. Measurement Truth Table & Invariants
+### 3.3. Measurement Truth Table & Provenance Matrix (P04-ARCH-R18-001)
 
-| `latency_measurement_status` | `compilation_latency_ms` | `nfr008_compliance_status` | Operational Meaning |
-| :--- | :--- | :--- | :--- |
-| `MEASURED_IN_PROCESS` | `>= 0` | `'UNVERIFIED'` | Normal in-process execution; assembly diagnostic recorded. |
-| `RECOVERED_AFTER_RESTART` | `>= 0` | `'UNVERIFIED'` | Daemon restart recovery; recovery assembly diagnostic recorded. |
+| Measurement Provenance | Measured Latency Threshold | `latency_measurement_status` | `nfr008_compliance_status` | Assembly Latency Diagnostic | Operational Semantics |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Continuous Execution (Normal P04D orchestration) | `compilation_latency_ms <= 3000` | `'MEASURED_IN_PROCESS'` | `'UNVERIFIED'` | None | Measured in continuous daemon process; meets empirical assembly target; no diagnostic emitted; Tx C commits cleanly. |
+| Continuous Execution (Normal P04D orchestration) | `compilation_latency_ms > 3000` | `'MEASURED_IN_PROCESS'` | `'UNVERIFIED'` | Latency-breach diagnostic emitted | Measured in continuous daemon process; exceeds empirical assembly target due to load/delay; provenance remains `MEASURED_IN_PROCESS`; diagnostic logged; Tx C commits cleanly without deadlock. |
+| Restart Recovery (P04D startup recovery path) | `compilation_latency_ms <= 3000` | `'RECOVERED_AFTER_RESTART'` | `'UNVERIFIED'` | None | Resumed attempt from prior daemon lifetime; recovery completed within 3,000 ms; provenance is `RECOVERED_AFTER_RESTART`; Tx C commits cleanly. |
+| Restart Recovery (P04D startup recovery path) | `compilation_latency_ms > 3000` | `'RECOVERED_AFTER_RESTART'` | `'UNVERIFIED'` | Latency-breach diagnostic emitted | Resumed attempt from prior daemon lifetime; elapsed wall-clock recovery latency exceeds 3,000 ms; provenance is `RECOVERED_AFTER_RESTART`; diagnostic logged; Tx C commits cleanly without deadlock. |
 
 Negative latency, non-integer timestamps, or values of `nfr008_compliance_status` other than `'UNVERIFIED'` are strictly rejected by SQLite CHECK constraints.
 
@@ -120,9 +131,10 @@ Negative latency, non-integer timestamps, or values of `nfr008_compliance_status
     `compilation_latency_ms = bundle_assembled_at_epoch_ms - evidence_finalized_at_epoch_ms`
   - `compilation_latency_ms` is strictly an assembly diagnostic measurement.
   - The condition `compilation_latency_ms <= 3000` is an empirical measurement target, but does NOT make a ReviewBundle canonical compliance evidence; `nfr008_compliance_status` remains strictly `'UNVERIFIED'`.
-  - In normal uninterrupted execution: `0 <= compilation_latency_ms <= 3000 ms` -> `latency_measurement_status = 'MEASURED_IN_PROCESS'`.
-  - In post-crash restart or transient delay: `compilation_latency_ms > 3000 ms` -> `latency_measurement_status = 'RECOVERED_AFTER_RESTART'`.
-  - **SLA Breach is NOT a Persistence Blocker**: If assembly latency exceeds 3000 ms, Transaction C still commits successfully, keeps `nfr008_compliance_status = 'UNVERIFIED'`, records diagnostic telemetry, advances state to `REVIEWING`, and never causes a deadlock or strands the task in `EVIDENCE_READY`.
+  - Provenance determination is strictly structural, never inferred from epoch duration or threshold:
+    * P04D normal orchestration path (continuous execution within same daemon lifetime): `latency_measurement_status = 'MEASURED_IN_PROCESS'`, regardless of whether `compilation_latency_ms` is <= 3000 ms or > 3000 ms. High system load or transient delay never converts provenance to `RECOVERED_AFTER_RESTART`.
+    * P04D startup recovery path (resuming `EVIDENCE_READY` tasks left by prior daemon lifetime): `latency_measurement_status = 'RECOVERED_AFTER_RESTART'`, regardless of whether `compilation_latency_ms` is <= 3000 ms or > 3000 ms.
+  - **SLA Breach is NOT a Persistence Blocker**: If assembly latency exceeds 3000 ms, Transaction C still commits successfully, keeps `nfr008_compliance_status = 'UNVERIFIED'`, records an assembly latency-breach diagnostic, advances state to `REVIEWING`, and never causes a deadlock, creates a new TaskState, or strands the task in `EVIDENCE_READY`.
 
 ---
 
@@ -234,8 +246,8 @@ The audit event types associated with ReviewBundle compilation are registered un
 1. `REVIEW_BUNDLE_GENERATED`: Recorded in Transaction C upon successful ReviewBundle synthesis and persistence. Details include `bundle_id`, `bundle_hash`, `compilation_latency_ms`, `latency_measurement_status`, and `nfr008_compliance_status` ('UNVERIFIED'). Emitted within Transaction C *without* `commit_duration_ms`.
 2. `REVIEW_BUNDLE_COMPILATION_REJECTED`: Recorded in a separate fail-closed diagnostic transaction if compilation fails, schema validation fails, clock regresses ($T_1 < T_0$), or bundle hash conflicts with a pre-existing bundle. Details include failure reason, timestamps, and error diagnostics.
 
-#### Audit Event Idempotency Mapping (P04-ARCH-R12-003, P04-ARCH-R17-001)
-Because canonical `audit_events` lacks an `idempotency_key` column, idempotency maps deterministically to `audit_events.event_id` using RFC 8785 JSON Canonicalization Scheme (JCS). String concatenation using delimiters (such as colons) is strictly prohibited due to delimiter collision vulnerabilities.
+#### Audit Event Idempotency Mapping (P04-ARCH-R12-003, P04-ARCH-R17-001, P04-ARCH-R18-001)
+Because canonical `audit_events` lacks an `idempotency_key` column, idempotency maps deterministically to `audit_events.event_id` using RFC 8785 JSON Canonicalization Scheme (JCS). This proposal establishes the normative definition for `review_bundle_generated_event_descriptor` and `review_bundle_rejection_event_descriptor`. String concatenation using delimiters (such as colons) is strictly prohibited due to delimiter collision vulnerabilities.
 
 1. **`REVIEW_BUNDLE_GENERATED` Descriptor**:
    ```json
