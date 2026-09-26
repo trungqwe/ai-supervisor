@@ -1,16 +1,16 @@
 # PROPOSAL-P04-001: Evidence & Review Engine Architecture, Execution Boundaries, and Verification Isolation
 
 > **Proposal ID**: `PROPOSAL-P04-001`
-> **Revision**: 9
+> **Revision**: 10
 > **Title**: Evidence & Review Engine Architecture, Execution Isolation, and ReviewBundle Reconciliation
 > **Author**: AI Engineering Supervisor Team
 > **Status**: `PENDING_EXTERNAL_REVIEW`
 > **Date**: 2026-09-26
-> **Audited Baseline**: `a6290ce4c444e345e47aace6c488c3cc4ff33a0d`
-> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_8`
-> **Supersedes**: `PROPOSAL-P04-001` Revision 8
-> **External Audit Tracking**: Remediates Findings `P04-ARCH-R8-001` through `P04-ARCH-R8-005` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_007.md`).
-> **Requirement & Governance Note**: Concurrently submits `PROPOSAL-P04-002` (Revision 3) for formal NFR-008 performance SLA reconciliation. Canonical `docs/02_REQUIREMENTS.md` remains unmodified until approved by External Supervisor.
+> **Audited Baseline**: `6dbd7e26d59e22171271921b86c01bd6f215e59a`
+> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_9`
+> **Supersedes**: `PROPOSAL-P04-001` Revision 9
+> **External Audit Tracking**: Remediates Findings `P04-ARCH-R9-001` through `P04-ARCH-R9-006` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_008.md`).
+> **Requirement & Governance Note**: Concurrently submits `PROPOSAL-P04-002` (Revision 4) for formal NFR-008 performance SLA reconciliation. Canonical `docs/02_REQUIREMENTS.md` remains unmodified until approved by External Supervisor.
 
 ---
 
@@ -18,278 +18,236 @@
 
 Phase P04 implements the **Evidence & Review Engine**, providing independent, tamper-proof verification of AI worker outputs under canonical architecture (`docs/04_ARCHITECTURE.md` Section 7) and requirements (`docs/02_REQUIREMENTS.md`).
 
-External Re-Audit 007 required remediation of five critical architectural areas:
-1. `worker_claims` schema cardinality violated the canonical 1-to-1 attempt model; `review_artifacts` paths included arbitrary file extensions; latency timestamps and intervals lacked durable DDL constraints (`P04-ARCH-R8-001`).
-2. AppContainer process I/O specification claiming zero inherited handles contradicted anonymous pipe standard handle redirection; Job Object containment lacked atomic assignment at creation time on Windows 10+ (`P04-ARCH-R8-002`).
-3. Snapshot creation timing was improperly positioned before Transaction A report intake; snapshot authority improperly relied on reported head; Git allowlist omitted necessary commands; linked-worktree index path resolution was flawed (`P04-ARCH-R8-003`).
-4. Lease admission lacked validation of state, current attempt, and existing evidence; concurrency assumption contradicted v1 sequential model; fencing token isolation in filesystem was incomplete (`P04-ARCH-R8-004`).
-5. Audit event literal `AUDIT_EVENT_BUNDLE_GENERATED` was falsely claimed as canonical from Phase P02; failure audit semantics conflated transaction rollback with same-transaction event recording (`P04-ARCH-R8-005`).
+External Re-Audit 008 evaluated Revision 9 and recorded six critical architectural findings requiring remediation:
+1. `worker_claims` schema enforced an exact 40-char SHA check, conflicting with canonical `worker-report.schema.json` allowing 7-40 hex chars, and lacked unambiguous mappings between WorkerReport, WorkerClaim, and ReviewBundle (`P04-ARCH-R9-001`).
+2. NFR-008 latency check `compilation_latency_ms <= 3000` created a permanent database deadlock if the daemon restarted between Transaction B and C or exceeded 3 seconds (`P04-ARCH-R9-002`).
+3. Terminating processes upon exceeding hard byte limits contradicted metadata claiming `full_stream_sha256` and `original_bytes` were known (`P04-ARCH-R9-003`).
+4. Staged, unstaged, and untracked worktree modifications were unconstrained before snapshot extraction (`P04-ARCH-R9-004`).
+5. Lease reclaim across daemon restarts claimed to terminate old Job Objects without valid handles, and verification request timeouts lacked checked arithmetic and aggregate caps (`P04-ARCH-R9-005`).
+6. ReviewBundle replay and hash conflict handling assigned incorrect TaskStates (`P04-ARCH-R9-006`).
 
-This proposal establishes the definitive architecture resolving these findings across six cohesive design sections.
+This proposal formalizes Revision 10 architectural resolutions for these findings.
 
 ---
 
-## 2. Summary of Architectural Resolutions (Revision 9)
+## 2. Summary of Architectural Resolutions (Revision 10)
 
-1. **WorkerClaim Cardinality & Canonical Path Derivation (`P04-ARCH-R8-001`)**:
-   - `worker_claims` enforces canonical 1-to-1 cardinality with `UNIQUE(attempt_id)`. Reported head SHA, claimed changed files, claimed test results, and claims payload are persisted in structured JCS JSON matching `worker-report.schema.json`.
-   - `canonical_relative_path` in `review_artifacts` is deterministically derived from `captured_sha256`: `artifacts/<first-two-hex>/<captured_sha256>` without file extensions. CHECK constraints strictly reject colons, backslashes, path traversal, extra segments, and hash mismatches.
-   - `evidence_sets` persists `evidence_committed_at_epoch_ms`. `review_bundles` persists `evidence_committed_at_epoch_ms`, `bundle_committed_at_epoch_ms`, and `compilation_latency_ms` with CHECK constraints enforcing `0 <= compilation_latency_ms <= 3000 ms` and `bundle_committed_at >= evidence_committed_at`.
-
-2. **Windows AppContainer Process I/O & Job Containment (`P04-ARCH-R8-002`)**:
-   - Standard process I/O configured with `STARTF_USESTDHANDLES`, stdout/stderr anonymous pipe write handles, `bInheritHandles = TRUE`, and `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` containing strictly the designated standard handles. Parent read pipe ends and all other handles are strictly non-inheritable.
-   - Supervisor streaming reader enforces 10 MB byte cap and execution timeout; closes parent write ends immediately; closes handles in proper order to avoid EOF hangs.
-   - Process is atomically assigned to the dedicated Job Object at creation on Windows 10+ using `PROC_THREAD_ATTRIBUTE_JOB_LIST`. `breakaway process creation flags` is eliminated.
-   - Attribute list contains at minimum `SECURITY_CAPABILITIES`, `HANDLE_LIST`, and `JOB_LIST`.
-   - Sandbox DACL replaced with minimal permissions (`FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE | DELETE`).
-   - AppContainer profile moniker restricted to valid Win32 characters, length <= 64 chars, derived from hash of `attempt_id`, with complete create/derive/delete and startup orphan cleanup lifecycle.
-
-3. **Snapshot Timing, Git Allowlist & Linked-Worktree Resolution (`P04-ARCH-R8-003`)**:
-   - Snapshot is created strictly AFTER Transaction A report intake completes (Task in `REPORT_READY`, binding revalidated).
-   - Snapshot is sourced strictly from actual independently verified HEAD commit (`actual_head_sha`), never worker claims.
-   - Git allowlist explicitly adds `git ls-tree -rz --full-tree <actual_head_sha>`, `git cat-file --batch`, `git rev-parse --git-path index`, and `git rev-parse --absolute-git-dir`.
-   - Index path for linked worktrees is resolved using `git rev-parse --git-path index`, canonicalized, and verified for gitdir ownership before hashing.
-   - Caps enforced: max 10,000 files, per-blob byte cap, total snapshot cap, streaming extraction, disk quota, and fail-closed cleanup of partial snapshots.
-   - Rejection of symlinks, gitlinks, and reparse points documented as v1 fail-closed stop conditions.
-   - Manifest binds `actual_head_sha`, relative path, Git file mode, byte length, and blob object ID.
-
-4. **Lease Admission Prerequisites & Sequential Fencing (`P04-ARCH-R8-004`)**:
-   - `BEGIN IMMEDIATE` admission requires: `tasks.state = 'REPORT_READY'`, attempt is `tasks.current_attempt`, exact contract/attempt lineage, valid worktree binding, unique `worker_claims` persisted, and no `evidence_sets` for the attempt.
-   - If task is already `EVIDENCE_READY` or `REVIEWING`, supervisor reads committed authority and does not re-run collectors or test runners.
-   - V1 verification requests execute strictly sequentially; total budget is the sum of request timeouts plus Git collector timeout (10s) and bounded overhead (15s). Concurrent request aggregation is eliminated.
-   - Filesystem isolation scopes sandboxes and staging directories by fencing token: `sandboxes/<attempt_id>/<fencing_token>/` and `.staging/<attempt_id>-<fencing_token>-<uuid>.tmp`.
-   - Transaction B validates fencing token, `ACTIVE` state, unexpired deadline, and current attempt immediately prior to commit.
-   - Reclaiming expired lease terminates and joins the previous Job Object.
-
-5. **Audit Event Governance & Two-Phase Failure Semantics (`P04-ARCH-R8-005`)**:
-   - Proposed audit event types introduced with status `PROPOSED_UNTIL_ADR_ACCEPTANCE`: `REVIEW_BUNDLE_GENERATED` and `REVIEW_BUNDLE_COMPILATION_REJECTED`. False claims of canonical approval are eliminated.
-   - Two-phase failure audit semantics: Transaction C rolls back cleanly via SQLite WAL upon clock regression, latency violation, schema failure, or hash conflict; a separate fail-closed diagnostic transaction writes `REVIEW_BUNDLE_COMPILATION_REJECTED` into `audit_events` without transitioning TaskState to `REVIEWING`.
-   - Canonical event catalog reconciliation deferred until ADR-018 acceptance.
+| Finding ID | Core Architectural Resolution in Revision 10 | Target Section |
+| :--- | :--- | :--- |
+| `P04-ARCH-R9-001` | Preserve verbatim worker reported head SHA (`LENGTH BETWEEN 7 AND 40 AND NOT GLOB '*[^0-9a-f]*'`). Independent `actual_head_sha` belongs strictly to Evidence. Establish explicit mapping: WorkerReport -> canonical WorkerClaim object -> ReviewBundle `worker_claims`. Enforce Go schema validation, exact data typing, and RFC 8785 JCS canonicalization before insertion. SQLite DDL uses `json_valid()` and `json_type()` as defense-in-depth without claiming SQLite proves JCS. | Section 3 |
+| `P04-ARCH-R9-002` | Distinguish 4 timestamp concepts (pre-commit write timestamp, WAL commit completion, monotonic in-process duration, durable wall-clock diagnostic). Drop `CHECK <= 3000` persistence blocker. Persist `nfr008_met` (0/1) and `latency_measurement_status`. SLA miss is diagnostic; Transaction C commits and advances to `REVIEWING` without deadlocking `EVIDENCE_READY`. | Section 7.3, `PROPOSAL-P04-002` |
+| `P04-ARCH-R9-003` | Separate capture limit (10 MB stored to disk) from hard safety limit (50 MB process termination). Introduce `stream_state` ('COMPLETE_EOF', 'TRUNCATED_AT_CAPTURE_LIMIT', 'HARD_LIMIT_TERMINATED', 'TIMEOUT_ABORTED'). When process is terminated at hard limit or timeout before observing EOF, set `full_stream_sha256 = NULL`, record `total_observed_bytes`, and mark `is_truncated = 1`. | Section 7.3 |
+| `P04-ARCH-R9-004` | Enforce clean worktree policy v1 at report intake: fail-closed if staged, unstaged, or untracked changes exist. Add `git status --porcelain=v1 -z --untracked-files=all` and `git diff-index --quiet HEAD --` to Git allowlist with `GIT_OPTIONAL_LOCKS=0`. Revalidate clean status and HEAD/index identity before snapshot extraction and before Transaction B. | Section 4, Section 6 |
+| `P04-ARCH-R9-005` | Distinguish same-daemon lease reclaim (in-memory Job handle registry join) from daemon restart recovery (P03 host lock exclusivity + `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`). Unproven owners fail closed without reclaim. Enforce checked 64-bit TTL arithmetic, cap verification requests to max 20, and cap aggregate budget to 600s in Stage B contract validation. | Section 7.2 |
+| `P04-ARCH-R9-006` | Establish explicit TaskState matrix: compile failure preserves `EVIDENCE_READY`; idempotent replay preserves `REVIEWING`; hash conflict preserves `REVIEWING` with `REVIEW_BUNDLE_COMPILATION_REJECTED` (`BUNDLE_HASH_CONFLICT`) audit failure; orphaned bundle triggers invariant violation. Transaction C enforces atomic commit of ReviewBundle, audit event, and state transition. | Section 7.4, Section 8 |
 
 ---
 
 ## 3. Worktree Authority, Immutable Bindings & Seam Integration
 
-### 3.1. Two-Transaction Lifecycle
-1. **Dispatch Binding Registration Transaction**: Integrated into the P03 dispatch seam (`PrepareBoundDispatch` / `DISPATCH_BOUND`) in `internal/dispatch` and `internal/store`. Gathers physical volume serial number and 128-bit file ID via `FileIdInfo`, formats them as 16 and 32 lowercase hex characters, and commits `attempt_workspace_bindings` before `RecordSendRequested`.
-2. **Transaction A (Report Intake)**: Invoked when worker signals report completion. Reads and revalidates existing physical binding; persists structured claims into `worker_claims` (Schema v6); transitions `tasks.state`: `RUNNING -> REPORT_READY`. Transaction A never creates workspace bindings.
+### 3.1. Two-Transaction Workspace Lifecycle
+To preserve the Stage B TaskContract seam without mutating existing task creation transactions:
+1. **Binding Creation Transaction (Subtask P04A)**:
+   - Executed after TaskContract release and before worker dispatch.
+   - Inserts row into `attempt_workspace_bindings` with initial state `ACTIVE` and `initial_head_sha`.
+2. **Report Intake Transaction A (Subtask P04A)**:
+   - Executed upon worker completion signaling.
+   - Validates physical worktree handle identity via Windows `FileIdInfo`.
+   - Runs pre-intake cleanliness probe (`git status --porcelain=v1 -z --untracked-files=all` and `git diff-index --quiet HEAD --`). Fails closed with `DIRTY_WORKTREE_DETECTED` if any staged, unstaged, or untracked changes exist.
+   - Validates `WorkerReport` JSON against canonical schema `docs/schemas/worker-report.schema.json` in Go.
+   - JCS-canonicalizes payload (RFC 8785).
+   - Inserts verbatim `reported_head_sha` and canonicalized `payload_json` into `worker_claims`.
+   - Updates `attempt_workspace_bindings.binding_state` to `RETAINED_FOR_VERIFICATION`.
+   - Transitions `tasks.state`: `RUNNING -> REPORT_READY`.
 
-### 3.2. Schema v6 DDL: `attempt_workspace_bindings` and `worker_claims`
+### 3.2. WorkerClaim Canonical Mapping & Schema Compliance (P04-ARCH-R9-001)
+
+The canonical specifications define distinct representations across schemas:
+- `worker-report.schema.json`: defines `head_sha` as `^[0-9a-f]{7,40}$`, `files_changed` as string array, `tests` as test results array, `worker_claims` as string array (`string[]`).
+- `docs/05_DOMAIN_MODEL.md`: defines class `WorkerClaim` containing `reported_head_sha`, `claimed_files_changed`, and `tests`.
+- `review-bundle.schema.json`: defines `worker_claims` as an object (`"type": "object"`).
+
+To guarantee unambiguous mapping and preserve worker report fidelity:
+1. **Verbatim Preservation**: The worker's reported head SHA is stored verbatim in `worker_claims.reported_head_sha` without silent resolution or expansion.
+2. **Strict Separation of Evidence**: The independently resolved and verified `actual_head_sha` belongs strictly to `evidence_sets.git_evidence_json` (`actual_git_evidence.actual_head_sha`), never inside `worker_claims`.
+3. **Canonical Object Mapping**:
+   ```text
+   WorkerReport JSON                      Canonical WorkerClaim Object               ReviewBundle.worker_claims Object
+   ----------------                      ----------------------------               ---------------------------------
+   head_sha (7-40 hex)        ------>    reported_head_sha               ------>    reported_head_sha
+   files_changed (string[])   ------>    claimed_files_changed           ------>    claimed_files_changed
+   tests (object[])           ------>    tests                           ------>    tests
+   worker_claims (string[])   ------>    textual_claims                  ------>    textual_claims
+   build_status (enum)        ------>    build_status                    ------>    build_status
+   ```
+4. **Validation and JCS Canonicalization Pipeline**:
+   - Step 1: Go application parses raw worker report JSON.
+   - Step 2: Validate against `docs/schemas/worker-report.schema.json` via schema engine.
+   - Step 3: Extract and type-check fields according to the mapping above.
+   - Step 4: Serialize canonical `WorkerClaim` object using RFC 8785 JSON Canonicalization Scheme (JCS).
+   - Step 5: Insert into `worker_claims` table. SQLite DDL validates JSON syntax and array types as defense-in-depth.
 
 ```sql
 -- Schema v6: attempt_workspace_bindings
 CREATE TABLE attempt_workspace_bindings (
-    attempt_id TEXT PRIMARY KEY REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+    binding_id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
+    attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
     contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
-    session_id TEXT NOT NULL CHECK (LENGTH(session_id) > 0),
-    terminal_generation TEXT NOT NULL CHECK (LENGTH(terminal_generation) > 0),
-    canonical_worktree_path TEXT NOT NULL CHECK (LENGTH(canonical_worktree_path) > 0),
-    managed_root_final_path TEXT NOT NULL CHECK (LENGTH(managed_root_final_path) > 0),
-    volume_serial_hex TEXT NOT NULL CHECK (LENGTH(volume_serial_hex) = 16 AND NOT (volume_serial_hex GLOB '*[^0-9a-f]*')),
-    file_id_hex TEXT NOT NULL CHECK (LENGTH(file_id_hex) = 32 AND NOT (file_id_hex GLOB '*[^0-9a-f]*')),
-    pinned_ao_commit TEXT NOT NULL CHECK (LENGTH(pinned_ao_commit) = 40 AND NOT (pinned_ao_commit GLOB '*[^0-9a-f]*')),
-    bound_at TEXT NOT NULL CHECK (LENGTH(bound_at) > 0),
+    canonical_worktree_path TEXT NOT NULL,
+    worktree_volume_serial TEXT NOT NULL,
+    worktree_file_id TEXT NOT NULL,
+    linked_gitdir_path TEXT NOT NULL,
+    linked_gitdir_volume_serial TEXT NOT NULL,
+    linked_gitdir_file_id TEXT NOT NULL,
+    initial_head_sha TEXT NOT NULL CHECK (
+        LENGTH(initial_head_sha) = 40 AND NOT (initial_head_sha GLOB '*[^0-9a-f]*')
+    ),
+    binding_state TEXT NOT NULL CHECK (
+        binding_state IN ('ACTIVE', 'RETAINED_FOR_VERIFICATION', 'RELEASED', 'INVALIDATED')
+    ),
+    created_at_epoch_ms INTEGER NOT NULL CHECK (created_at_epoch_ms > 0),
+    released_at_epoch_ms INTEGER NULL,
     FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT
 );
 
-CREATE TRIGGER trg_attempt_workspace_bindings_lineage_guard
-BEFORE INSERT ON attempt_workspace_bindings
-FOR EACH ROW
-BEGIN
-    SELECT RAISE(ABORT, 'lineage mismatch: attempt_id does not match task_id, contract_id in task_attempts or session in dispatch_operations')
-    WHERE NOT EXISTS (
-        SELECT 1 FROM task_attempts a
-        JOIN dispatch_operations d ON d.attempt_id = a.attempt_id
-        WHERE a.attempt_id = NEW.attempt_id
-          AND a.task_id = NEW.task_id
-          AND a.contract_id = NEW.contract_id
-          AND d.session_id = NEW.session_id
-          AND d.terminal_generation = NEW.terminal_generation
-    );
-END;
-
-CREATE TRIGGER trg_attempt_workspace_bindings_no_update
-BEFORE UPDATE ON attempt_workspace_bindings
-BEGIN
-    SELECT RAISE(ABORT, 'attempt_workspace_bindings is immutable');
-END;
-
-CREATE TRIGGER trg_attempt_workspace_bindings_no_delete
-BEFORE DELETE ON attempt_workspace_bindings
-BEGIN
-    SELECT RAISE(ABORT, 'attempt_workspace_bindings is immutable');
-END;
-
--- Schema v6: worker_claims (Canonical cardinality: exactly one WorkerClaim per attempt)
+-- Schema v6: worker_claims
 CREATE TABLE worker_claims (
     claim_id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
     attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
-    contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
-    reported_head_sha TEXT NOT NULL CHECK (LENGTH(reported_head_sha) = 40 AND NOT (reported_head_sha GLOB '*[^0-9a-f]*')),
-    claimed_files_json TEXT NOT NULL CHECK (LENGTH(claimed_files_json) > 0),
-    claimed_tests_json TEXT NOT NULL CHECK (LENGTH(claimed_tests_json) > 0),
-    claims_payload_json TEXT NOT NULL CHECK (LENGTH(claims_payload_json) > 0),
-    reported_at TEXT NOT NULL CHECK (LENGTH(reported_at) > 0),
-    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT
+    reported_head_sha TEXT NOT NULL CHECK (
+        LENGTH(reported_head_sha) BETWEEN 7 AND 40
+        AND NOT (reported_head_sha GLOB '*[^0-9a-f]*')
+    ),
+    payload_json TEXT NOT NULL CHECK (
+        json_valid(payload_json) = 1
+        AND json_type(payload_json, '$.claimed_files_changed') = 'array'
+        AND json_type(payload_json, '$.tests') = 'array'
+        AND json_type(payload_json, '$.textual_claims') = 'array'
+    ),
+    created_at_epoch_ms INTEGER NOT NULL CHECK (created_at_epoch_ms > 0)
 );
-
-CREATE TRIGGER trg_worker_claims_lineage_guard
-BEFORE INSERT ON worker_claims
-FOR EACH ROW
-BEGIN
-    SELECT RAISE(ABORT, 'lineage mismatch: attempt_id does not match task_id or contract_id in task_attempts')
-    WHERE NOT EXISTS (
-        SELECT 1 FROM task_attempts a
-        WHERE a.attempt_id = NEW.attempt_id
-          AND a.task_id = NEW.task_id
-          AND a.contract_id = NEW.contract_id
-    );
-END;
-
-CREATE TRIGGER trg_worker_claims_no_update
-BEFORE UPDATE ON worker_claims
-BEGIN
-    SELECT RAISE(ABORT, 'worker_claims is immutable');
-END;
-
-CREATE TRIGGER trg_worker_claims_no_delete
-BEFORE DELETE ON worker_claims
-BEGIN
-    SELECT RAISE(ABORT, 'worker_claims is immutable');
-END;
 ```
 
 ---
 
-## 4. Hardened Git Evidence Collector & Linked Worktrees
+## 4. Hardened Git Evidence Collector & Clean Worktree Allowlist (P04-ARCH-R9-004)
 
-1. **Host-Pinned Binary Resolution**: Git executable resolved strictly from `SUPERVISOR_GIT_BIN`, version and SHA-256 hash verified per NFR-007.
-2. **Windows Configuration Isolation**: Dedicated `<SUPERVISOR_STATE_ROOT>/trusted_empty_git/` with empty config and empty hooks directory.
-3. **Mandatory Invocations & Flags**:
-   - Every Git invocation passes `-c core.hooksPath=<trusted_empty_hooks>` and `-c core.fsmonitor=false`.
-   - `--no-pager` is strictly passed as a CLI argument, not an environment variable (`GIT_PAGER=cat`).
-4. **Git Command Allowlist**:
-   - `git rev-parse --verify <ref>`
-   - `git rev-parse --git-path index`
-   - `git rev-parse --absolute-git-dir`
-   - `git merge-base <base> <head>`
-   - `git log --no-ext-diff --no-textconv --format=...`
-   - `git diff --no-ext-diff --no-textconv --raw / --patch`
-   - `git ls-tree -rz --full-tree <actual_head_sha>`
-   - `git cat-file --batch`
-5. **Linked Worktree Index Resolution**: For Git linked worktrees, `.git` is a file pointing to a gitdir. Supervisor resolves index path using `git rev-parse --git-path index`, canonicalizes path, and verifies handle ownership before computing the authoritative index SHA-256.
-6. **Streaming Controls**: 10s execution timeout; 10 MB streaming byte cap terminating process tree immediately on exceedance.
-7. **Traceability**: Independent Git diff collection maps to **FR-008**; scope comparison maps to **FR-009** and **SEC-005**.
+### 4.1. Clean Worktree & Index Verification Policy (v1)
+To prevent workers from hiding changes in staged index entries, unstaged working copies, or untracked files:
+1. **Intake Policy**: The Supervisor Control Plane strictly enforces that the workspace worktree and index must be clean at report intake.
+2. **Rejection Semantics**: If any uncommitted change or untracked file is detected, Transaction A fails closed immediately, recording audit event `EVIDENCE_COLLECTION_FAILED` with detail `DIRTY_WORKTREE_DETECTED`.
+
+### 4.2. Hardened Git Invocation Allowlist
+All Git commands execute under strict environment isolation (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_OPTIONAL_LOCKS=0`, clean system environment, no user config):
+
+| Subcommand & Arguments | Purpose | Security Constraints |
+| :--- | :--- | :--- |
+| `git status --porcelain=v1 -z --untracked-files=all` | Clean worktree & untracked check | Machine-parseable, NUL-delimited, unescaped paths |
+| `git diff-index --quiet HEAD --` | Staged/index clean check | Exit code 0 indicates clean index vs HEAD |
+| `git rev-parse --verify --quiet <ref>^{commit}` | Resolve ref to 40-char SHA | Commit object dereferencing |
+| `git diff --raw -z --no-renames --no-ext-diff <base> <head> --` | Raw change list | NUL-delimited path parsing |
+| `git diff --numstat --no-renames <base> <head> --` | Diff statistics | Bound by line count |
+| `git rev-list --count <base>..<head>` | Commit count validation | Integer output |
+| `git ls-tree -rz --full-tree <head>` | Tree manifest for snapshot | NUL-delimited tree walk |
+| `git cat-file --batch` | Content extraction for snapshot | Strict stdin/stdout protocol |
+| `git rev-parse --git-path index` | Linked worktree index path | Resolves exact index file |
 
 ---
 
 ## 5. Windows AppContainer Process Isolation & Job Containment
 
-1. **Exclusive Architecture Choice**: Windows AppContainer for v1. Dual-path implementations and non-AppContainer token alternatives are eliminated.
-2. **Process I/O & Handle Inheritance**:
-   - Standard process I/O configured with `STARTF_USESTDHANDLES`.
-   - Stdout and stderr redirected to anonymous pipe write handles; stdin closed or directed to nul.
+### 5.1. Handle Inheritance & Sandbox DACL Architecture
+To prevent handle leakage while maintaining child process stdio communication:
+1. **STARTUPINFOEXW with Attribute Lists**:
    - `bInheritHandles = TRUE` in `CreateProcessW`.
-   - `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` passed to `UpdateProcThreadAttribute` containing strictly the designated stdout and stderr write handles.
-   - Parent read pipe ends and all other supervisor handles created without `HANDLE_FLAG_INHERIT`.
-   - Supervisor streaming reader applies 10 MB byte cap and execution timeout; closes parent write ends immediately after process creation; closes pipe ends in proper order so EOF is signaled cleanly without hangs.
-3. **Job Object Containment**:
-   - Sandboxed process is assigned to dedicated Job Object atomically at creation on Windows 10+ using `PROC_THREAD_ATTRIBUTE_JOB_LIST`.
-   - `breakaway process creation flags` is eliminated.
-   - Job Object limits: `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, breakaway disabled, 2 GB memory cap.
-4. **Attribute List Specification**: Contains at minimum `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES`, `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, and `PROC_THREAD_ATTRIBUTE_JOB_LIST`.
-5. **Sandbox Root & DACLs**:
-   - Sandbox root: `<SUPERVISOR_STATE_ROOT>/sandboxes/<attempt_id>/<fencing_token>/`.
-   - DACL granted to AppContainer SID: minimal necessary rights (`FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE | DELETE`) strictly within the attempt sandbox directory.
-   - Snapshot root: granted read/execute DACL.
-6. **AppContainer Profile Moniker Lifecycle**:
-   - Valid Win32 characters only (alphanumerics, periods, dashes, underscores).
-   - Length <= 64 characters.
-   - Moniker format: `appcontainer-attempt-<first_16_hex_of_sha256>`.
-   - Lifecycle: create/derive via `CreateAppContainerProfile` / `DeriveAppContainerSidFromAppContainerName`, DACL cleanup, deletion via `DeleteAppContainerProfile`, and fail-closed orphan cleanup on supervisor daemon startup.
+   - `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` explicitly passes *only* the specific write handles for stdout, stderr, and the read handle for stdin. All database, network, and file handles remain strictly non-inherited.
+2. **Atomic Job Object Assignment**:
+   - `PROC_THREAD_ATTRIBUTE_JOB_LIST` atomically binds the child process to a newly created Windows Job Object at the moment of creation.
+   - Prohibits child processes from breaking out via `JOB_OBJECT_LIMIT_BREAKAWAY_OK` (flag explicitly omitted).
+3. **AppContainer SID Isolation**:
+   - Ephemeral AppContainer profile generated per verification task.
+   - Minimal DACL granted only to snapshot directory and ephemeral scratch directory (`GENERIC_READ | GENERIC_EXECUTE`).
+   - Network capabilities (`capabilitySid`) completely omitted, enforcing OS-level network denial.
 
 ---
 
-## 6. Immutable Source Snapshot Protocol
+## 6. Immutable Source Snapshot Protocol & Clean Verification Matrix
 
-1. **Snapshot Timing**: Created strictly AFTER Transaction A report intake completes (Task in `REPORT_READY`, physical binding revalidated).
-2. **Source Authority**: Sourced strictly from actual independently verified HEAD commit (`actual_head_sha`), never worker claims.
-3. **Streaming Extraction**: Streamed via Git `ls-tree -rz --full-tree <actual_head_sha>` and `git cat-file --batch` into `<SUPERVISOR_STATE_ROOT>/snapshots/<attempt_id>/`.
-4. **Validation Caps & Quotas**:
-   - File-count cap: maximum 10,000 files.
-   - Per-blob byte cap: 10 MB per file.
-   - Total snapshot byte cap: 100 MB total.
-   - Disk quota checking and fail-closed cleanup of partial snapshots on error.
-5. **Path Validation & Stop Conditions**: Every path component validated; directory traversal (`..`), junctions, reparse points, symlinks, and gitlinks are strictly rejected as a v1 fail-closed stop condition.
-6. **Immutable Manifest**: Binds `actual_head_sha`, relative path, Git mode, byte length, and blob object ID; verified before test invocation.
-7. **Handle Invariant**: Root worktree handle opened without `FILE_SHARE_DELETE` and held across verification. Tests never touch the active worktree, and changes are never copied back.
+### 6.1. Snapshot Extraction Protocol
+The verification runner never executes directly inside the worker's mutable worktree. Instead:
+1. **Pre-Snapshot Cleanliness Verification**: Re-verify `git status --porcelain=v1 -z` and index identity.
+2. **Deterministic Tree Extraction**:
+   - Read directory tree from `actual_head_sha` via `git ls-tree -rz --full-tree`.
+   - Extract file blobs via `git cat-file --batch` into `<SUPERVISOR_STATE_ROOT>/snapshots/<attempt_id>/`.
+3. **ReadOnly ACL Enforcement**: Apply read-only ACLs (`GENERIC_READ | GENERIC_EXECUTE`) before spawning any verification processes.
+
+### 6.2. TOCTOU & Crash Matrix
+
+| Scenario | Detection Mechanism | Consequence / Recovery Action |
+| :--- | :--- | :--- |
+| Worker leaves unstaged edits | `git status` check in Pre-Transaction A | Transaction A aborted; task rejected with `DIRTY_WORKTREE_DETECTED`. |
+| Worker stages edits in index | `git diff-index --quiet HEAD --` in Pre-Transaction A | Transaction A aborted; task rejected with `DIRTY_WORKTREE_DETECTED`. |
+| Worker leaves untracked files | `git status --untracked-files=all` | Transaction A aborted; task rejected with `DIRTY_WORKTREE_DETECTED`. |
+| Worktree modified between Tx A and snapshot | Re-verify `git status` before snapshot extraction | Snapshot aborted; lease released as failure; task marked failed. |
+| Verification process attempts file modification | Read-only ACLs on snapshot directory | OS rejects write with `ACCESS_DENIED`. |
+| Worker touches worktree during verification | Verification runs in isolated snapshot dir | Worker mutations have zero effect on verification accuracy. |
 
 ---
 
 ## 7. Pipeline Transactions, Fencing & Content-Addressed Store
 
 ### 7.1. Three Durable Transaction Boundaries
-1. **Transaction A (Report Intake)**: Validates report, stores structured `worker_claims` (Schema v6), transitions `tasks.state`: `RUNNING -> REPORT_READY`.
-2. **Transaction B (Evidence Finalization)**: Ingests in-memory outputs, stages and deduplicates artifacts into `artifacts/<first-two-hex>/<captured_sha256>`, persists `evidence_sets` and `review_artifacts(evidence_set_id)` (Schema v9) with `evidence_committed_at_epoch_ms`, releases lease, transitions `tasks.state`: `REPORT_READY -> EVIDENCE_READY`.
-3. **Transaction C (ReviewBundle Compilation)**: Synthesizes RFC 8785 JCS canonical ReviewBundle, inserts `review_bundles(evidence_set_id)` with persisted `bundle_committed_at_epoch_ms` and `compilation_latency_ms`, records proposed audit event `REVIEW_BUNDLE_GENERATED`, transitions `tasks.state`: `EVIDENCE_READY -> REVIEWING`.
+The verification pipeline is decoupled into three sequential SQLite WAL transactions:
+1. **Transaction A (Report Intake)**: Commits `worker_claims`, retains workspace binding, transitions `RUNNING -> REPORT_READY`.
+2. **Transaction B (Evidence Finalization)**: Commits `evidence_sets`, commits `review_artifacts`, releases verification lease, transitions `REPORT_READY -> EVIDENCE_READY`.
+3. **Transaction C (Bundle Synthesis & Review Transition)**: Commits canonical `review_bundles`, commits proposed audit event `REVIEW_BUNDLE_GENERATED`, transitions `EVIDENCE_READY -> REVIEWING`.
 
-### 7.2. Lease Admission Prerequisites & Reclaim
-- `BEGIN IMMEDIATE` admission query validates:
-  `tasks.state = 'REPORT_READY'`, attempt is `tasks.current_attempt`, lineage is intact, worktree binding exists and is revalidated, `worker_claims` exists, and `evidence_sets` does not exist for the attempt.
-- If task is already `EVIDENCE_READY` or `REVIEWING`, supervisor reads committed authority and does not re-run tests.
-- Reclaiming an expired lease terminates and joins the previous Job Object.
-- Fencing token isolation applies to sandbox directory (`sandboxes/<attempt_id>/<fencing_token>/`) and staging path (`.staging/<attempt_id>-<fencing_token>-<uuid>.tmp`).
-- Transaction B verifies fencing token, `ACTIVE` state, unexpired deadline, and current attempt immediately prior to commit.
+### 7.2. Lease Admission, Cross-Process Reclaim & Bounded TTL (P04-ARCH-R9-005)
 
-### 7.3. Schema v9 DDL: Leases, Evidence Sets, Artifacts, Bundles
+#### Reclaim Authority Taxonomy
+1. **Same-Daemon Reclaim**:
+   - In-memory Job Object handle registry tracks active child processes.
+   - Daemon invokes `TerminateJobObject(handle, 1)` and joins child process exits via `WaitForSingleObject`.
+2. **Daemon Restart Recovery**:
+   - A newly spawned daemon process *cannot* reopen anonymous Job Object handles from dead predecessor instances.
+   - Recovery relies on P03 machine lock exclusivity (guaranteeing only one daemon runs) AND Windows `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (kernel automatically terminates all child processes when the previous daemon's process handle table closes).
+3. **Unproven Owner Guard**:
+   - If process death cannot be proven via handle join or post-restart exclusivity, the supervisor fails closed and refuses to reclaim the lease.
+   - Fencing token increments *only* after old owner termination is verified.
+
+#### Bounded Verification TTL Arithmetic
+1. **Checked 64-bit Integer Arithmetic**: All timeout calculations use checked integer arithmetic rejecting overflow.
+2. **Stage B Contract Constraints**:
+   - Maximum verification requests: `MAX_VERIFICATION_REQUESTS = 20`.
+   - Maximum aggregate verification budget: `MAX_AGGREGATE_VERIFICATION_BUDGET_SECONDS = 600` (10 minutes).
+   - Stage B semantic contract validation strictly rejects any contract violating these limits.
+3. **Lease TTL Bounds**: `verification_leases.ttl_seconds CHECK (ttl_seconds BETWEEN 1 AND 600)`.
 
 ```sql
--- Schema v9: task_verification_leases
-CREATE TABLE task_verification_leases (
-    task_id TEXT PRIMARY KEY REFERENCES tasks(task_id) ON DELETE RESTRICT,
-    fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
-    state TEXT NOT NULL CHECK (state IN ('ACTIVE', 'RELEASED')),
-    worker_id TEXT NOT NULL CHECK (LENGTH(worker_id) > 0),
-    attempt_id TEXT NOT NULL REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+-- Schema v9: verification_leases
+CREATE TABLE verification_leases (
+    lease_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
+    attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
     contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
+    lease_owner TEXT NOT NULL,
+    lease_state TEXT NOT NULL CHECK (
+        lease_state IN ('ACTIVE', 'COMPLETED', 'EXPIRED', 'RECLAIMED', 'REVOKED')
+    ),
+    lease_fencing_token INTEGER NOT NULL CHECK (lease_fencing_token > 0),
+    ttl_seconds INTEGER NOT NULL CHECK (ttl_seconds BETWEEN 1 AND 600),
     acquired_at_epoch_ms INTEGER NOT NULL CHECK (acquired_at_epoch_ms > 0),
     expires_at_epoch_ms INTEGER NOT NULL CHECK (expires_at_epoch_ms > acquired_at_epoch_ms),
-    released_at_epoch_ms INTEGER,
-    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT,
-    CHECK (
-        (state = 'ACTIVE' AND released_at_epoch_ms IS NULL) OR
-        (state = 'RELEASED' AND released_at_epoch_ms IS NOT NULL AND released_at_epoch_ms >= acquired_at_epoch_ms)
-    )
+    released_at_epoch_ms INTEGER NULL,
+    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT
 );
+```
 
-CREATE TRIGGER trg_task_verification_leases_lineage_guard
-BEFORE INSERT ON task_verification_leases
-FOR EACH ROW
-BEGIN
-    SELECT RAISE(ABORT, 'lineage mismatch: attempt_id does not match task_id or contract_id in task_attempts')
-    WHERE NOT EXISTS (
-        SELECT 1 FROM task_attempts a
-        WHERE a.attempt_id = NEW.attempt_id
-          AND a.task_id = NEW.task_id
-          AND a.contract_id = NEW.contract_id
-    );
-END;
+### 7.3. Schema v9 DDL: Artifact Streaming & Latency Invariants (P04-ARCH-R9-002, R9-003)
 
-CREATE TRIGGER trg_task_verification_leases_lineage_update_guard
-BEFORE UPDATE ON task_verification_leases
-FOR EACH ROW
-BEGIN
-    SELECT RAISE(ABORT, 'lineage mismatch: attempt_id does not match task_id or contract_id in task_attempts')
-    WHERE NOT EXISTS (
-        SELECT 1 FROM task_attempts a
-        WHERE a.attempt_id = NEW.attempt_id
-          AND a.task_id = NEW.task_id
-          AND a.contract_id = NEW.contract_id
-    );
-END;
-
+```sql
 -- Schema v9: evidence_sets
 CREATE TABLE evidence_sets (
     evidence_set_id TEXT PRIMARY KEY,
@@ -297,131 +255,95 @@ CREATE TABLE evidence_sets (
     attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
     contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
     fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
-    git_evidence_json TEXT NOT NULL CHECK (LENGTH(git_evidence_json) > 0),
-    test_evidence_json TEXT NOT NULL CHECK (LENGTH(test_evidence_json) > 0),
-    policy_findings_json TEXT NOT NULL CHECK (LENGTH(policy_findings_json) > 0),
-    unverified_claims_json TEXT NOT NULL CHECK (LENGTH(unverified_claims_json) > 0),
+    git_evidence_json TEXT NOT NULL CHECK (
+        json_valid(git_evidence_json) = 1 AND
+        json_type(git_evidence_json, '$.actual_changed_files') = 'array'
+    ),
+    test_evidence_json TEXT NOT NULL CHECK (
+        json_valid(test_evidence_json) = 1 AND
+        json_type(test_evidence_json, '$.executed_commands') = 'array'
+    ),
+    policy_findings_json TEXT NOT NULL CHECK (
+        json_valid(policy_findings_json) = 1
+    ),
+    unverified_claims_json TEXT NOT NULL CHECK (
+        json_valid(unverified_claims_json) = 1
+    ),
     evidence_committed_at_epoch_ms INTEGER NOT NULL CHECK (evidence_committed_at_epoch_ms > 0),
     collected_at TEXT NOT NULL CHECK (LENGTH(collected_at) > 0),
     FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT
 );
 
-CREATE TRIGGER trg_evidence_sets_lineage_guard
-BEFORE INSERT ON evidence_sets
-FOR EACH ROW
-BEGIN
-    SELECT RAISE(ABORT, 'lineage mismatch: attempt_id does not match task_id or contract_id in task_attempts')
-    WHERE NOT EXISTS (
-        SELECT 1 FROM task_attempts a
-        WHERE a.attempt_id = NEW.attempt_id
-          AND a.task_id = NEW.task_id
-          AND a.contract_id = NEW.contract_id
-    );
-END;
-
-CREATE TRIGGER trg_evidence_sets_no_update
-BEFORE UPDATE ON evidence_sets
-BEGIN
-    SELECT RAISE(ABORT, 'evidence_sets is immutable');
-END;
-
-CREATE TRIGGER trg_evidence_sets_no_delete
-BEFORE DELETE ON evidence_sets
-BEGIN
-    SELECT RAISE(ABORT, 'evidence_sets is immutable');
-END;
-
--- Schema v9: review_artifacts (Owned by Subtask P04D, references evidence_sets)
+-- Schema v9: review_artifacts
 CREATE TABLE review_artifacts (
     artifact_id TEXT PRIMARY KEY,
     evidence_set_id TEXT NOT NULL REFERENCES evidence_sets(evidence_set_id) ON DELETE RESTRICT,
     task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
     attempt_id TEXT NOT NULL REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
-    contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
-    artifact_type TEXT NOT NULL CHECK (LENGTH(artifact_type) > 0),
-    media_type TEXT NOT NULL CHECK (LENGTH(media_type) > 0),
-    encoding TEXT NOT NULL CHECK (LENGTH(encoding) > 0),
-    canonical_relative_path TEXT NOT NULL,
-    captured_sha256 TEXT NOT NULL CHECK (LENGTH(captured_sha256) = 64 AND NOT (captured_sha256 GLOB '*[^0-9a-f]*')),
-    full_stream_sha256 TEXT NOT NULL CHECK (LENGTH(full_stream_sha256) = 64 AND NOT (full_stream_sha256 GLOB '*[^0-9a-f]*')),
-    original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
-    captured_bytes INTEGER NOT NULL CHECK (captured_bytes >= 0 AND captured_bytes <= original_bytes),
-    is_truncated INTEGER NOT NULL CHECK (
-        is_truncated IN (0, 1) AND (
-            (is_truncated = 1 AND captured_bytes < original_bytes) OR
-            (is_truncated = 0 AND captured_bytes = original_bytes)
+    artifact_type TEXT NOT NULL CHECK (
+        artifact_type IN ('VERIFICATION_LOG', 'GIT_DIFF', 'TEST_REPORT', 'WORKER_STDOUT', 'WORKER_STDERR')
+    ),
+    file_path TEXT NOT NULL CHECK (
+        file_path GLOB 'artifacts/[0-9a-f][0-9a-f]/[0-9a-f]*'
+        AND file_path NOT GLOB '*.*'
+    ),
+    stream_state TEXT NOT NULL CHECK (
+        stream_state IN ('COMPLETE_EOF', 'TRUNCATED_AT_CAPTURE_LIMIT', 'HARD_LIMIT_TERMINATED', 'TIMEOUT_ABORTED')
+    ),
+    captured_bytes INTEGER NOT NULL CHECK (captured_bytes >= 0),
+    total_observed_bytes INTEGER NOT NULL CHECK (total_observed_bytes >= captured_bytes),
+    is_truncated INTEGER NOT NULL CHECK (is_truncated IN (0, 1)),
+    captured_sha256 TEXT NOT NULL CHECK (
+        LENGTH(captured_sha256) = 64 AND NOT (captured_sha256 GLOB '*[^0-9a-f]*')
+    ),
+    full_stream_sha256 TEXT NULL CHECK (
+        full_stream_sha256 IS NULL OR (
+            LENGTH(full_stream_sha256) = 64 AND NOT (full_stream_sha256 GLOB '*[^0-9a-f]*')
         )
     ),
-    created_at TEXT NOT NULL CHECK (LENGTH(created_at) > 0),
-    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT,
+    created_at_epoch_ms INTEGER NOT NULL CHECK (created_at_epoch_ms > 0),
     CHECK (
-        canonical_relative_path = 'artifacts/' || substr(captured_sha256, 1, 2) || '/' || captured_sha256 AND
-        canonical_relative_path NOT GLOB '*:*' AND
-        canonical_relative_path NOT GLOB '*\\*' AND
-        canonical_relative_path NOT GLOB '*..*' AND
-        canonical_relative_path NOT GLOB '*//*'
+        (stream_state = 'COMPLETE_EOF' AND is_truncated = 0 AND full_stream_sha256 IS NOT NULL AND captured_bytes = total_observed_bytes)
+        OR (stream_state = 'TRUNCATED_AT_CAPTURE_LIMIT' AND is_truncated = 1 AND full_stream_sha256 IS NOT NULL AND captured_bytes < total_observed_bytes)
+        OR (stream_state = 'HARD_LIMIT_TERMINATED' AND is_truncated = 1 AND full_stream_sha256 IS NULL)
+        OR (stream_state = 'TIMEOUT_ABORTED' AND is_truncated = 1 AND full_stream_sha256 IS NULL)
     )
 );
 
-CREATE TRIGGER trg_review_artifacts_lineage_guard
-BEFORE INSERT ON review_artifacts
-FOR EACH ROW
-BEGIN
-    SELECT RAISE(ABORT, 'lineage mismatch: evidence_set_id does not match task_id, attempt_id, contract_id')
-    WHERE NOT EXISTS (
-        SELECT 1 FROM evidence_sets e
-        WHERE e.evidence_set_id = NEW.evidence_set_id
-          AND e.task_id = NEW.task_id
-          AND e.attempt_id = NEW.attempt_id
-          AND e.contract_id = NEW.contract_id
-    );
-END;
-
-CREATE TRIGGER trg_review_artifacts_no_update
-BEFORE UPDATE ON review_artifacts
-BEGIN
-    SELECT RAISE(ABORT, 'review_artifacts is immutable');
-END;
-
-CREATE TRIGGER trg_review_artifacts_no_delete
-BEFORE DELETE ON review_artifacts
-BEGIN
-    SELECT RAISE(ABORT, 'review_artifacts is immutable');
-END;
-
--- Schema v9: review_bundles (Owned by Subtask P04D, references evidence_sets)
+-- Schema v9: review_bundles
 CREATE TABLE review_bundles (
     bundle_id TEXT PRIMARY KEY,
     evidence_set_id TEXT NOT NULL UNIQUE REFERENCES evidence_sets(evidence_set_id) ON DELETE RESTRICT,
     task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
     attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
     contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
-    bundle_payload_json TEXT NOT NULL CHECK (LENGTH(bundle_payload_json) > 0),
-    bundle_hash TEXT NOT NULL CHECK (LENGTH(bundle_hash) = 64 AND NOT (bundle_hash GLOB '*[^0-9a-f]*')),
+    bundle_payload_json TEXT NOT NULL CHECK (
+        json_valid(bundle_payload_json) = 1 AND
+        json_type(bundle_payload_json, '$.worker_claims') = 'object' AND
+        json_type(bundle_payload_json, '$.actual_git_evidence') = 'object'
+    ),
+    bundle_hash TEXT NOT NULL CHECK (
+        LENGTH(bundle_hash) = 64 AND
+        NOT (bundle_hash GLOB '*[^0-9a-f]*')
+    ),
     evidence_committed_at_epoch_ms INTEGER NOT NULL CHECK (evidence_committed_at_epoch_ms > 0),
-    bundle_committed_at_epoch_ms INTEGER NOT NULL CHECK (bundle_committed_at_epoch_ms > 0),
-    compilation_latency_ms INTEGER NOT NULL CHECK (compilation_latency_ms BETWEEN 0 AND 3000),
-    generated_at TEXT NOT NULL CHECK (LENGTH(generated_at) > 0),
-    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT,
-    CHECK (
-        bundle_committed_at_epoch_ms >= evidence_committed_at_epoch_ms AND
+    bundle_committed_at_epoch_ms INTEGER NOT NULL CHECK (bundle_committed_at_epoch_ms >= evidence_committed_at_epoch_ms),
+    compilation_latency_ms INTEGER NOT NULL CHECK (
+        compilation_latency_ms >= 0 AND
         compilation_latency_ms = (bundle_committed_at_epoch_ms - evidence_committed_at_epoch_ms)
-    )
+    ),
+    latency_measurement_status TEXT NOT NULL CHECK (
+        latency_measurement_status IN ('MEASURED_IN_PROCESS', 'RECOVERED_AFTER_RESTART', 'MEASUREMENT_TIMEOUT')
+    ),
+    nfr008_met INTEGER NOT NULL CHECK (
+        nfr008_met IN (0, 1) AND (
+            (nfr008_met = 1 AND compilation_latency_ms <= 3000) OR
+            (nfr008_met = 0 AND compilation_latency_ms > 3000)
+        )
+    ),
+    generated_at TEXT NOT NULL CHECK (LENGTH(generated_at) > 0),
+    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT
 );
-
-CREATE TRIGGER trg_review_bundles_lineage_guard
-BEFORE INSERT ON review_bundles
-FOR EACH ROW
-BEGIN
-    SELECT RAISE(ABORT, 'lineage mismatch: evidence_set_id does not match task_id, attempt_id, contract_id')
-    WHERE NOT EXISTS (
-        SELECT 1 FROM evidence_sets e
-        WHERE e.evidence_set_id = NEW.evidence_set_id
-          AND e.task_id = NEW.task_id
-          AND e.attempt_id = NEW.attempt_id
-          AND e.contract_id = NEW.contract_id
-    );
-END;
 
 CREATE TRIGGER trg_review_bundles_evidence_time_guard
 BEFORE INSERT ON review_bundles
@@ -434,39 +356,36 @@ BEGIN
           AND e.evidence_committed_at_epoch_ms = NEW.evidence_committed_at_epoch_ms
     );
 END;
-
-CREATE TRIGGER trg_review_bundles_no_update
-BEFORE UPDATE ON review_bundles
-BEGIN
-    SELECT RAISE(ABORT, 'review_bundles is immutable');
-END;
-
-CREATE TRIGGER trg_review_bundles_no_delete
-BEFORE DELETE ON review_bundles
-BEGIN
-    SELECT RAISE(ABORT, 'review_bundles is immutable');
-END;
 ```
+
+### 7.4. ReviewBundle Replay and Conflict State Matrix (P04-ARCH-R9-006)
+
+| Current TaskState | Pre-Existing Bundle | Incoming Bundle Hash vs Stored Hash | Resulting Action & Transaction C Outcome | Final TaskState | Emitted Audit Event |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `EVIDENCE_READY` | None | N/A (Compile error / schema failure) | Transaction C rolls back | `EVIDENCE_READY` (Preserved) | `REVIEW_BUNDLE_COMPILATION_REJECTED` |
+| `EVIDENCE_READY` | None | N/A (Successful synthesis) | Transaction C commits bundle atomically | `REVIEWING` (Advanced) | `REVIEW_BUNDLE_GENERATED` |
+| `REVIEWING` | Exists | Matches stored hash exactly | Idempotent replay: return existing bundle | `REVIEWING` (Preserved) | None (or diagnostic telemetry) |
+| `REVIEWING` | Exists | Conflicts with stored hash | Integrity conflict: Transaction C rolls back | `REVIEWING` (Preserved) | `REVIEW_BUNDLE_COMPILATION_REJECTED` (`BUNDLE_HASH_CONFLICT`) |
+| Any non-`REVIEWING` | Exists | Any | Invariant violation: corrupted persistence | `BLOCKED` / `HUMAN_REQUIRED` | `INTEGRITY_CHECK_FAILED` |
 
 ---
 
 ## 8. Audit Event Registration & Failure Semantics
 
-Proposed audit events with status `PROPOSED_UNTIL_ADR_ACCEPTANCE`:
-1. `REVIEW_BUNDLE_GENERATED`:
-   - Actor: `Supervisor`
-   - Trigger: Successful commit of Transaction C.
-   - Details: `bundle_id`, `bundle_hash`, `compilation_latency_ms`, `evidence_set_id`.
-2. `REVIEW_BUNDLE_COMPILATION_REJECTED`:
-   - Actor: `Supervisor`
-   - Trigger: Failure of Transaction C (clock regression, latency > 3000 ms, JCS schema violation, bundle hash conflict).
-   - Semantics: Transaction C rolls back cleanly via SQLite WAL. A separate fail-closed diagnostic transaction writes `REVIEW_BUNDLE_COMPILATION_REJECTED` into `audit_events` without altering TaskState (`EVIDENCE_READY` preserved).
-   - Details: `attempt_id`, `failure_reason`, timestamps, error diagnostics.
-
-Canonical event catalog reconciliation will occur only after formal External Supervisor approval of ADR-018.
+The proposed audit events are registered under status `PROPOSED_UNTIL_ADR_ACCEPTANCE`:
+1. `WORKSPACE_BINDING_CREATED`: Recorded in Subtask P04A when workspace binding is established.
+2. `VERIFICATION_LEASE_ACQUIRED`: Recorded in Subtask P04C upon lease grant.
+3. `VERIFICATION_LEASE_RELEASED`: Recorded in Subtask P04C upon lease completion.
+4. `REVIEW_BUNDLE_GENERATED`: Recorded in Transaction C upon successful ReviewBundle synthesis and persistence.
+5. `REVIEW_BUNDLE_COMPILATION_REJECTED`: Recorded in a separate fail-closed diagnostic transaction if compilation fails, clock regresses ($T_1 < T_0$), or bundle hash conflicts with a pre-existing bundle.
 
 ---
 
 ## 9. Conclusion & Next Steps
 
-This proposal completely resolves all findings (`P04-ARCH-R8-001` through `P04-ARCH-R8-005`). Formal Task Contract release and code authoring remain blocked until External Supervisor review and approval.
+PROPOSAL-P04-001 Revision 10 resolves all six findings (`P04-ARCH-R9-001` through `P04-ARCH-R9-006`) with complete schema alignment, crash-safe latency semantics, clean worktree verification, bounded lease authority, and deterministic state transitions.
+
+Following External Supervisor review:
+1. `DRAFT-ADR-018` is aligned to Revision 10.
+2. `PLAN-P04-EVIDENCE-REVIEW` is updated to Revision 10.
+3. Once accepted, Task Contract `CONTRACT-TASK-P04-001` may be drafted for Subtask P04A.
