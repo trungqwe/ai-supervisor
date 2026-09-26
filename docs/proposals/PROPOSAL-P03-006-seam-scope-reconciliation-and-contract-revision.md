@@ -1,6 +1,6 @@
 # PROPOSAL-P03-006: Seam Scope Reconciliation and Task Contract P03-004 Revision 2
 
-> **Status**: PROPOSED (Chờ External Supervisor thẩm định và phê duyệt)
+> **Status**: EXTERNAL_APPROVED (Phê chuẩn bởi External Supervisor theo docs/audits/P03_TASK_004_REVISION_2_RELEASE_AUDIT.md)
 > **Authority**: docs/24_CHANGE_GOVERNANCE.md (Level 3 Canonical Architecture / Level 6 Task Contract Governance)
 > **Active Gate**: TASK_P03_004_REMEDIATION
 > **Target Task Contract**: CONTRACT-TASK-P03-004-02 (Revision 2 của TASK-P03-004)
@@ -37,7 +37,7 @@ Trong quá trình thực hiện và tái thẩm định TASK-P03-004 (commit `09
    - Track 2 của P03 Integration Test Harness (ADR-017 §4.1) phải kiểm chứng 5 bước exit gate AO (tạo session, dispatch chỉ thị, quan sát/reconciliation, đọc file workspace report, teardown) bằng cách **gọi trực tiếp các API điều phối nội bộ đã được duyệt của thư viện Go Supervisor** (`internal/ao`, `internal/recovery`, `internal/stop`, `internal/store`).
 2. **Hiện trạng mã nguồn (internal/ao/client.go)**:
    - Thư viện `ao.Client` hiện chỉ cung cấp: `CreateSession`, `GetWorkerStatus`, `StopWorker`, `RegisterProject`.
-   - Hoàn toàn chưa có typed method để đọc workspace file. Bước 4 trong `test/integration/p03_ao_harness_test.go` hiện phải gọi raw HTTP (`http.NewRequestWithContext`), dù đã bổ sung cơ chế defensive read giới hạn kích thước qua `io.LimitReader`.
+   - Hoàn toàn chưa có typed method để đọc workspace file. Bước 4 trong `test/integration/ao_harness_test.go` hiện phải gọi raw HTTP (`http.NewRequestWithContext`), dù đã bổ sung cơ chế defensive read giới hạn kích thước qua `io.LimitReader`.
 3. **Xung đột phạm vi & Tác động**:
    - `internal/ao/**` nằm trong `forbidden_scope` của Contract 004 Rev 1. Mọi chỉnh sửa thêm hàm vào `internal/ao/client.go` khi chưa có hợp đồng duyệt đều vi phạm Task Scope Immutability.
    - Do đó, bước đọc workspace chưa thể đi qua API thư viện đã duyệt; finding `R1-005` tiếp tục giữ trạng thái `OPEN` cho đến khi Task Contract Revision 2 được phê duyệt và phát hành chính thức.
@@ -104,7 +104,7 @@ Theo đặc tả OpenAPI `contracts/cloud/openapi.yaml` và `frontend/src/api/sc
      * Content overflow (`contentBytes > MaxBytes` dù wire hợp lệ -> ErrPayloadTooLarge).
      * Kiểm thử sát biên (`wireBytes == MaxWireBytes`, `wireBytes == MaxWireBytes + 1`, `contentBytes == MaxBytes`, `contentBytes == MaxBytes + 1`).
 3. **Kiểm tra Envelope & Validation Required Fields**:
-   - Kiểm tra sự hiện diện và kiểu dữ liệu của toàn bộ required fields: `sessionId`, `path`, `content`, `binary`, `deleted`, `contentTruncated`, `size`, `status`, `workspaceVersion`.
+   - Kiểm tra sự hiện diện và kiểu dữ liệu của toàn bộ 15 required fields: `sessionId`, `path`, `content`, `binary`, `deleted`, `contentTruncated`, `size`, `status`, `workspaceVersion`, `diff`, `diffTruncated`, `editable`, `fileFingerprint`, `additions`, `deletions` (cùng kiểm tra giá trị enum hợp lệ cho `status`: `unmodified`, `modified`, `added`, `deleted`).
    - **Không để zero value của Go che mất trường thiếu**: sử dụng struct có con trỏ hoặc validation map/raw JSON để bảo đảm các trường bắt buộc thực sự tồn tại trong payload JSON.
    - Kiểm tra `sessionId == requestedSessionID` và `path == requestedFilePath`; sai lệch trả về `*ao.ProtocolError`.
    - Từ chối payload có dữ liệu thừa sau JSON (kiểm tra `dec.Decode(&trailing) == io.EOF`).

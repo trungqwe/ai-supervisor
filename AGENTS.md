@@ -98,12 +98,14 @@ This document establishes immutable operational directives for all AI coding age
 > External Supervisor approved and released `CONTRACT-TASK-P03-003D-01` from candidate commit `7701b8b02c68006c4e692a1c8a61609c72a6c033`, blob `604c4786281354565c8e37238f0b5ba95542e4f9`, code base `583e700eb125a08cc6bd7d63b6b27a6f3d4cc527` (`docs/audits/P03_TASK_003D_CONTRACT_RELEASE_AUDIT.md`).
 > Historical 3B release: External Supervisor released CONTRACT-TASK-P03-003B-01 from candidate SHA `ae8deb9ee41479d0e0868dced53ed89135252923`, blob `84bd84535352c2d28dbc1eba820aa8b22382dd99`, with code base SHA `b8b0c95576d87677e8d48210d9838cc2f599752a`.
 
-1. **TASK-P03-004 IMPLEMENTATION GATE**:
-   - `TASK_P03_004 = RELEASED`; `TASK_P03_004_IMPLEMENTATION = IN_PROGRESS`.
-   - Implement only `docs/tasks/TASK_CONTRACT_P03_004.md`, from base SHA `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea` on branch `codex/p03-004`.
-   - Governance and release artifacts stay separate from the implementation diff. Read the release artifact and assigned contract as well as accepted ADR-017 / canonical specs.
-   - Host/bootstrap verified principal remains an OPEN fail-closed dependency at the trusted boundary; `AUTOMATIC_RESTORE = DISABLED`.
-   - Tách bạch 3 track bằng chứng: Library/Mock AO unit tests trong CI; Real Windows binary verification (`cmd/supervisor`) cho two-process lock competition, startup-before-serve admission, và shutdown drain; Live AO proof (nếu có môi trường cô lập).
+1. **TASK-P03-004 IMPLEMENTATION GATE (REVISION 2 RELEASED)**:
+   - `TASK_P03_004 = RELEASED (Revision 2)`; `TASK_P03_004_IMPLEMENTATION = IN_PROGRESS`.
+   - Formally released pursuant to `docs/audits/P03_TASK_004_REVISION_2_RELEASE_AUDIT.md`.
+   - Implement only `docs/tasks/TASK_CONTRACT_P03_004_REVISION_2.md` (`CONTRACT-TASK-P03-004-02`), from code base SHA `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea` on branch `codex/p03-004`.
+   - Allowed scope: `cmd/supervisor/**`, `internal/host/**`, `internal/recovery/poller.go`, `internal/recovery/poller_test.go`, `internal/ao/client.go`, `internal/ao/types.go`, `internal/ao/client_test.go`, `test/integration/**`.
+   - Governance and release artifacts stay separate from the implementation diff.
+   - Host/bootstrap verified principal remains an OPEN fail-closed dependency at trusted boundary; `AUTOMATIC_RESTORE = DISABLED`.
+   - Preserve three-track evidence: Library/Mock AO unit tests in CI; Real Windows binary verification (`cmd/supervisor`) for lock exclusivity, admission, and drain; Live AO proof (mock tests must not claim live AO proof).
 
 2. **TASK-P03-003 PARTIAL RELEASE GUARD**:
    - `TASK_P03_003A = RELEASED`.
@@ -143,7 +145,9 @@ This document establishes immutable operational directives for all AI coding age
    - `TASK_P03_003D = RELEASED`
    - `TASK_P03_003D_IMPLEMENTATION = EXTERNAL_AUDIT_APPROVED`
    - `TASK_P03_003D_MERGE = MERGED` (merge commit `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea`)
-   - `TASK_P03_004 = RELEASED`
+   - `PROPOSAL_P03_006 = EXTERNAL_APPROVED`
+   - `TASK_P03_004 = RELEASED (Revision 2)`
+   - `CONTRACT_TASK_P03_004_02 = RELEASED`
    - `TASK_P03_004_IMPLEMENTATION = IN_PROGRESS`
    - `P03_CODE = AUTHORIZED_004_ONLY`
    - `ACTIVE_GATE = TASK_P03_004_IMPLEMENTATION`
