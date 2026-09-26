@@ -1,16 +1,16 @@
 # PLAN-P04: Evidence & Review Engine Implementation & Governance Plan
 
 > **Plan ID**: `PLAN-P04-EVIDENCE-REVIEW`
-> **Revision**: 16
-> **Status**: `PLANNING_PENDING_EXTERNAL_AUDIT (REVISION 17)`
+> **Revision**: 18
+> **Status**: `PLANNING_PENDING_EXTERNAL_AUDIT (REVISION 18)`
 > **Date**: 2026-09-27
-> **Audited Baseline**: `43b22bafa4f8b7c4e99ec17e80d8e076c0ab80a6`
-> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_16`
+> **Audited Baseline**: `d6fe53c396befd2eacd87787e58bd9b86cc62196`
+> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_17`
 > **Deciders**: AI Engineering Supervisor Architecture Council, External Supervisor
 > **Related Architecture**: `docs/04_ARCHITECTURE.md` (Section 7), `docs/05_DOMAIN_MODEL.md`, `docs/10_REVIEW_BUNDLE.md`
-> **Related Requirements**: `docs/02_REQUIREMENTS.md` (FR-008, NFR-008 via PROPOSAL-P04-002)
-> **Supersedes**: `PLAN-P04-EVIDENCE-REVIEW` Revision 16
-> **External Audit Tracking**: Remediates Finding `P04-ARCH-R16-001` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_015.md`).
+> **Related Requirements**: `docs/02_REQUIREMENTS.md` (FR-008, NFR-008 via PROPOSAL-P04-002 Revision 8)
+> **Supersedes**: `PLAN-P04-EVIDENCE-REVIEW` Revision 17
+> **External Audit Tracking**: Remediates Findings `P04-ARCH-R17-001`, `P04-ARCH-R17-002`, and `P04-ARCH-R17-003` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_016.md`).
 
 ---
 
@@ -23,10 +23,10 @@ Phase P04 implements the **Evidence & Review Engine**, providing independent, ta
 ```mermaid
 flowchart TD
     subgraph PreExecution [Pre-Execution / Governance]
-        ADR18[DRAFT-ADR-018 Revision 14]
-        PROP1[PROPOSAL-P04-001 Revision 14]
-        PROP2[PROPOSAL-P04-002 Revision 7]
-        Audit012[External Re-Audit 012]
+        ADR18[DRAFT-ADR-018 Revision 18]
+        PROP1[PROPOSAL-P04-001 Revision 18]
+        PROP2[PROPOSAL-P04-002 Revision 8]
+        Audit016[External Re-Audit 016]
     end
 
     subgraph P04A [Subtask P04A: Seam, Clean Intake & Workspace Binding Authority]
@@ -179,7 +179,7 @@ Phase P04 strictly maintains the two-track validation discipline:
 | Requirement | Canonical Spec Source | Reconciliation Status in Phase P04 |
 | :--- | :--- | :--- |
 | **FR-008** | `docs/02_REQUIREMENTS.md` | Fully satisfied via independent in-memory Git and verification collectors. |
-| **NFR-008** | `docs/02_REQUIREMENTS.md` | Formally reconciled via PROPOSAL-P04-002 Revision 7 into assembly diagnostic latency semantics with crash-safe non-deadlocking persistence and UNVERIFIED compliance status. Canonical update pending approval. |
+| **NFR-008** | `docs/02_REQUIREMENTS.md` | Formally reconciled via PROPOSAL-P04-002 Revision 8 into assembly diagnostic latency semantics with crash-safe non-deadlocking persistence, UNVERIFIED compliance status, and RFC 8785 JCS domain-separated event descriptors. Canonical update pending approval. |
 | **P04 Schema v6** | `docs/adr/DRAFT-ADR-018` | Owned by Subtask P04A; introduces `attempt_workspace_bindings`, `worker_claims`, and `review_integrity_holds` (verbatim 7-40 hex SHA, multi-diagnostic holds with occurrence lifecycle, non-self-referencing hold derivation, audit FKs, principal trimming, integer typing). |
 | **P04 Schema v9** | `docs/adr/DRAFT-ADR-018` | Owned by Subtask P04D; introduces `task_verification_leases` (linear lease chain), `evidence_sets`, `review_artifacts`, and `review_bundles` with integer typing and overflow guards; upgrades from Schema v6 without recreating `review_integrity_holds`. |
 | **Contract Sequencing** | `docs/plans/PLAN-P04-EVIDENCE-REVIEW` | Enforces P04A -> P04B -> P04C -> P04D; P04A implements independently; P04 runtime admission remains closed until P04D startup recovery. |

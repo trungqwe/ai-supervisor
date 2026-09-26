@@ -52,7 +52,7 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P04 PRE-CONTRACT ARCHITECTURE REMEDIATION 6
+# SECTION 2: CURRENT PHASE RULES — P04 PRE-CONTRACT ARCHITECTURE REMEDIATION 17
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
@@ -98,16 +98,16 @@ This document establishes immutable operational directives for all AI coding age
 > External Supervisor approved and released `CONTRACT-TASK-P03-003D-01` from candidate commit `7701b8b02c68006c4e692a1c8a61609c72a6c033`, blob `604c4786281354565c8e37238f0b5ba95542e4f9`, code base `583e700eb125a08cc6bd7d63b6b27a6f3d4cc527` (`docs/audits/P03_TASK_003D_CONTRACT_RELEASE_AUDIT.md`).
 > Historical 3B release: External Supervisor released CONTRACT-TASK-P03-003B-01 from candidate SHA `ae8deb9ee41479d0e0868dced53ed89135252923`, blob `84bd84535352c2d28dbc1eba820aa8b22382dd99`, with code base SHA `b8b0c95576d87677e8d48210d9838cc2f599752a`.
 
-> External Supervisor Audit 001 (docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_AUDIT_001.md) issued verdict REVISION_1_REQUIRED; Re-Audit 001 (docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_001.md) issued verdict REVISION_2_REQUIRED; Re-Audit 002 (docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_002.md) issued verdict REVISION_3_REQUIRED; Re-Audit 003 (docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_003.md) issued verdict REVISION_4_REQUIRED; Re-Audit 004 (docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_004.md) issued verdict REVISION_5_REQUIRED (findings P04-ARCH-R4-001 CLOSED, R4-002..003 SUBSTANTIVELY_CLOSED, R4-004..005 PARTIALLY_CLOSED, R4-006 SUBSTANTIVELY_CLOSED; five new findings P04-ARCH-R5-001..005 recorded with REMEDIATION_SUBMITTED). Six critical design blockers remain tracked: DESIGN_BLOCKER_P04_WORKTREE_BINDING, DESIGN_BLOCKER_P04_GIT_EVIDENCE_AUTHORITY, DESIGN_BLOCKER_P04_VERIFICATION_ISOLATION, DESIGN_BLOCKER_P04_REVIEW_SCHEMA_RECONCILIATION, DESIGN_BLOCKER_P04_EVIDENCE_ATOMICITY, and DESIGN_BLOCKER_P04_INERT_AO_HARNESS. Task Contract for P04 is BLOCKED_NOT_RELEASEABLE (Model A Draft Lineage, status invariant: NOT_RELEASED). Code writing for Phase P04 remains strictly held pending approved architecture and task contract release (P04_CODE = HELD_PENDING_APPROVED_ARCHITECTURE_AND_TASK_CONTRACT). P05_CODE = NOT_AUTHORIZED. ACTIVE_GATE = P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_6.
+> External Supervisor Audit 001 (docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_AUDIT_001.md) issued verdict REVISION_1_REQUIRED; Re-Audit 001 (docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_001.md) issued verdict REVISION_2_REQUIRED; Re-Audit 002 (docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_002.md) issued verdict REVISION_3_REQUIRED; Re-Audit 003 (docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_003.md) issued verdict REVISION_4_REQUIRED; Re-Audit 004 (docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_004.md) issued verdict REVISION_5_REQUIRED (findings P04-ARCH-R4-001 CLOSED, R4-002..003 SUBSTANTIVELY_CLOSED, R4-004..005 PARTIALLY_CLOSED, R4-006 SUBSTANTIVELY_CLOSED; five new findings P04-ARCH-R5-001..005 recorded with REMEDIATION_SUBMITTED). Six critical design blockers remain tracked: DESIGN_BLOCKER_P04_WORKTREE_BINDING, DESIGN_BLOCKER_P04_GIT_EVIDENCE_AUTHORITY, DESIGN_BLOCKER_P04_VERIFICATION_ISOLATION, DESIGN_BLOCKER_P04_REVIEW_SCHEMA_RECONCILIATION, DESIGN_BLOCKER_P04_EVIDENCE_ATOMICITY, and DESIGN_BLOCKER_P04_INERT_AO_HARNESS. Task Contract for P04 is BLOCKED_NOT_RELEASEABLE (Model A Draft Lineage, status invariant: NOT_RELEASED). Code writing for Phase P04 remains strictly held pending approved architecture and task contract release (P04_CODE = HELD_PENDING_APPROVED_ARCHITECTURE_AND_TASK_CONTRACT). P05_CODE = NOT_AUTHORIZED. ACTIVE_GATE = P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_17.
 >
 1. **PHASE P04 PRE-CONTRACT ARCHITECTURE REMEDIATION DIRECTIVES**:
    - `PHASE_P03 = COMPLETE`; `P03_EXIT_GATE = EXTERNAL_AUDIT_APPROVED`.
-   - `ACTIVE_GATE = P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_16`.
-   - `PROPOSAL_P04_001 = REVISION_16_REQUIRED`; Remediated to Revision 17 — `PENDING_EXTERNAL_REVIEW`.
-   - `PROPOSAL_P04_002 = REVISION_6_REQUIRED`; Remediated to Revision 7 — `PENDING_EXTERNAL_REVIEW` (`docs/proposals/PROPOSAL-P04-002-review-bundle-latency-semantics.md`).
-   - `ADR_018 = REVISION_16_REQUIRED`; Remediated to Revision 17 — `DRAFT_PENDING_EXTERNAL_APPROVAL`.
-   - `PLAN_P04_EVIDENCE_REVIEW = REVISION_16_REQUIRED`; Remediated to Revision 17 — `PLANNING_PENDING_EXTERNAL_AUDIT`.
-   - External Re-Audit 015 (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_015.md`): findings `P04-ARCH-R15-001 = CLOSED_AT_DESIGN_LEVEL`, `P04-ARCH-R15-002 = CLOSED_AT_DESIGN_LEVEL`, and new finding `P04-ARCH-R16-001` recorded with remediation submitted.
+   - `ACTIVE_GATE = P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_17`.
+   - `PROPOSAL_P04_001 = REVISION_17_REQUIRED`; Remediated to Revision 18 — `PENDING_EXTERNAL_REVIEW`.
+   - `PROPOSAL_P04_002 = REVISION_7_REQUIRED`; Remediated to Revision 8 — `PENDING_EXTERNAL_REVIEW` (`docs/proposals/PROPOSAL-P04-002-review-bundle-latency-semantics.md`).
+   - `ADR_018 = REVISION_17_REQUIRED`; Remediated to Revision 18 — `DRAFT_PENDING_EXTERNAL_APPROVAL`.
+   - `PLAN_P04_EVIDENCE_REVIEW = REVISION_17_REQUIRED`; Remediated to Revision 18 — `PLANNING_PENDING_EXTERNAL_AUDIT`.
+   - External Re-Audit 016 (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_016.md`): finding `P04-ARCH-R16-001 = CLOSED_AT_DESIGN_LEVEL`, and new findings `P04-ARCH-R17-001..003` recorded with remediation submitted.
    - Proof Plan & Contract: `docs/plans/PLAN-P04-WORKTREE-BINDING-PROOF.md` Revision 5 (`HISTORICAL_DEFERRED_NON_BLOCKING`); `docs/tasks/DRAFT_TASK_CONTRACT_P04_WORKTREE_BINDING_PROOF.md` (`RETIRED_NON_EXECUTABLE_DRAFT`, Model A Draft Lineage, status invariant: `NOT_RELEASED`). Decoupled from execution graph; Subtask P04A is unblocked as first releaseable task.
    - `P04_TASK_CONTRACT = NOT_RELEASED`.
    - `P04_CODE = HELD_PENDING_APPROVED_ARCHITECTURE_AND_TASK_CONTRACT`.
@@ -119,15 +119,15 @@ This document establishes immutable operational directives for all AI coding age
      * `DESIGN_BLOCKER_P04_REVIEW_SCHEMA_RECONCILIATION = REMEDIATION_SUBMITTED`
      * `DESIGN_BLOCKER_P04_EVIDENCE_ATOMICITY = REMEDIATION_SUBMITTED`
      * `DESIGN_BLOCKER_P04_INERT_AO_HARNESS = REMEDIATION_SUBMITTED`
-   - Remediated Pre-Contract Documents Submitted (Revision 14 / Revision 7 / Revision 5 / Model A Draft):
-     * Proposal 001: `docs/proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md` (`PENDING_EXTERNAL_REVIEW`, Revision 17)
-     * Proposal 002: `docs/proposals/PROPOSAL-P04-002-review-bundle-latency-semantics.md` (`PENDING_EXTERNAL_REVIEW`, Revision 7)
-     * Draft ADR: `docs/adr/DRAFT-ADR-018-evidence-review-and-verification-isolation.md` (`DRAFT_PENDING_EXTERNAL_APPROVAL`, Revision 17)
-     * Execution Plan: `docs/plans/PLAN-P04-EVIDENCE-REVIEW.md` (`PLANNING_PENDING_EXTERNAL_AUDIT`, Revision 17)
+   - Remediated Pre-Contract Documents Submitted (Revision 18 / Revision 8 / Revision 5 / Model A Draft):
+     * Proposal 001: `docs/proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md` (`PENDING_EXTERNAL_REVIEW`, Revision 18)
+     * Proposal 002: `docs/proposals/PROPOSAL-P04-002-review-bundle-latency-semantics.md` (`PENDING_EXTERNAL_REVIEW`, Revision 8)
+     * Draft ADR: `docs/adr/DRAFT-ADR-018-evidence-review-and-verification-isolation.md` (`DRAFT_PENDING_EXTERNAL_APPROVAL`, Revision 18)
+     * Execution Plan: `docs/plans/PLAN-P04-EVIDENCE-REVIEW.md` (`PLANNING_PENDING_EXTERNAL_AUDIT`, Revision 18)
      * Bounded Proof Plan: `docs/plans/PLAN-P04-WORKTREE-BINDING-PROOF.md` (`HISTORICAL_DEFERRED_NON_BLOCKING`, Revision 5)
      * Bounded Proof Draft Contract: `docs/tasks/DRAFT_TASK_CONTRACT_P04_WORKTREE_BINDING_PROOF.md` (`RETIRED_NON_EXECUTABLE_DRAFT`, Model A Draft Lineage; validated against `docs/schemas/task-contract.schema.json`)
-     * Re-Audit 015 Record: `docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_015.md` (`REVISION_16_REQUIRED`)
-   - Next Approved Action: Await External Supervisor re-audit of Revision 17 remediation deliverables. Zero production or test code writing for Phase P04 or P05 until formal Task Contract release.
+     * Re-Audit 016 Record: `docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_016.md` (`REVISION_17_REQUIRED`)
+   - Next Approved Action: Await External Supervisor re-audit of Revision 18 remediation deliverables. Zero production or test code writing for Phase P04 or P05 until formal Task Contract release.
    - Maintain strict fail-closed dependencies: `AUTOMATIC_RESTORE = DISABLED`; operator restore and linked stop remain disabled until verified operator principal reaches trusted boundary (`VERIFIED_OPERATOR_PRINCIPAL = OPEN_FAIL_CLOSED_DEPENDENCY`).
    - Stage B runtime catalog is deferred: `STAGE_B_RUNTIME_CATALOG = DEFERRED_TO_P04_RUNTIME_INTEGRATION`.
    - Candidate WIP artifact preserved externally in `D:\TU_CODE\ai-supervisor-user-wip-recovery\P03-EXIT-R2-001`; never restore, overwrite, or touch.
@@ -210,13 +210,14 @@ This document establishes immutable operational directives for all AI coding age
    - `P04_REAUDIT_013 = REVISION_14_REQUIRED` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_013.md`)
    - `P04_REAUDIT_014 = REVISION_15_REQUIRED` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_014.md`)
    - `P04_REAUDIT_015 = REVISION_16_REQUIRED` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_015.md`)
-   - `PROPOSAL_P04_001 = REVISION_16_REQUIRED` (Remediated: Revision 17 submitted)
-   - `PROPOSAL_P04_002 = REVISION_6_REQUIRED` (Remediated: Revision 7 submitted)
-   - `ADR_018 = REVISION_16_REQUIRED` (Remediated: Revision 17 submitted)
-   - `PLAN_P04_EVIDENCE_REVIEW = REVISION_16_REQUIRED` (Remediated: Revision 17 submitted)
-   - `P04-ARCH-R15-001..002 = CLOSED_AT_DESIGN_LEVEL`
-   - `P04-ARCH-R16-001 = REMEDIATION_SUBMITTED`
-   - `ACTIVE_GATE = P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_16`
+   - `P04_REAUDIT_016 = REVISION_17_REQUIRED` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_016.md`)
+   - `PROPOSAL_P04_001 = REVISION_17_REQUIRED` (Remediated: Revision 18 submitted)
+   - `PROPOSAL_P04_002 = REVISION_7_REQUIRED` (Remediated: Revision 8 submitted)
+   - `ADR_018 = REVISION_17_REQUIRED` (Remediated: Revision 18 submitted)
+   - `PLAN_P04_EVIDENCE_REVIEW = REVISION_17_REQUIRED` (Remediated: Revision 18 submitted)
+   - `P04-ARCH-R16-001 = CLOSED_AT_DESIGN_LEVEL`
+   - `P04-ARCH-R17-001..003 = REMEDIATION_SUBMITTED`
+   - `ACTIVE_GATE = P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_17`
    - `P05_CODE = NOT_AUTHORIZED`
    - `AUTOMATIC_RESTORE = DISABLED`
    - `LIVE_AO_INTEGRATION = UNVERIFIED_EVIDENCE_TRACK`

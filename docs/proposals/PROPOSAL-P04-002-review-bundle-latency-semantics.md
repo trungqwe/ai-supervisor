@@ -1,18 +1,18 @@
 # PROPOSAL-P04-002: ReviewBundle Latency Measurement Semantics (NFR-008 Reconciliation)
 
 > **Proposal ID**: `PROPOSAL-P04-002`
-> **Revision**: 7
+> **Revision**: 8
 > **Title**: Formal Latency Measurement Semantics for ReviewBundle Compilation & Pipeline Reconciliation
 > **Author**: AI Engineering Supervisor Team
-> **Status**: `PENDING_EXTERNAL_REVIEW`
-> **Date**: 2026-09-26
+> **Status**: `PENDING_EXTERNAL_REVIEW (REVISION 8)`
+> **Date**: 2026-09-27
 > **Target Requirement**: `docs/02_REQUIREMENTS.md` (NFR-008)
 > **Related Architecture**: `docs/04_ARCHITECTURE.md` (Section 7), `docs/10_REVIEW_BUNDLE.md`, `docs/adr/DRAFT-ADR-018-evidence-review-and-verification-isolation.md`
-> **Audited Baseline**: `b5a1d8ef0c38e52ed71370a1e0dfa17e0d3e5f2d`
+> **Audited Baseline**: `d6fe53c396befd2eacd87787e58bd9b86cc62196`
 > **Preservation Baseline Commit**: `6e1993da150031a9465901a7019c71257de44312` (Revision 11)
-> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_12`
-> **Supersedes**: `PROPOSAL-P04-002` Revision 6
-> **External Audit Tracking**: Remediates Finding `P04-ARCH-R11-001` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_011.md`).
+> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_17`
+> **Supersedes**: `PROPOSAL-P04-002` Revision 7
+> **External Audit Tracking**: Remediates Finding `P04-ARCH-R17-001` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_016.md`).
 
 ---
 
@@ -50,7 +50,7 @@ This proposal establishes a rigorous, crash-safe measurement model that designat
    - Post-restart recovery must rely on durable wall-clock timestamps (`evidence_finalized_at_epoch_ms` and `bundle_assembled_at_epoch_ms`) for diagnostic measurement.
 3. **SLA Breach Must Not Block Persistence**:
    - If `compilation_latency_ms <= 3000` is enforced as a SQLite CHECK constraint, any restart recovery attempt (where elapsed time exceeds 3,000 ms) fails SQL validation, permanently stranding the task in `EVIDENCE_READY`.
-   - The SLA outcome must be recorded as durable diagnostic data (`nfr008_met = 0`), allowing Transaction C to commit and advance state to `REVIEWING`.
+   - The SLA outcome must be recorded as durable assembly diagnostic data, keeping `nfr008_compliance_status = 'UNVERIFIED'`, allowing Transaction C to commit and advance state to `REVIEWING` without deadlock.
 
 ---
 
@@ -112,15 +112,17 @@ Negative latency, non-integer timestamps, or values of `nfr008_compliance_status
   3. Pipeline orchestrator validates payload against canonical `docs/schemas/review-bundle.schema.json`.
   4. Pipeline orchestrator computes SHA-256 bundle hash.
   5. Mark $T_1$ = `bundle_assembled_at_epoch_ms` immediately before initiating Transaction C.
-  6. Transaction C (owned by `P04D`) inserts `review_bundles` with persisted `bundle_assembled_at_epoch_ms`, `compilation_latency_ms`, `latency_measurement_status`, and `nfr008_met`.
+  6. Transaction C (owned by `P04D`) inserts `review_bundles` with persisted `bundle_assembled_at_epoch_ms`, `compilation_latency_ms`, `latency_measurement_status`, and `nfr008_compliance_status = 'UNVERIFIED'`.
   7. Inserts proposed audit event `REVIEW_BUNDLE_GENERATED`, and transitions `tasks.state`: `EVIDENCE_READY -> REVIEWING`.
 - **End ($T_1$)**: Transaction C commit initiation and atomic persistence.
 - **Governing SLA & Deadlock Prevention**:
   - Bound by **NFR-008**:
     `compilation_latency_ms = bundle_assembled_at_epoch_ms - evidence_finalized_at_epoch_ms`
-  - In normal uninterrupted execution: `0 <= compilation_latency_ms <= 3000 ms` -> `nfr008_met = 1`, `latency_measurement_status = 'MEASURED_IN_PROCESS'`.
-  - In post-crash restart or transient delay: `compilation_latency_ms > 3000 ms` -> `nfr008_met = 0`, `latency_measurement_status = 'RECOVERED_AFTER_RESTART'`.
-  - **SLA Breach is NOT a Persistence Blocker**: When `nfr008_met = 0`, Transaction C commits successfully, advances state to `REVIEWING`, and logs a diagnostic audit finding. The task is never stranded in `EVIDENCE_READY`.
+  - `compilation_latency_ms` is strictly an assembly diagnostic measurement.
+  - The condition `compilation_latency_ms <= 3000` is an empirical measurement target, but does NOT make a ReviewBundle canonical compliance evidence; `nfr008_compliance_status` remains strictly `'UNVERIFIED'`.
+  - In normal uninterrupted execution: `0 <= compilation_latency_ms <= 3000 ms` -> `latency_measurement_status = 'MEASURED_IN_PROCESS'`.
+  - In post-crash restart or transient delay: `compilation_latency_ms > 3000 ms` -> `latency_measurement_status = 'RECOVERED_AFTER_RESTART'`.
+  - **SLA Breach is NOT a Persistence Blocker**: If assembly latency exceeds 3000 ms, Transaction C still commits successfully, keeps `nfr008_compliance_status = 'UNVERIFIED'`, records diagnostic telemetry, advances state to `REVIEWING`, and never causes a deadlock or strands the task in `EVIDENCE_READY`.
 
 ---
 
@@ -232,11 +234,45 @@ The audit event types associated with ReviewBundle compilation are registered un
 1. `REVIEW_BUNDLE_GENERATED`: Recorded in Transaction C upon successful ReviewBundle synthesis and persistence. Details include `bundle_id`, `bundle_hash`, `compilation_latency_ms`, `latency_measurement_status`, and `nfr008_compliance_status` ('UNVERIFIED'). Emitted within Transaction C *without* `commit_duration_ms`.
 2. `REVIEW_BUNDLE_COMPILATION_REJECTED`: Recorded in a separate fail-closed diagnostic transaction if compilation fails, schema validation fails, clock regresses ($T_1 < T_0$), or bundle hash conflicts with a pre-existing bundle. Details include failure reason, timestamps, and error diagnostics.
 
-#### Audit Event Idempotency Mapping (P04-ARCH-R12-003)
-Because canonical `audit_events` lacks an `idempotency_key` column, idempotency maps deterministically to `audit_events.event_id`:
-`event_id = SHA256(attempt_id || ":" || contract_id || ":" || reason || ":" || sanitized_input_fingerprint)`
-- **Exact Duplicate Event**: Processed as an idempotent replay without duplication.
-- **Matching Event ID with Differing Lineage/Payload**: Raised as an integrity conflict.
+#### Audit Event Idempotency Mapping (P04-ARCH-R12-003, P04-ARCH-R17-001)
+Because canonical `audit_events` lacks an `idempotency_key` column, idempotency maps deterministically to `audit_events.event_id` using RFC 8785 JSON Canonicalization Scheme (JCS). String concatenation using delimiters (such as colons) is strictly prohibited due to delimiter collision vulnerabilities.
+
+1. **`REVIEW_BUNDLE_GENERATED` Descriptor**:
+   ```json
+   {
+     "attempt_id": "<attempt_id>",
+     "bundle_hash": "<bundle_hash>",
+     "bundle_id": "<bundle_id>",
+     "contract_id": "<contract_id>",
+     "event_type": "REVIEW_BUNDLE_GENERATED",
+     "kind": "review_bundle_generated_event",
+     "pair_id": "<pair_id>",
+     "task_id": "<task_id>",
+     "version": 1
+   }
+   ```
+   `event_id = SHA256(RFC8785_JCS(review_bundle_generated_event_descriptor))`
+
+2. **`REVIEW_BUNDLE_COMPILATION_REJECTED` (Non-Hold Rejection) Descriptor**:
+   ```json
+   {
+     "attempt_id": "<attempt_id>",
+     "contract_id": "<contract_id>",
+     "event_type": "REVIEW_BUNDLE_COMPILATION_REJECTED",
+     "kind": "review_bundle_rejection_event",
+     "pair_id": "<pair_id>",
+     "reason": "<reason>",
+     "sanitized_input_fingerprint": "<64_hex_hash>",
+     "task_id": "<task_id>",
+     "version": 1
+   }
+   ```
+   `event_id = SHA256(RFC8785_JCS(review_bundle_rejection_event_descriptor))`
+
+*(Note: Rejections creating an integrity hold, such as BUNDLE_HASH_CONFLICT or INVARIANT_MISMATCH, use Descriptor A then Descriptor B as defined in ADR-018).*
+
+- **Exact Duplicate Event**: Processed as an idempotent replay without duplicate insertion.
+- **Matching Event ID with Differing Lineage/Payload**: Mismatch fails closed as an integrity conflict (`REVIEW_INTEGRITY_CONFLICT`).
 - **Diagnostic Transaction Rollback**: Does not declare event recorded if transaction fails.
 
 ---
@@ -249,7 +285,7 @@ Upon formal approval of this proposal, the text of **NFR-008** in `docs/02_REQUI
 > *"NFR-008: The Supervisor Control Plane shall generate a Review Bundle within 3 seconds of worker completion on repos up to 10,000 files."*
 
 ### Proposed Reconciled Text:
-> *"NFR-008: The Supervisor Control Plane shall synthesize, canonicalize (JCS RFC 8785), validate, and prepare for durable commit the attempt-scoped ReviewBundle within 3.0 seconds (Interval 2: bundle_assembled_at_epoch_ms - evidence_finalized_at_epoch_ms <= 3.0 seconds) of durable verification evidence finalization (Transaction B commit) on repositories up to 10,000 files. Independent test execution and evidence collection duration (Interval 1) is governed by task contract verification budgets. If assembly latency exceeds 3.0 seconds due to restart recovery or system load, the ReviewBundle is durably persisted with nfr008_met = 0 and an audit diagnostic finding without deadlock."*
+> *"NFR-008: The Supervisor Control Plane shall synthesize, canonicalize (JCS RFC 8785), validate, and prepare for durable commit the attempt-scoped ReviewBundle within 3.0 seconds (Interval 2: bundle_assembled_at_epoch_ms - evidence_finalized_at_epoch_ms <= 3.0 seconds) of durable verification evidence finalization (Transaction B commit) on repositories up to 10,000 files. Independent test execution and evidence collection duration (Interval 1) is governed by task contract verification budgets. If assembly latency exceeds 3.0 seconds due to restart recovery or system load, the ReviewBundle is durably persisted with nfr008_compliance_status = 'UNVERIFIED' and an assembly diagnostic finding without deadlock."*
 
 ---
 
