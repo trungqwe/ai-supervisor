@@ -1,23 +1,23 @@
 # PLAN: P04 Worktree Authority & Binding Empirical Proof
 
 - **Plan ID:** `PLAN-P04-WORKTREE-BINDING-PROOF`
-- **Revision:** 2
+- **Revision:** 3
 - **Status:** `PROPOSED (Pending External Supervisor Audit)`
 - **Target Task:** `TASK-P04-WORKTREE-BINDING-PROOF`
-- **Governing Proposal:** [`docs/proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md`](../proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md) (Revision 4)
-- **Governing Architecture:** [`docs/adr/DRAFT-ADR-018-evidence-review-and-verification-isolation.md`](../adr/DRAFT-ADR-018-evidence-review-and-verification-isolation.md) (Revision 4)
-- **Associated Contract:** [`docs/tasks/DRAFT_TASK_CONTRACT_P04_WORKTREE_BINDING_PROOF.md`](../tasks/DRAFT_TASK_CONTRACT_P04_WORKTREE_BINDING_PROOF.md) (`NOT_RELEASED`, Revision 2)
+- **Governing Proposal:** [`docs/proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md`](../proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md) (Revision 5)
+- **Governing Architecture:** [`docs/adr/DRAFT-ADR-018-evidence-review-and-verification-isolation.md`](../adr/DRAFT-ADR-018-evidence-review-and-verification-isolation.md) (Revision 5)
+- **Associated Contract:** [`docs/tasks/DRAFT_TASK_CONTRACT_P04_WORKTREE_BINDING_PROOF.md`](../tasks/DRAFT_TASK_CONTRACT_P04_WORKTREE_BINDING_PROOF.md) (`NOT_RELEASED`, Model A Draft Lineage)
 - **Date:** 2026-09-26
 
 ---
 
 ## 1. Problem Statement & Proof Objectives
 
-In [`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_AUDIT_001.md`](../audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_AUDIT_001.md) (Finding `P04-ARCH-R1-001`) and re-audits [`P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_001.md`](../audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_001.md) and [`P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_002.md`](../audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_002.md) (Findings `P04-ARCH-R2-001`, `P04-ARCH-R3-001..004`), the External Supervisor established that while static code inspection indicates worktree path formula `<managedRoot>/<projectID>/<sessionID>` and branch `ao/<sessionID>`, the Supervisor Control Plane currently lacks empirical proof that:
+In [`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_AUDIT_001.md`](../audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_AUDIT_001.md) (Finding `P04-ARCH-R1-001`) and re-audits [`P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_001.md`](../audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_001.md), [`P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_002.md`](../audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_002.md), and [`P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_003.md`](../audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_003.md) (Findings `P04-ARCH-R2-001`, `P04-ARCH-R3-001..004`, `P04-ARCH-R4-001..003`), the External Supervisor established that while static code inspection indicates worktree path formula `<managedRoot>/<projectID>/<sessionID>` and branch `ao/<sessionID>`, the Supervisor Control Plane currently lacks empirical proof that:
 1. It has authority to read or configure `managedRoot` across arbitrary host environments;
 2. AO and Supervisor share the exact same physical filesystem namespace;
 3. Session path allocation is strictly non-colliding and invariant across daemon restarts and session restores;
-4. Path canonicalization, junction/symlink aliasing, and missing-directory edge cases are robustly characterized;
+4. Path canonicalization, junction/symlink aliasing, component-boundary containment, and missing-directory edge cases are robustly characterized;
 5. All operations occur strictly within an absolute, host-injected state root without touching user repositories, user databases, or recovery artifacts.
 
 This plan specifies a 3-track empirical proof to resolve `DESIGN_BLOCKER_P04_WORKTREE_BINDING` and establish whether Determination A (trusted configuration seam), Determination B (upstream PR / new ADR), or Determination C (fail-closed redesign) must be adopted.
@@ -26,20 +26,18 @@ This plan specifies a 3-track empirical proof to resolve `DESIGN_BLOCKER_P04_WOR
 
 ## 2. Multi-Track Architecture Overview
 
-The empirical proof is partitioned into three sequential tracks:
-
 ```mermaid
 flowchart TD
     subgraph Track1 ["Track 1: Static Source Proof"]
-        T1A["Inspect workspace.go at pinned commit 15e9ea9"] --> T1B["Document Options.ManagedRoot, Workspace.Create, managedPath, restorePath, defaultSessionBranchName"]
+        T1A["Inspect workspace.go at pinned commit 15e9ea9"] --> T1B["Document Options, Workspace.Create, managedPath, restorePath, defaultSessionBranchName"]
         T1B --> T1C["Trace Configuration Seams (CLI flags, env vars, defaults)"]
     end
 
     subgraph Track2 ["Track 2: Isolated Disposable Runtime Proof"]
-        T2A["Provision Absolute Host-Injected State Root"] --> T2B["Spawn Disposable AO (v0.13.0, ephemeral port, zero LLM)"]
+        T2A["Component-Boundary Handle Containment Verification"] --> T2B["Spawn Disposable AO (v0.13.0, ephemeral port, inert harness)"]
         T2B --> T2C["Spawn Dual Worker Sessions via POST /api/v1/sessions (capture server IDs)"]
         T2C --> T2D["Verify Path Formula, Non-Collision, and Git Porcelain Output"]
-        T2D --> T2E["Execute Restart & Restore Lifecycle Probe"]
+        T2D --> T2E["Execute Wire Kill, Terminal Poll, Restart & Restore Lifecycle Probe"]
         T2E --> T2F["Characterize Edge Cases (missing dir, junction, stale worktree)"]
     end
 
@@ -58,15 +56,15 @@ flowchart TD
 ## 3. Track 1 — Static Pinned Source Proof
 
 ### 3.1. Authoritative Upstream File & Pinned Commit
-- **Upstream Repository:** Agent Orchestrator (`github.com/trungqwe/agent-orchestrator`)
+- **Authoritative Upstream Repository:** `Untrivial-ai/agent-orchestrator` ([`docs/sources/SOURCE_REGISTRY.md`](../sources/SOURCE_REGISTRY.md))
 - **Pinned Commit:** `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6` (v0.13.0)
 - **Authoritative File:** `backend/internal/adapters/workspace/gitworktree/workspace.go`
 
-### 3.2. Concrete Symbol & Line Citations
+### 3.2. Single Authoritative Line Citations & Official Permalinks
 
-1. **`Options` Struct and `ManagedRoot`**:
-   - **Supervisor Range:** Lines 64–73; `ManagedRoot` at line 68 (raw blob lines 71–80; `ManagedRoot` at line 75).
-   - **Permalink:** [`backend/internal/adapters/workspace/gitworktree/workspace.go#L71-L80`](https://github.com/trungqwe/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L71-L80)
+1. **`Options` Struct:**
+   - **Range:** Lines 64–73
+   - **Official Permalink:** [`https://github.com/Untrivial-ai/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L64-L73`](https://github.com/Untrivial-ai/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L64-L73)
    ```go
    type Options struct {
        Binary       string
@@ -77,9 +75,9 @@ flowchart TD
    ```
    Specifies the base filesystem directory hosting managed worktrees.
 
-2. **`Workspace.Create`**:
-   - **Supervisor Range:** Lines 230–262; invokes `w.managedPath(cfg)` at line 243 (raw blob lines 246–266; call at line 257).
-   - **Permalink:** [`backend/internal/adapters/workspace/gitworktree/workspace.go#L246-L266`](https://github.com/trungqwe/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L246-L266)
+2. **`Workspace.Create`:**
+   - **Range:** Lines 230–262 (invokes `w.managedPath(cfg)` at line 243)
+   - **Official Permalink:** [`https://github.com/Untrivial-ai/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L230-L262`](https://github.com/Untrivial-ai/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L230-L262)
    ```go
    func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
        // ...
@@ -87,11 +85,11 @@ flowchart TD
        // ...
    }
    ```
-   Provisions the worktree directory via `managedPath(cfg)` and issues `git worktree add`.
+   Provisions worktree directory via `managedPath(cfg)` and issues `git worktree add`.
 
-3. **`Workspace.Restore`**:
-   - **Supervisor Range:** Lines 1045–1112; invokes `w.restorePath(cfg)` at line 1055 (raw blob lines 1097–1140; call at line 1105).
-   - **Permalink:** [`backend/internal/adapters/workspace/gitworktree/workspace.go#L1097-L1140`](https://github.com/trungqwe/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L1097-L1140)
+3. **`Workspace.Restore`:**
+   - **Range:** Lines 1045–1112 (invokes `w.restorePath(cfg)` at line 1055; worktree recreate logic at lines 1069–1111)
+   - **Official Permalink:** [`https://github.com/Untrivial-ai/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L1045-L1112`](https://github.com/Untrivial-ai/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L1045-L1112)
    ```go
    func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
        // ...
@@ -99,11 +97,12 @@ flowchart TD
        // ...
    }
    ```
-   Validates existing worktree at `restorePath(cfg)`. If missing, lines 1113–1140 recreate the worktree at that path.
+   Validates worktree at `restorePath(cfg)`. If missing or stale, lines 1069–1111 recreate the worktree at that path.
 
-4. **`Workspace.managedPath`**:
-   - **Supervisor Range:** Lines 1754–1762 (raw blob lines 1837–1846).
-   - **Permalink:** [`backend/internal/adapters/workspace/gitworktree/workspace.go#L1837-L1846`](https://github.com/trungqwe/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L1837-L1846)
+4. **`Workspace.managedPath`:**
+   - **Range:** Lines 1754–1762
+   - **Signature:** `func (w *Workspace) managedPath(cfg ports.WorkspaceConfig) (string, error)`
+   - **Official Permalink:** [`https://github.com/Untrivial-ai/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L1754-L1762`](https://github.com/Untrivial-ai/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L1754-L1762)
    ```go
    func (w *Workspace) managedPath(cfg ports.WorkspaceConfig) (string, error) {
        var path string
@@ -118,9 +117,10 @@ flowchart TD
    ```
    Deterministic path formula: `filepath.Join(managedRoot, projectID, sessionID)`. Notice parameter is `ports.WorkspaceConfig` and return type is `(string, error)`.
 
-5. **`Workspace.restorePath`**:
-   - **Supervisor Range:** Lines 1764–1768 (raw blob lines 1848–1853).
-   - **Permalink:** [`backend/internal/adapters/workspace/gitworktree/workspace.go#L1848-L1853`](https://github.com/trungqwe/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L1848-L1853)
+5. **`Workspace.restorePath`:**
+   - **Range:** Lines 1764–1768
+   - **Signature:** `func (w *Workspace) restorePath(cfg ports.WorkspaceConfig) (string, error)`
+   - **Official Permalink:** [`https://github.com/Untrivial-ai/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L1764-L1768`](https://github.com/Untrivial-ai/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L1764-L1768)
    ```go
    func (w *Workspace) restorePath(cfg ports.WorkspaceConfig) (string, error) {
        if cfg.Path != "" {
@@ -130,9 +130,10 @@ flowchart TD
    }
    ```
 
-6. **`defaultSessionBranchName`**:
-   - **Supervisor Range:** Lines 1783–1785 (raw blob lines 1868–1870).
-   - **Permalink:** [`backend/internal/adapters/workspace/gitworktree/workspace.go#L1868-L1870`](https://github.com/trungqwe/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L1868-L1870)
+6. **`defaultSessionBranchName`:**
+   - **Range:** Lines 1783–1785
+   - **Signature:** `func defaultSessionBranchName(id domain.SessionID) string`
+   - **Official Permalink:** [`https://github.com/Untrivial-ai/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L1783-L1785`](https://github.com/Untrivial-ai/agent-orchestrator/blob/15e9ea971f1711ec8b50e157d6eb300db6cbe0d6/backend/internal/adapters/workspace/gitworktree/workspace.go#L1783-L1785)
    ```go
    func defaultSessionBranchName(id domain.SessionID) string {
        return "ao/" + string(id)
@@ -140,60 +141,56 @@ flowchart TD
    ```
    Deterministic branch formula: `"ao/" + sessionID`.
 
-### 3.3. Configuration Seam Tracing
-Trace how `Options.ManagedRoot` is injected during AO binary startup:
-- CLI flag `--workspace-dir` or `--managed-root`;
-- Environment variable `AO_WORKSPACE_DIR` or `AO_MANAGED_ROOT`;
-- Host configuration file `config.json` / `settings.json`;
-- Determine whether public REST routes expose this path or if Supervisor must read host configuration directly.
-
 ---
 
 ## 4. Track 2 — Isolated Disposable Runtime Proof
 
-### 4.1. Absolute Host-Injected State Root & Physical Containment Guardrails
-To prevent cross-worktree pollution or accidental deletion:
-1. **Absolute State Root Architecture:**
-   - Root: `<SUPERVISOR_STATE_ROOT>\proof\p04-worktree-binding\<proof_run_id>\`
+### 4.1. Absolute State Root Hierarchy & Component-Boundary Containment
+1. **Root Hierarchy:**
+   - Base Root: `<SUPERVISOR_STATE_ROOT>\proof\p04-worktree-binding\<proof_run_id>\`
    - Disposable DB: `<SUPERVISOR_STATE_ROOT>\proof\p04-worktree-binding\<proof_run_id>\ao_proof.db`
    - Disposable Managed Root: `<SUPERVISOR_STATE_ROOT>\proof\p04-worktree-binding\<proof_run_id>\worktrees`
    - Disposable Test Repo: `<SUPERVISOR_STATE_ROOT>\proof\p04-worktree-binding\<proof_run_id>\repo`
-2. **Pre-Operation Containment Verification:**
-   Before any directory creation, file write, or deletion:
-   - Canonicalize path using `filepath.Clean` and `filepath.EvalSymlinks`.
-   - Assert physical containment: resolved absolute path must be prefixed by `<SUPERVISOR_STATE_ROOT>\proof\p04-worktree-binding\<proof_run_id>`.
-   - Assert strictly outside all Git worktrees.
-   - Assert strictly outside user repository (`D:\TU_CODE\ai-supervisor`).
-   - Assert strictly outside AO live database (`~/.agent-orchestrator/...` or `D:\TU_CODE\agent-orchestrator`).
-   - Assert strictly outside user WIP recovery directory (`D:\TU_CODE\ai-supervisor-user-wip-recovery\P03-EXIT-R2-001`).
-3. **Safe Cleanup & Ownership Marker:**
-   - Write `.supervisor-owner-marker.json` at root initialization containing `proof_run_id`, timestamp, and host PID.
-   - Recursive cleanup permitted ONLY after:
-     * Canonical containment check passes;
-     * Marker exists and ownership matches `proof_run_id`.
-   - If physical containment or identity cannot be proven, cleanup must abort and leave target untouched.
+2. **Handle-Based Component-Boundary Pre-Create Check:**
+   - `SUPERVISOR_STATE_ROOT` must exist and be an absolute path.
+   - Open root via OS handle (`os.Open` / Windows `CreateFileW`); obtain normalized physical path via `GetFinalPathNameByHandleW`, `VolumeSerialNumber`, and `FILE_ID_INFO`.
+   - For non-existent child targets, traverse up to the nearest existing ancestor and open its handle.
+   - Component-boundary validation: compute `rel, err := filepath.Rel(rootPhysicalPath, targetPhysicalPath)`. Reject if `err != nil`, or `rel == ".."`, or `strings.HasPrefix(rel, ".."+string(filepath.Separator))`. String prefix matching (`strings.HasPrefix`) is strictly forbidden.
+   - Reject volume mismatch and unexpected reparse points.
+   - Assert strictly outside all Git worktrees, outside primary repository (`D:\TU_CODE\ai-supervisor`), outside live AO databases (`~/.agent-orchestrator/...`), and outside recovery folder (`D:\TU_CODE\ai-supervisor-user-wip-recovery\P03-EXIT-R2-001`).
+3. **Safe Cleanup Protocol with Ownership Nonce:**
+   - Root initialization writes `.supervisor-owner-marker.json` containing random `proof_run_id`, expected root physical identity, and cryptographic ownership nonce.
+   - Pre-cleanup revalidation: open target handle immediately before deletion; verify final physical path remains inside run root and marker nonce matches.
+   - Target must differ from state root and proof parent root.
+   - Any mismatch or TOCTOU anomaly fails closed: abort cleanup, log diagnostic, leave target untouched.
+4. **Falsification Test Matrix:**
+   - Test 1 (Sibling Prefix): `<root>-attacker` vs `<root>` must fail containment.
+   - Test 2 (Junction Swap): Directory swapped with junction to outside directory must be rejected.
+   - Test 3 (Non-Existent Child): Non-existent deep child must resolve nearest ancestor handle correctly.
+   - Test 4 (Case Alias): Case-insensitive NTFS path variation must resolve to identical physical `FILE_ID_INFO`.
+   - Test 5 (Different Volume): Target on different drive letter must be rejected.
+   - Test 6 (Marker Replacement): Marker with mismatched nonce must abort cleanup.
 
-### 4.2. Inert AO Harness Provenance & Zero-LLM Assurance
+### 4.2. Pinned AO Daemon Provenance & Inert Harness Guardrail
 - **AO Binary Provenance:**
   * Version: `v0.13.0`
   * Pinned Commit: `15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`
-  * Build Mechanism: Built from pinned source or validated pre-built binary matching verified SHA-256.
-  * Ephemeral Port: Bound dynamically to loopback `127.0.0.1:0`.
-  * Process Ownership: Spawned as supervised child process managed under Windows Job Object for guaranteed termination.
-- **Inert Harness Requirement:**
-  * AO harness must be configured in inert test mode (`mock-inert` or test runner).
-  * Strictly zero API keys, zero LLM model calls, zero external network egress, and zero coding prompts.
-  * **Blocker Guardrail:** If an inert test mode cannot be proven for AO daemon, record `DESIGN_BLOCKER_P04_INERT_AO_HARNESS = OPEN`; the proof must NOT run against a live LLM-connected daemon, and claiming "zero LLM calls" merely from not sending prompts is explicitly forbidden.
+  * Upstream: `Untrivial-ai/agent-orchestrator`
+  * Port: Ephemeral loopback `127.0.0.1:0`.
+  * Process Management: Supervised child process in Windows Job Object.
+- **Inert Harness Requirement & Open Blocker:**
+  * Inspection of `backend/internal/domain/harness.go` confirms supported harnesses are live agent CLIs (`agy`, `codex`, `claude-code`, etc.); no inert mock harness exists in the upstream codebase.
+  * **Critical Invariant:** `DESIGN_BLOCKER_P04_INERT_AO_HARNESS = OPEN`. Zero LLM tokens, zero credentials, and zero prompts may be issued. Proof contract cannot be released until an inert harness or upstream test seam is formally approved via Change Governance.
 
 ### 4.3. Test Matrix and Verification Procedures
 
 #### Step 1: Initial Setup
-1. Initialize a clean disposable Git repository at `<SUPERVISOR_STATE_ROOT>\...\repo` with an initial commit on `main`.
+1. Initialize clean disposable Git repo at `<SUPERVISOR_STATE_ROOT>\...\repo` with initial commit on `main`.
 2. Launch disposable `ao-daemon` on ephemeral port, configured with disposable DB and disposable managed root.
 
 #### Step 2: Dual Session Provisioning (Server-Generated Session IDs & Non-Collision)
 1. Register test project `proj-proof-01` pointing to the test repo.
-2. Issue `POST /api/v1/sessions` for Session 1 with body `{"projectId": "proj-proof-01", "kind": "worker", "harness": "mock-inert"}`.
+2. Issue `POST /api/v1/sessions` for Session 1 with body `{"projectId": "proj-proof-01", "kind": "worker"}`.
    - Record HTTP 201 response.
    - Capture server-generated `session_1_id = resp.Session.ID`.
    - Compute expected path: `filepath.Join(disposableManagedRoot, "proj-proof-01", session_1_id)`.
@@ -208,34 +205,39 @@ To prevent cross-worktree pollution or accidental deletion:
 4. **Collision Check:** Assert that `session_1_id != session_2_id`, paths are distinct, branches are distinct, and worktrees do not collide.
 
 #### Step 3: Git & Filesystem Cross-Verification
-Execute `git worktree list --porcelain -z` inside the test repo and verify:
+Execute `git worktree list --porcelain -z` inside test repo and verify:
 1. Entry for Session 1: matches computed path, branch `refs/heads/ao/<session_1_id>`, and commit SHA.
 2. Entry for Session 2: matches computed path, branch `refs/heads/ao/<session_2_id>`, and commit SHA.
 3. Inspect `.git` file inside each worktree: confirm `gitdir:` points to valid worktree gitdir.
 4. Verify physical file identity (ReFS/NTFS 128-bit `FileIdInfo` or volume serial + file index) proving direct physical directory resolution without intervening junctions or symlinks.
 
-#### Step 4: Daemon Restart & Session Restore State Machine
-1. Transition Session 1 to terminal state using supported lifecycle (`DELETE /api/v1/sessions/{session_1_id}` or kill).
-2. Observe and record evidence of terminal state.
-3. Terminate the disposable AO process.
-4. Restart disposable AO with identical DB and managed root on an ephemeral port.
-5. Issue `POST /api/v1/sessions/{session_1_id}/restore` directly in proof isolation.
+#### Step 4: Wire Kill, Terminal Poll, Restart & Restore Lifecycle Probe
+1. **Kill Session 1:** Issue `POST /api/v1/sessions/{session_1_id}/kill`.
+   - Must return HTTP 200 OK with `wireKillSessionResponse{OK: true, SessionID: session_1_id}`.
+2. **Terminal Observation Polling:**
+   - Poll `GET /api/v1/sessions/{session_1_id}` with 10-second timeout until observing `isTerminated=true` / canonical terminal state.
+3. **Daemon Restart:** Terminate disposable AO process; restart with identical DB and managed root on ephemeral port.
+4. **Restore Session 1:** Issue `POST /api/v1/sessions/{session_1_id}/restore`.
+   - Must return strictly HTTP 200 OK (never 201).
+   - Validate `wireRestoreSessionResponse`: `OK=true`, valid `restoreMode` (`native`, `saved_prompt`, or `fresh`), matching top-level `SessionID`, and matching nested `Session.ID`.
+   - Verify physical worktree path is preserved identically.
    *(Note: Supervisor `AUTOMATIC_RESTORE` remains strictly `DISABLED`; this is an isolated proof probe).*
-6. Verify:
-   - Does restore return HTTP 200/201?
-   - Is physical worktree path preserved identically?
-   - Does `git worktree list` report identical path and branch?
 
 #### Step 5: Negative & Edge Case Probes (Characterization Without False Stops)
 1. **Missing Directory Probe:**
+   - Kill Session 2 via `POST /api/v1/sessions/{session_2_id}/kill`.
+   - Bounded polling confirms terminal state.
+   - Verify Session 2 directory is strictly inside proof root.
    - Manually delete Session 2 directory.
    - Issue `POST /api/v1/sessions/{session_2_id}/restore`.
-   - **Characterize Observed Behavior:** Note that pinned AO `Workspace.Restore` (lines 1113–1140) may recreate the worktree at the identical path. Characterize whether AO recreates the worktree or returns an error. This is an expected probe outcome, NOT an infrastructure failure, and must NOT trigger a stop condition.
+   - **Characterize Observed Behavior:** Note that pinned AO `Workspace.Restore` (lines 1069–1111) contains recreate logic. Characterize whether AO recreates the worktree or returns an error. This is an expected probe outcome, NOT an infrastructure failure, and must NOT trigger a stop condition.
+   - Calling restore on an active session is strictly forbidden.
 2. **Junction / Symlink Alias Probe:**
    - Test junction creation pointing to the worktree path.
-   - If Windows permissions lack `SeCreateSymbolicLinkPrivilege`, record `UNVERIFIED_CAPABILITY` or `BLOCKED` (do NOT report `PASS`).
+   - If Windows permissions lack `SeCreateSymbolicLinkPrivilege`, record `UNVERIFIED_CAPABILITY` or `BLOCKED` (never `PASS`).
    - If privileges exist, verify that `filepath.EvalSymlinks` canonicalizes the junction to the target.
 3. **Stale Worktree Probe:**
+   - Executed strictly on a terminated disposable session and disposable repository.
    - Prune worktree via `git worktree prune`.
    - Characterize AO response on subsequent session queries.
 
@@ -276,7 +278,7 @@ The proof report must conclude with exactly one determination:
 1. `docs/proofs/P04_WORKTREE_BINDING_PROOF_REPORT.md` containing:
    - Full command logs, exit codes, sanitized paths, and artifact SHA-256 hashes.
    - Dual-session non-collision evidence with server-generated session IDs.
-   - Restart and restore verification evidence.
-   - Characterization of edge cases.
+   - Wire kill, terminal poll, restart, and restore verification evidence.
+   - Falsification test results and characterization of edge cases.
    - Formal conclusion (Determination A, B, or C).
 2. Report will be submitted to External Supervisor for formal evaluation.
