@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	CurrentSchemaVersion = 5
+	CurrentSchemaVersion = 6
 	GenesisAuditHash     = "0000000000000000000000000000000000000000000000000000000000000000"
 )
 
@@ -344,8 +344,229 @@ WHEN OLD.stage='SEND_CONFIRMED' AND
 BEGIN SELECT RAISE(ABORT,'confirmed send provenance immutable'); END;
 `
 
+const v6Schema = `
+CREATE TABLE attempt_workspace_bindings (
+    attempt_id TEXT PRIMARY KEY REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
+    contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
+    session_id TEXT NOT NULL CHECK (LENGTH(session_id) > 0),
+    terminal_generation TEXT NOT NULL CHECK (LENGTH(terminal_generation) > 0),
+    canonical_worktree_path TEXT NOT NULL CHECK (LENGTH(canonical_worktree_path) > 0),
+    volume_serial_hex TEXT NOT NULL CHECK (
+        LENGTH(volume_serial_hex) = 16 AND NOT (volume_serial_hex GLOB '*[^0-9a-f]*')
+    ),
+    file_id_hex TEXT NOT NULL CHECK (
+        LENGTH(file_id_hex) = 32 AND NOT (file_id_hex GLOB '*[^0-9a-f]*')
+    ),
+    linked_gitdir_path TEXT NOT NULL CHECK (LENGTH(linked_gitdir_path) > 0),
+    linked_gitdir_volume_serial_hex TEXT NOT NULL CHECK (
+        LENGTH(linked_gitdir_volume_serial_hex) = 16 AND NOT (linked_gitdir_volume_serial_hex GLOB '*[^0-9a-f]*')
+    ),
+    linked_gitdir_file_id_hex TEXT NOT NULL CHECK (
+        LENGTH(linked_gitdir_file_id_hex) = 32 AND NOT (linked_gitdir_file_id_hex GLOB '*[^0-9a-f]*')
+    ),
+    pinned_ao_commit TEXT NOT NULL CHECK (
+        LENGTH(pinned_ao_commit) = 40 AND NOT (pinned_ao_commit GLOB '*[^0-9a-f]*')
+    ),
+    binding_state TEXT NOT NULL CHECK (
+        binding_state IN ('ACTIVE', 'RETAINED_FOR_VERIFICATION', 'RELEASED', 'INVALIDATED')
+    ),
+    created_at_epoch_ms INTEGER NOT NULL CHECK (
+        typeof(created_at_epoch_ms) = 'integer' AND created_at_epoch_ms > 0
+    ),
+    released_at_epoch_ms INTEGER NULL CHECK (
+        released_at_epoch_ms IS NULL OR (
+            typeof(released_at_epoch_ms) = 'integer' AND released_at_epoch_ms >= created_at_epoch_ms
+        )
+    ),
+    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT,
+    CHECK (
+        (binding_state IN ('ACTIVE', 'RETAINED_FOR_VERIFICATION') AND released_at_epoch_ms IS NULL) OR
+        (binding_state IN ('RELEASED', 'INVALIDATED') AND released_at_epoch_ms IS NOT NULL)
+    )
+);
+
+CREATE TRIGGER trg_attempt_workspace_bindings_lineage_guard
+BEFORE INSERT ON attempt_workspace_bindings
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'lineage mismatch: attempt_id does not match task_id, contract_id in task_attempts or session in dispatch_operations with stage DISPATCH_BOUND')
+    WHERE NOT EXISTS (
+        SELECT 1 FROM task_attempts a
+        JOIN dispatch_operations d ON d.attempt_id = a.attempt_id
+        WHERE a.attempt_id = NEW.attempt_id
+          AND a.task_id = NEW.task_id
+          AND a.contract_id = NEW.contract_id
+          AND d.session_id = NEW.session_id
+          AND d.terminal_generation = NEW.terminal_generation
+          AND d.stage = 'DISPATCH_BOUND'
+    );
+END;
+
+CREATE TRIGGER trg_attempt_workspace_bindings_cas_guard
+BEFORE UPDATE ON attempt_workspace_bindings
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'immutable column modified in attempt_workspace_bindings')
+    WHERE NEW.attempt_id != OLD.attempt_id
+       OR NEW.task_id != OLD.task_id
+       OR NEW.contract_id != OLD.contract_id
+       OR NEW.session_id != OLD.session_id
+       OR NEW.terminal_generation != OLD.terminal_generation
+       OR NEW.canonical_worktree_path != OLD.canonical_worktree_path
+       OR NEW.volume_serial_hex != OLD.volume_serial_hex
+       OR NEW.file_id_hex != OLD.file_id_hex
+       OR NEW.linked_gitdir_path != OLD.linked_gitdir_path
+       OR NEW.linked_gitdir_volume_serial_hex != OLD.linked_gitdir_volume_serial_hex
+       OR NEW.linked_gitdir_file_id_hex != OLD.linked_gitdir_file_id_hex
+       OR NEW.pinned_ao_commit != OLD.pinned_ao_commit
+       OR NEW.created_at_epoch_ms != OLD.created_at_epoch_ms;
+
+    SELECT RAISE(ABORT, 'illegal state transition in attempt_workspace_bindings')
+    WHERE NOT (
+        (OLD.binding_state = 'ACTIVE' AND NEW.binding_state IN ('RETAINED_FOR_VERIFICATION', 'RELEASED', 'INVALIDATED')) OR
+        (OLD.binding_state = 'RETAINED_FOR_VERIFICATION' AND NEW.binding_state IN ('RELEASED', 'INVALIDATED'))
+    );
+END;
+
+CREATE TRIGGER trg_attempt_workspace_bindings_no_delete
+BEFORE DELETE ON attempt_workspace_bindings
+BEGIN
+    SELECT RAISE(ABORT, 'attempt_workspace_bindings is immutable');
+END;
+
+CREATE TABLE worker_claims (
+    claim_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
+    attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+    contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
+    reported_head_sha TEXT NOT NULL CHECK (
+        LENGTH(reported_head_sha) BETWEEN 7 AND 40
+        AND NOT (reported_head_sha GLOB '*[^0-9a-f]*')
+    ),
+    payload_json TEXT NOT NULL CHECK (
+        json_valid(payload_json) = 1
+        AND json_type(payload_json, '$.claimed_files_changed') = 'array'
+        AND json_type(payload_json, '$.tests') = 'array'
+        AND json_type(payload_json, '$.textual_claims') = 'array'
+    ),
+    created_at_epoch_ms INTEGER NOT NULL CHECK (
+        typeof(created_at_epoch_ms) = 'integer' AND created_at_epoch_ms > 0
+    ),
+    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT
+);
+
+CREATE TRIGGER trg_worker_claims_lineage_guard
+BEFORE INSERT ON worker_claims
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'lineage mismatch: attempt_id does not match task_id or contract_id in task_attempts')
+    WHERE NOT EXISTS (
+        SELECT 1 FROM task_attempts a
+        WHERE a.attempt_id = NEW.attempt_id
+          AND a.task_id = NEW.task_id
+          AND a.contract_id = NEW.contract_id
+    );
+END;
+
+CREATE TRIGGER trg_worker_claims_no_update
+BEFORE UPDATE ON worker_claims
+BEGIN
+    SELECT RAISE(ABORT, 'worker_claims is immutable');
+END;
+
+CREATE TRIGGER trg_worker_claims_no_delete
+BEFORE DELETE ON worker_claims
+BEGIN
+    SELECT RAISE(ABORT, 'worker_claims is immutable');
+END;
+
+CREATE TABLE review_integrity_holds (
+    hold_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
+    attempt_id TEXT NOT NULL REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+    contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
+    hold_reason TEXT NOT NULL CHECK (
+        hold_reason IN (
+            'DIRTY_WORKTREE_DETECTED',
+            'BUNDLE_HASH_CONFLICT',
+            'INVARIANT_MISMATCH',
+            'UNVERIFIED_CLAIM_DETECTED',
+            'SECURITY_POLICY_VIOLATION'
+        )
+    ),
+    hold_state TEXT NOT NULL CHECK (hold_state IN ('ACTIVE', 'RESOLVED')),
+    diagnostic_fingerprint TEXT NOT NULL CHECK (
+        LENGTH(diagnostic_fingerprint) = 64 AND NOT (diagnostic_fingerprint GLOB '*[^0-9a-f]*')
+    ),
+    occurrence_number INTEGER NOT NULL CHECK (
+        typeof(occurrence_number) = 'integer' AND occurrence_number > 0
+    ),
+    rejection_audit_event_id TEXT NOT NULL UNIQUE REFERENCES audit_events(event_id) ON DELETE RESTRICT,
+    resolution_audit_event_id TEXT NULL UNIQUE REFERENCES audit_events(event_id) ON DELETE RESTRICT,
+    resolved_by_principal TEXT NULL CHECK (
+        resolved_by_principal IS NULL OR LENGTH(TRIM(resolved_by_principal)) > 0
+    ),
+    created_at_epoch_ms INTEGER NOT NULL CHECK (
+        typeof(created_at_epoch_ms) = 'integer' AND created_at_epoch_ms > 0
+    ),
+    resolved_at_epoch_ms INTEGER NULL CHECK (
+        resolved_at_epoch_ms IS NULL OR (
+            typeof(resolved_at_epoch_ms) = 'integer' AND resolved_at_epoch_ms >= created_at_epoch_ms
+        )
+    ),
+    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT,
+    UNIQUE(attempt_id, hold_reason, diagnostic_fingerprint, occurrence_number),
+    CHECK (
+        (hold_state = 'ACTIVE' AND resolved_at_epoch_ms IS NULL AND resolution_audit_event_id IS NULL AND resolved_by_principal IS NULL) OR
+        (hold_state = 'RESOLVED' AND resolved_at_epoch_ms IS NOT NULL AND resolution_audit_event_id IS NOT NULL AND resolved_by_principal IS NOT NULL AND LENGTH(TRIM(resolved_by_principal)) > 0)
+    )
+);
+
+CREATE UNIQUE INDEX idx_review_integrity_holds_active_dedup
+ON review_integrity_holds(attempt_id, hold_reason, diagnostic_fingerprint) WHERE hold_state = 'ACTIVE';
+
+CREATE TRIGGER trg_review_integrity_holds_lineage_guard
+BEFORE INSERT ON review_integrity_holds
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'lineage mismatch: attempt_id does not match task_id or contract_id in task_attempts')
+    WHERE NOT EXISTS (
+        SELECT 1 FROM task_attempts a
+        WHERE a.attempt_id = NEW.attempt_id
+          AND a.task_id = NEW.task_id
+          AND a.contract_id = NEW.contract_id
+    );
+END;
+
+CREATE TRIGGER trg_review_integrity_holds_cas_guard
+BEFORE UPDATE ON review_integrity_holds
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'immutable column modified in review_integrity_holds')
+    WHERE NEW.hold_id != OLD.hold_id
+       OR NEW.task_id != OLD.task_id
+       OR NEW.attempt_id != OLD.attempt_id
+       OR NEW.contract_id != OLD.contract_id
+       OR NEW.hold_reason != OLD.hold_reason
+       OR NEW.diagnostic_fingerprint != OLD.diagnostic_fingerprint
+       OR NEW.occurrence_number != OLD.occurrence_number
+       OR NEW.rejection_audit_event_id != OLD.rejection_audit_event_id
+       OR NEW.created_at_epoch_ms != OLD.created_at_epoch_ms;
+
+    SELECT RAISE(ABORT, 'illegal hold state transition: ACTIVE only transitions to RESOLVED')
+    WHERE NOT (OLD.hold_state = 'ACTIVE' AND NEW.hold_state = 'RESOLVED');
+END;
+
+CREATE TRIGGER trg_review_integrity_holds_no_delete
+BEFORE DELETE ON review_integrity_holds
+BEGIN
+    SELECT RAISE(ABORT, 'review_integrity_holds is immutable');
+END;
+`
+
 func migrate(ctx context.Context, db *sql.DB) error {
-	return migrateWithSchemas(ctx, db, v1Schema, v2Schema, v3Schema, v4Schema, v5Schema)
+	return migrateWithSchemas(ctx, db, v1Schema, v2Schema, v3Schema, v4Schema, v5Schema, v6Schema)
 }
 
 func migrateWithSchemas(ctx context.Context, db *sql.DB, v1DDL, v2DDL, v3DDL string, v4DDLs ...string) error {
@@ -458,6 +679,25 @@ func migrateWithSchemas(ctx context.Context, db *sql.DB, v1DDL, v2DDL, v3DDL str
 		}
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("store: failed to commit v5 migration: %w", err)
+		}
+		userVersion = 5
+	}
+
+	if userVersion < 6 && len(v4DDLs) > 2 {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("store: failed to begin v6 migration transaction: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, v4DDLs[2]); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("store: failed to execute v6 migration DDL: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, "PRAGMA user_version = 6"); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("store: failed to set PRAGMA user_version = 6: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("store: failed to commit v6 migration: %w", err)
 		}
 	}
 

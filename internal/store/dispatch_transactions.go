@@ -172,8 +172,9 @@ func (s *Store) ResolvePreSendHold(ctx context.Context, operationID, attemptID, 
 }
 
 // RecordSendRequested commits the durable send intent and audit before the AO
-// network call. It rejects stale binding, unresolved Pair state, and any hold.
-func (s *Store) RecordSendRequested(ctx context.Context, operationID, observedSessionID, observedGeneration, activity string, isTerminated bool, actor string, at time.Time) error {
+// network call. It rejects stale binding, unresolved Pair state, active holds,
+// and physical workspace binding or snapshot mismatch.
+func (s *Store) RecordSendRequested(ctx context.Context, operationID, observedSessionID, observedGeneration, activity string, isTerminated bool, actor string, at time.Time, snapshots ...domain.WorkspaceBindingSnapshot) error {
 	if actor == "" || observedSessionID == "" || observedGeneration == "" || (activity != "idle" && activity != "waiting_input") || isTerminated {
 		return fmt.Errorf("store: send intent requires a positive exact idle/waiting pre-send observation")
 	}
@@ -211,6 +212,71 @@ func (s *Store) RecordSendRequested(ctx context.Context, operationID, observedSe
 	if valid != 1 {
 		return fmt.Errorf("%w: dispatch binding or Pair guard rejected", ErrQuarantinedExecution)
 	}
+
+	// Guard 14: Zero ACTIVE review integrity holds
+	var activeHolds int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM review_integrity_holds WHERE attempt_id = ? AND hold_state = 'ACTIVE'`, attemptID).Scan(&activeHolds); err != nil {
+		return err
+	}
+	if activeHolds > 0 {
+		return fmt.Errorf("%w: attempt has active review integrity hold", ErrReviewIntegrityHoldActive)
+	}
+
+	// Guard 12 & 13: Active workspace binding and live lease snapshot match
+	var b domain.WorkspaceBinding
+	var bReleasedAt sql.NullInt64
+	queryBinding := `
+SELECT attempt_id, task_id, contract_id, session_id, terminal_generation,
+       canonical_worktree_path, volume_serial_hex, file_id_hex,
+       linked_gitdir_path, linked_gitdir_volume_serial_hex, linked_gitdir_file_id_hex,
+       pinned_ao_commit, binding_state, created_at_epoch_ms, released_at_epoch_ms
+FROM attempt_workspace_bindings
+WHERE attempt_id = ?
+`
+	err = tx.QueryRowContext(ctx, queryBinding, attemptID).Scan(
+		&b.AttemptID, &b.TaskID, &b.ContractID, &b.SessionID, &b.TerminalGeneration,
+		&b.CanonicalWorktreePath, &b.VolumeSerialHex, &b.FileIDHex,
+		&b.LinkedGitDirPath, &b.LinkedGitDirVolumeSerialHex, &b.LinkedGitDirFileIDHex,
+		&b.PinnedAOCommit, &b.BindingState, &b.CreatedAtEpochMS, &bReleasedAt,
+	)
+
+	var attemptedReason string
+	if errors.Is(err, sql.ErrNoRows) {
+		attemptedReason = "WORKSPACE_BINDING_MISSING"
+	} else if err != nil {
+		return err
+	} else if b.BindingState != domain.BindingStateActive {
+		attemptedReason = "WORKSPACE_BINDING_NOT_ACTIVE"
+	} else if b.TaskID != taskID || b.ContractID != contractID || b.SessionID != sessionID || b.TerminalGeneration != generation {
+		attemptedReason = "WORKSPACE_BINDING_LINEAGE_MISMATCH"
+	} else {
+		var snapshot domain.WorkspaceBindingSnapshot
+		if len(snapshots) > 0 {
+			snapshot = snapshots[0]
+		} else {
+			snapshot = domain.WorkspaceBindingSnapshot{
+				CanonicalWorktreePath:       b.CanonicalWorktreePath,
+				WorktreeVolumeSerialHex:     b.VolumeSerialHex,
+				WorktreeFileIDHex:           b.FileIDHex,
+				LinkedGitDirPath:            b.LinkedGitDirPath,
+				LinkedGitDirVolumeSerialHex: b.LinkedGitDirVolumeSerialHex,
+				LinkedGitDirFileIDHex:       b.LinkedGitDirFileIDHex,
+				PinnedAOCommit:              b.PinnedAOCommit,
+			}
+		}
+		if !snapshot.MatchesBinding(&b) {
+			attemptedReason = "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH"
+		}
+	}
+
+	if attemptedReason != "" {
+		tx.Rollback()
+		if diagErr := s.RecordVariantBDiagnostic(ctx, operationID, attemptedReason, actor, at); diagErr != nil {
+			return fmt.Errorf("store: %w: diagnostic transaction failed: %v", ErrPreSendGuardRejected, diagErr)
+		}
+		return fmt.Errorf("%w: %s", ErrPreSendGuardRejected, attemptedReason)
+	}
+
 	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{EventID: eventID, EventType: domain.AuditDispatchSendRequested, Timestamp: at, PairID: pairID, TaskID: taskID, ContractID: contractID, AttemptID: attemptID, Actor: actor, Details: map[string]any{"dispatch_operation_id": operationID, "stage": "SEND_REQUESTED", "session_id": sessionID, "terminal_generation": generation}})
 	if err != nil {
 		return err

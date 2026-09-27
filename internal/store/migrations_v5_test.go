@@ -27,11 +27,11 @@ func TestMigrationV5FreshAndHistorical(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := migrate(context.Background(), db); err != nil {
+			if err := migrateWithSchemas(context.Background(), db, v1Schema, v2Schema, v3Schema, v4Schema, v5Schema); err != nil {
 				t.Fatal(err)
 			}
 			assertV5(t, db)
-			if err := migrate(context.Background(), db); err != nil {
+			if err := migrateWithSchemas(context.Background(), db, v1Schema, v2Schema, v3Schema, v4Schema, v5Schema); err != nil {
 				t.Fatal(err)
 			}
 			assertV5(t, db)

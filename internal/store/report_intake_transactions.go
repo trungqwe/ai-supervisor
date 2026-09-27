@@ -1,0 +1,318 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"regexp"
+	"time"
+
+	"github.com/trungqwe/ai-supervisor/internal/domain"
+)
+
+var (
+	shaHexCheckRegex         = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+	ErrDirtyWorktreeDetected = errors.New("store: dirty worktree detected at report intake")
+)
+
+// IngestWorkerReport executes report intake: Transaction A on clean evidence,
+// or intake diagnostic transaction on dirty evidence.
+func (s *Store) IngestWorkerReport(
+	ctx context.Context,
+	taskID string,
+	contractID string,
+	attemptID string,
+	report domain.WorkerReport,
+	gitEvidence domain.GitEvidenceResult,
+	actor string,
+	at time.Time,
+) error {
+	if actor == "" {
+		actor = "supervisor"
+	}
+	if at.IsZero() {
+		at = timeNow()
+	}
+	epochMS := at.UnixMilli()
+
+	if !shaHexCheckRegex.MatchString(report.HeadSHA) {
+		return fmt.Errorf("store: reported head_sha must be 7..40 lowercase hex chars, got %q", report.HeadSHA)
+	}
+
+	// Case 1: Dirty Worktree -> execute separate intake diagnostic transaction
+	if !gitEvidence.IsClean {
+		return s.recordDirtyIntakeDiagnostic(ctx, taskID, contractID, attemptID, gitEvidence, actor, at)
+	}
+
+	// Case 2: Clean Worktree -> execute Transaction A atomically
+	return s.executeTransactionA(ctx, taskID, contractID, attemptID, report, actor, at, epochMS)
+}
+
+func (s *Store) recordDirtyIntakeDiagnostic(
+	ctx context.Context,
+	taskID string,
+	contractID string,
+	attemptID string,
+	gitEvidence domain.GitEvidenceResult,
+	actor string,
+	at time.Time,
+) error {
+	epochMS := at.UnixMilli()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var pairID, taskState string
+	var currentAttempt, attemptNumber int
+	var endedAt sql.NullString
+	err = tx.QueryRowContext(ctx, `
+SELECT t.pair_id, t.state, t.current_attempt, a.attempt_number, a.ended_at
+FROM tasks t
+JOIN task_attempts a ON a.task_id = t.task_id
+WHERE t.task_id = ? AND a.attempt_id = ?
+`, taskID, attemptID).Scan(&pairID, &taskState, &currentAttempt, &attemptNumber, &endedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrAttemptNotFound
+		}
+		return err
+	}
+
+	diagnosticInput := map[string]any{
+		"attempt_id":        attemptID,
+		"hold_reason":       string(domain.HoldReasonDirtyWorktreeDetected),
+		"uncommitted_files": gitEvidence.UncommittedFiles,
+	}
+	sanitizedFP, err := domain.ComputeFingerprint(diagnosticInput)
+	if err != nil {
+		return fmt.Errorf("store: failed to compute diagnostic fingerprint: %w", err)
+	}
+	diagnosticFP := sanitizedFP
+
+	// Check if active hold with identical diagnostic fingerprint already exists (replay)
+	var existingHoldID string
+	err = tx.QueryRowContext(ctx, `
+SELECT hold_id FROM review_integrity_holds
+WHERE attempt_id = ? AND hold_reason = 'DIRTY_WORKTREE_DETECTED' AND diagnostic_fingerprint = ? AND hold_state = 'ACTIVE'
+`, attemptID, diagnosticFP).Scan(&existingHoldID)
+	if err == nil {
+		// Exact replay: active hold already recorded
+		return ErrDirtyWorktreeDetected
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+
+	// Calculate occurrence_number
+	var occurrenceCount int
+	err = tx.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM review_integrity_holds
+WHERE attempt_id = ? AND hold_reason = 'DIRTY_WORKTREE_DETECTED' AND diagnostic_fingerprint = ?
+`, attemptID, diagnosticFP).Scan(&occurrenceCount)
+	if err != nil {
+		return err
+	}
+	occurrenceNumber := occurrenceCount + 1
+
+	holdDesc := domain.HoldIdentityDescriptor{
+		AttemptID:             attemptID,
+		ContractID:            contractID,
+		DiagnosticFingerprint: diagnosticFP,
+		HoldReason:            string(domain.HoldReasonDirtyWorktreeDetected),
+		Kind:                  "review_integrity_hold",
+		OccurrenceNumber:      occurrenceNumber,
+		PairID:                pairID,
+		TaskID:                taskID,
+		Version:               1,
+	}
+	holdID, err := domain.DeriveHoldID(holdDesc)
+	if err != nil {
+		return fmt.Errorf("store: failed to derive hold_id: %w", err)
+	}
+
+	rejDesc := domain.RejectionEventDescriptor{
+		AttemptID:                 attemptID,
+		ContractID:                contractID,
+		DiagnosticFingerprint:     diagnosticFP,
+		EventType:                 domain.AuditEvidenceCollectionFailed,
+		HoldID:                    holdID,
+		OccurrenceNumber:          occurrenceNumber,
+		PairID:                    pairID,
+		Reason:                    string(domain.HoldReasonDirtyWorktreeDetected),
+		SanitizedInputFingerprint: sanitizedFP,
+		TaskID:                    taskID,
+		Version:                   1,
+	}
+	rejectionEventID, err := domain.DeriveRejectionEventID(rejDesc)
+	if err != nil {
+		return fmt.Errorf("store: failed to derive rejection_event_id: %w", err)
+	}
+
+	// 1. Append rejection audit event EVIDENCE_COLLECTION_FAILED
+	_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{
+		EventID:    rejectionEventID,
+		EventType:  domain.AuditEvidenceCollectionFailed,
+		Timestamp:  at,
+		PairID:     pairID,
+		TaskID:     taskID,
+		ContractID: contractID,
+		AttemptID:  attemptID,
+		Actor:      actor,
+		Details: map[string]any{
+			"actor_role":                  "SUPERVISOR",
+			"hold_id":                     holdID,
+			"hold_reason":                 string(domain.HoldReasonDirtyWorktreeDetected),
+			"diagnostic_fingerprint":      diagnosticFP,
+			"sanitized_input_fingerprint": sanitizedFP,
+			"uncommitted_files":           gitEvidence.UncommittedFiles,
+			"occurrence_number":           occurrenceNumber,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("store: failed to append evidence collection failed audit: %w", err)
+	}
+
+	// 2. Insert ACTIVE hold row into review_integrity_holds
+	insertHoldQuery := `
+INSERT INTO review_integrity_holds (
+    hold_id, task_id, attempt_id, contract_id, hold_reason, hold_state,
+    diagnostic_fingerprint, occurrence_number, rejection_audit_event_id,
+    created_at_epoch_ms
+) VALUES (?, ?, ?, ?, 'DIRTY_WORKTREE_DETECTED', 'ACTIVE', ?, ?, ?, ?)
+`
+	_, err = tx.ExecContext(ctx, insertHoldQuery,
+		holdID, taskID, attemptID, contractID,
+		diagnosticFP, occurrenceNumber, rejectionEventID,
+		epochMS,
+	)
+	if err != nil {
+		return fmt.Errorf("store: failed to insert dirty worktree hold: %w", err)
+	}
+
+	// Commit diagnostic transaction; task remains RUNNING
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: failed to commit dirty intake diagnostic transaction: %w", err)
+	}
+
+	return ErrDirtyWorktreeDetected
+}
+
+func (s *Store) executeTransactionA(
+	ctx context.Context,
+	taskID string,
+	contractID string,
+	attemptID string,
+	report domain.WorkerReport,
+	actor string,
+	at time.Time,
+	epochMS int64,
+) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 1. Verify task is RUNNING
+	var taskState string
+	var currentAttempt, attemptNumber int
+	var endedAt sql.NullString
+	err = tx.QueryRowContext(ctx, `
+SELECT t.state, t.current_attempt, a.attempt_number, a.ended_at
+FROM tasks t
+JOIN task_attempts a ON a.task_id = t.task_id
+WHERE t.task_id = ? AND a.attempt_id = ?
+`, taskID, attemptID).Scan(&taskState, &currentAttempt, &attemptNumber, &endedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrAttemptNotFound
+		}
+		return err
+	}
+
+	if taskState != string(domain.StateRunning) {
+		return fmt.Errorf("%w: task state is %s, expected RUNNING", ErrStateConflict, taskState)
+	}
+	if currentAttempt != attemptNumber || endedAt.Valid {
+		return fmt.Errorf("%w: attempt is not current open attempt", ErrAttemptLineageMismatch)
+	}
+
+	// 2. Verify workspace binding is ACTIVE
+	var bindingState string
+	err = tx.QueryRowContext(ctx, `
+SELECT binding_state FROM attempt_workspace_bindings WHERE attempt_id = ?
+`, attemptID).Scan(&bindingState)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrWorkspaceBindingNotFound
+		}
+		return err
+	}
+	if bindingState != string(domain.BindingStateActive) {
+		return fmt.Errorf("%w: binding state is %s, expected ACTIVE", ErrStateConflict, bindingState)
+	}
+
+	// 3. Canonicalize worker claim payload
+	claimPayload := domain.WorkerClaimPayload{
+		ClaimedFilesChanged: report.FilesChanged,
+		Tests:               report.Tests,
+		TextualClaims:       report.WorkerClaims,
+		BuildStatus:         report.BuildStatus,
+	}
+	canonicalJSON, err := domain.CanonicalizeWorkerClaimPayload(claimPayload)
+	if err != nil {
+		return fmt.Errorf("store: failed to canonicalize worker claim payload: %w", err)
+	}
+
+	// 4. Insert into worker_claims
+	claimID := "claim-" + attemptID
+	insertClaimQuery := `
+INSERT INTO worker_claims (
+    claim_id, task_id, attempt_id, contract_id, reported_head_sha,
+    payload_json, created_at_epoch_ms
+) VALUES (?, ?, ?, ?, ?, ?, ?)
+`
+	_, err = tx.ExecContext(ctx, insertClaimQuery,
+		claimID, taskID, attemptID, contractID, report.HeadSHA,
+		canonicalJSON, epochMS,
+	)
+	if err != nil {
+		return fmt.Errorf("store: failed to persist worker_claims: %w", err)
+	}
+
+	// 5. CAS advance attempt_workspace_bindings: ACTIVE -> RETAINED_FOR_VERIFICATION
+	updateBindingQuery := `
+UPDATE attempt_workspace_bindings
+SET binding_state = 'RETAINED_FOR_VERIFICATION'
+WHERE attempt_id = ? AND binding_state = 'ACTIVE'
+`
+	res, err := tx.ExecContext(ctx, updateBindingQuery, attemptID)
+	if err != nil {
+		return fmt.Errorf("store: failed to advance binding to RETAINED_FOR_VERIFICATION: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil || n != 1 {
+		return fmt.Errorf("%w: workspace binding CAS lost", ErrStateConflict)
+	}
+
+	// 6. CAS advance tasks: RUNNING -> REPORT_READY
+	updateTaskQuery := `
+UPDATE tasks
+SET state = 'REPORT_READY', updated_at = ?
+WHERE task_id = ? AND state = 'RUNNING'
+`
+	res, err = tx.ExecContext(ctx, updateTaskQuery, formatTime(at), taskID)
+	if err != nil {
+		return fmt.Errorf("store: failed to advance task to REPORT_READY: %w", err)
+	}
+	n, err = res.RowsAffected()
+	if err != nil || n != 1 {
+		return fmt.Errorf("%w: task state CAS lost", ErrStateConflict)
+	}
+
+	// Commit Transaction A
+	return tx.Commit()
+}

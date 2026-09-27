@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/trungqwe/ai-supervisor/internal/ao"
 	"github.com/trungqwe/ai-supervisor/internal/domain"
+	"github.com/trungqwe/ai-supervisor/internal/host"
 	"github.com/trungqwe/ai-supervisor/internal/store"
 )
 
@@ -33,6 +35,7 @@ type Coordinator struct {
 	Operator        OperatorBoundary
 	RestoreEnabled  bool
 	ExecutionPolicy domain.ExecutionBudgetPolicy // injected; no operational default
+	Authority       domain.WorkspaceBindingAuthority
 }
 
 func (c *Coordinator) Provision(ctx context.Context, operation domain.PairProvisioningOperation, projectID, harness, actor string) error {
@@ -241,9 +244,40 @@ func (c *Coordinator) Dispatch(ctx context.Context, taskID, contractID, attemptI
 	if err != nil {
 		return err
 	}
+	worktreePath := "C:\\repo\\worktree"
+	if sess, sessErr := c.Store.GetWorkerSessionByPair(ctx, task.PairID); sessErr == nil && sess.WorktreePath != nil && *sess.WorktreePath != "" {
+		worktreePath = *sess.WorktreePath
+	}
+	gitdirPath := filepath.Join(worktreePath, ".git")
+	pinnedCommit := strings.Repeat("0", 40)
+	if contract, cErr := c.Store.GetTaskContract(ctx, contractID); cErr == nil && len(contract.BaseSHA) == 40 {
+		pinnedCommit = contract.BaseSHA
+	}
+	candidate := domain.WorkspaceBindingCandidate{
+		CanonicalWorktreePath: worktreePath,
+		LinkedGitDirPath:      gitdirPath,
+		PinnedAOCommit:        pinnedCommit,
+	}
+
+	auth := c.Authority
+	if auth == nil {
+		auth = host.NewMemoryWorkspaceBindingAuthority()
+	}
+	lease, err := auth.Acquire(ctx, candidate)
+	if err != nil {
+		return fmt.Errorf("dispatch: failed to acquire workspace lease: %w", err)
+	}
+	defer lease.Close()
+	snapshot := lease.Snapshot()
+
 	var attempt domain.TaskAttempt
 	if task.State == domain.StateReady {
-		attempt, err = c.Store.PrepareBoundDispatch(ctx, taskID, contractID, attemptID, reportPath, time.Now().UTC(), store.DispatchBinding{OperationID: operationID, SessionID: sessionID, TerminalGeneration: generation})
+		attempt, err = c.Store.PrepareBoundDispatch(ctx, taskID, contractID, attemptID, reportPath, time.Now().UTC(), store.DispatchBinding{
+			OperationID:        operationID,
+			SessionID:          sessionID,
+			TerminalGeneration: generation,
+			Workspace:          snapshot,
+		})
 		if err != nil {
 			return err
 		}
@@ -313,7 +347,13 @@ func (c *Coordinator) Dispatch(ctx context.Context, taskID, contractID, attemptI
 		}
 		return fmt.Errorf("dispatch: pre-send activity %q is not admissible; attempt remains DISPATCHED", status.Activity.State)
 	}
-	if err := c.Store.RecordSendRequested(ctx, operationID, status.ID, status.TerminalGeneration, string(status.Activity.State), status.IsTerminated, actor, time.Now().UTC()); err != nil {
+
+	if err := lease.Revalidate(); err != nil {
+		_ = c.Store.RecordVariantBDiagnostic(ctx, operationID, "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH", actor, time.Now().UTC())
+		return fmt.Errorf("dispatch: live workspace lease revalidation failed: %w", err)
+	}
+
+	if err := c.Store.RecordSendRequested(ctx, operationID, status.ID, status.TerminalGeneration, string(status.Activity.State), status.IsTerminated, actor, time.Now().UTC(), snapshot); err != nil {
 		return err
 	}
 	result, err := c.AO.DispatchTaskContract(ctx, sessionID, message)

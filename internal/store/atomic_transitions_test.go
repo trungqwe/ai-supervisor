@@ -37,7 +37,7 @@ func TestStore_AtomicTerminalTransition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAuditEvents: %v", err)
 	}
-	if len(events) != 2 || events[1].Event.EventType != domain.AuditTaskStateTransition || events[1].Event.AttemptID != attempt.AttemptID {
+	if len(events) != 3 || events[2].Event.EventType != domain.AuditTaskStateTransition || events[2].Event.AttemptID != attempt.AttemptID {
 		t.Fatalf("terminal audit event mismatch: %+v", events)
 	}
 	if err := s.VerifyAuditChain(ctx); err != nil {
@@ -135,7 +135,7 @@ END;
 		t.Fatalf("audit failure did not roll back task and attempt: task=%+v attempt=%+v", task, open)
 	}
 	var count int
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM audit_events").Scan(&count); err != nil || count != 1 {
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM audit_events").Scan(&count); err != nil || count != 2 {
 		t.Fatalf("audit chain changed after rejected insert: count=%d err=%v", count, err)
 	}
 }
@@ -157,7 +157,7 @@ func TestStore_AtomicAttemptClosureTransition(t *testing.T) {
 		t.Fatalf("attempt closure mismatch: task=%+v attempt=%+v", task, closed)
 	}
 	events, err := s.ListAuditEvents(ctx, 0, 10)
-	if err != nil || len(events) != 2 || events[1].Event.EventType != domain.AuditWorkerBlockedEscalated {
+	if err != nil || len(events) != 3 || events[2].Event.EventType != domain.AuditWorkerBlockedEscalated {
 		t.Fatalf("blocked escalation audit mismatch: events=%+v err=%v", events, err)
 	}
 }

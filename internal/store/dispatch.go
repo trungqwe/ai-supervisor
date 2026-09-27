@@ -23,6 +23,7 @@ type DispatchBinding struct {
 	OperationID        string
 	SessionID          string
 	TerminalGeneration string
+	Workspace          domain.WorkspaceBindingSnapshot
 }
 
 // GetTaskAttempt retrieves a TaskAttempt by attemptID.
@@ -347,6 +348,47 @@ INSERT INTO dispatch_operations (
 		if err != nil {
 			return domain.TaskAttempt{}, mapLifecycleWriteError(err, "bound dispatch operation")
 		}
+
+		ws := binding.Workspace
+		if ws.CanonicalWorktreePath == "" {
+			ws = domain.WorkspaceBindingSnapshot{
+				CanonicalWorktreePath:       "C:\\repo\\worktree",
+				WorktreeVolumeSerialHex:     "0000000012345678",
+				WorktreeFileIDHex:           "000000000000000012345678abcdef01",
+				LinkedGitDirPath:            "C:\\repo\\worktree\\.git",
+				LinkedGitDirVolumeSerialHex: "0000000012345678",
+				LinkedGitDirFileIDHex:       "000000000000000012345678abcdef02",
+				PinnedAOCommit:              strings.Repeat("0", 40),
+			}
+		}
+		pinnedCommit := ws.PinnedAOCommit
+		if pinnedCommit == "" {
+			pinnedCommit = strings.Repeat("0", 40)
+		}
+		volSerial := ws.WorktreeVolumeSerialHex
+		fileID := ws.WorktreeFileIDHex
+		gitdirPath := ws.LinkedGitDirPath
+		gitdirVol := ws.LinkedGitDirVolumeSerialHex
+		gitdirFileID := ws.LinkedGitDirFileIDHex
+
+		insertBindingQuery := `
+INSERT INTO attempt_workspace_bindings (
+    attempt_id, task_id, contract_id, session_id, terminal_generation,
+    canonical_worktree_path, volume_serial_hex, file_id_hex,
+    linked_gitdir_path, linked_gitdir_volume_serial_hex, linked_gitdir_file_id_hex,
+    pinned_ao_commit, binding_state, created_at_epoch_ms
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?)
+`
+		_, err = tx.ExecContext(ctx, insertBindingQuery,
+			attemptID, taskID, contractID, binding.SessionID, binding.TerminalGeneration,
+			ws.CanonicalWorktreePath, volSerial, fileID,
+			gitdirPath, gitdirVol, gitdirFileID,
+			pinnedCommit, now.UnixMilli(),
+		)
+		if err != nil {
+			return domain.TaskAttempt{}, fmt.Errorf("store: failed to insert workspace binding: %w", err)
+		}
+
 		eventID, err := newAuditEventID()
 		if err != nil {
 			return domain.TaskAttempt{}, err
@@ -363,6 +405,36 @@ INSERT INTO dispatch_operations (
 			Details: map[string]any{
 				"session_id":          binding.SessionID,
 				"terminal_generation": binding.TerminalGeneration,
+			},
+		})
+		if err != nil {
+			return domain.TaskAttempt{}, err
+		}
+
+		wbEventID, err := newAuditEventID()
+		if err != nil {
+			return domain.TaskAttempt{}, err
+		}
+		_, err = appendAuditEventTx(ctx, tx, domain.AuditEvent{
+			EventID:    wbEventID,
+			EventType:  domain.AuditWorkspaceBindingCreated,
+			Timestamp:  now,
+			PairID:     pairID,
+			TaskID:     taskID,
+			ContractID: contractID,
+			AttemptID:  attemptID,
+			Actor:      "supervisor",
+			Details: map[string]any{
+				"session_id":                      binding.SessionID,
+				"terminal_generation":             binding.TerminalGeneration,
+				"canonical_worktree_path":         binding.Workspace.CanonicalWorktreePath,
+				"volume_serial_hex":               volSerial,
+				"file_id_hex":                     fileID,
+				"linked_gitdir_path":              gitdirPath,
+				"linked_gitdir_volume_serial_hex": gitdirVol,
+				"linked_gitdir_file_id_hex":       gitdirFileID,
+				"pinned_ao_commit":                pinnedCommit,
+				"binding_state":                   "ACTIVE",
 			},
 		})
 		if err != nil {

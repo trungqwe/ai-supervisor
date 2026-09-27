@@ -1050,3 +1050,212 @@ func TestLegacyManualStopExactRunningWithoutBudget(t *testing.T) {
 		t.Fatalf("manual stop replay effect calls=%d", replayKills)
 	}
 }
+
+type fakeWorkspaceAuthority struct {
+	acquireCalls int
+	failAcquire  bool
+	snapshot     *domain.WorkspaceBindingSnapshot
+}
+
+func (f *fakeWorkspaceAuthority) Acquire(ctx context.Context, candidate domain.WorkspaceBindingCandidate) (domain.WorkspaceBindingLease, error) {
+	f.acquireCalls++
+	if f.failAcquire {
+		return nil, errors.New("simulated acquire failure")
+	}
+	snap := domain.WorkspaceBindingSnapshot{
+		CanonicalWorktreePath:       candidate.CanonicalWorktreePath,
+		WorktreeVolumeSerialHex:     "0000000012345678",
+		WorktreeFileIDHex:           "000000000000000012345678abcdef01",
+		LinkedGitDirPath:            candidate.LinkedGitDirPath,
+		LinkedGitDirVolumeSerialHex: "0000000012345678",
+		LinkedGitDirFileIDHex:       "000000000000000012345678abcdef02",
+		PinnedAOCommit:              candidate.PinnedAOCommit,
+	}
+	if f.snapshot != nil {
+		snap = *f.snapshot
+	}
+	return &defaultRecoveryLease{snapshot: snap}, nil
+}
+
+func TestRestartRecoveryWorkspaceBindingVerification(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("ExactMatchRestartRecovery_AC_P04A_19_21", func(t *testing.T) {
+		s := newRecoveryStore(t)
+		session, generation, attemptID := seedBoundExecution(t, s, "exact-restart")
+		auth := &fakeWorkspaceAuthority{}
+		observer := &testObserver{
+			result: &ao.WorkerStatus{
+				ID:                 session,
+				TerminalGeneration: generation,
+				Activity:           ao.ActivitySnapshot{State: ao.ActivityStateIdle},
+			},
+		}
+		r := &Runner{
+			Store:                s,
+			AO:                   observer,
+			Host:                 &testHost{},
+			Authority:            auth,
+			ActivityPollInterval: time.Second,
+			ExecutionDeadline:    time.Minute,
+			Actor:                "supervisor",
+		}
+
+		report, err := r.Run(ctx)
+		if err != nil || !report.Complete {
+			t.Fatalf("Run failed: %+v %v", report, err)
+		}
+		if auth.acquireCalls != 1 {
+			t.Fatalf("acquire calls = %d, want 1", auth.acquireCalls)
+		}
+
+		// Verify effect boundaries per AC-P04A-21:
+		// Stage remains DISPATCH_BOUND, task remains DISPATCHED, attempt remains open.
+		task, err := s.GetTask(ctx, "exact-restart")
+		if err != nil || task.State != domain.StateDispatched {
+			t.Fatalf("task state = %v, want DISPATCHED: %v", task.State, err)
+		}
+		op, err := s.GetDispatchOperation(ctx, "dispatch-exact-restart")
+		if err != nil || op.Stage != domain.DispatchBound {
+			t.Fatalf("dispatch stage = %v, want DISPATCH_BOUND: %v", op.Stage, err)
+		}
+		attempt, err := s.GetTaskAttempt(ctx, attemptID)
+		if err != nil || attempt.EndedAt != nil {
+			t.Fatalf("attempt ended: %+v %v", attempt, err)
+		}
+		binding, err := s.GetAttemptWorkspaceBinding(ctx, attemptID)
+		if err != nil || binding.BindingState != domain.BindingStateActive {
+			t.Fatalf("binding state = %v, want ACTIVE: %v", binding.BindingState, err)
+		}
+	})
+
+	t.Run("AcquireFailureRestartRecovery_AC_P04A_19_21", func(t *testing.T) {
+		s := newRecoveryStore(t)
+		_, _, attemptID := seedBoundExecution(t, s, "acqfail-restart")
+		auth := &fakeWorkspaceAuthority{failAcquire: true}
+		observer := &testObserver{}
+		r := &Runner{
+			Store:                s,
+			AO:                   observer,
+			Host:                 &testHost{},
+			Authority:            auth,
+			ActivityPollInterval: time.Second,
+			ExecutionDeadline:    time.Minute,
+			Actor:                "supervisor",
+		}
+
+		report, err := r.Run(ctx)
+		if err != nil || !report.Complete {
+			t.Fatalf("Run failed: %+v %v", report, err)
+		}
+		if auth.acquireCalls != 1 {
+			t.Fatalf("acquire calls = %d, want 1", auth.acquireCalls)
+		}
+		// Zero AO calls made
+		observer.mu.Lock()
+		gets := observer.gets
+		observer.mu.Unlock()
+		if gets != 0 {
+			t.Fatalf("AO gets = %d, want 0", gets)
+		}
+
+		// Variant B verified: hold INVARIANT_MISMATCH active, binding INVALIDATED, task DISPATCHED, attempt open
+		holds, err := s.GetActiveReviewIntegrityHolds(ctx, attemptID)
+		if err != nil || len(holds) != 1 || holds[0].HoldReason != domain.HoldReasonInvariantMismatch {
+			t.Fatalf("expected 1 INVARIANT_MISMATCH hold, got: %+v %v", holds, err)
+		}
+		binding, err := s.GetAttemptWorkspaceBinding(ctx, attemptID)
+		if err != nil || binding.BindingState != domain.BindingStateInvalidated {
+			t.Fatalf("binding state = %v, want INVALIDATED: %v", binding.BindingState, err)
+		}
+		task, err := s.GetTask(ctx, "acqfail-restart")
+		if err != nil || task.State != domain.StateDispatched {
+			t.Fatalf("task state = %v, want DISPATCHED: %v", task.State, err)
+		}
+		op, err := s.GetDispatchOperation(ctx, "dispatch-acqfail-restart")
+		if err != nil || op.Stage != domain.DispatchBound {
+			t.Fatalf("dispatch stage = %v, want DISPATCH_BOUND: %v", op.Stage, err)
+		}
+		attempt, err := s.GetTaskAttempt(ctx, attemptID)
+		if err != nil || attempt.EndedAt != nil {
+			t.Fatalf("attempt ended prematurely: %+v %v", attempt, err)
+		}
+
+		// Governed terminalization via verified operator D12 transaction
+		err = s.AtomicTerminalTransition(ctx, "acqfail-restart", domain.StateDispatched, domain.StateFailed, "binding integrity failure", attemptID, "WORKSPACE_BINDING_INTEGRITY_FAILURE")
+		if err != nil {
+			t.Fatalf("terminal transition failed: %v", err)
+		}
+		termTask, err := s.GetTask(ctx, "acqfail-restart")
+		if err != nil || termTask.State != domain.StateFailed {
+			t.Fatalf("terminal task state = %v, want FAILED: %v", termTask.State, err)
+		}
+		termAttempt, err := s.GetTaskAttempt(ctx, attemptID)
+		if err != nil || termAttempt.EndedAt == nil || termAttempt.RecoveryDisposition == nil || *termAttempt.RecoveryDisposition != "WORKSPACE_BINDING_INTEGRITY_FAILURE" {
+			t.Fatalf("terminal attempt disposition mismatch: %+v %v", termAttempt, err)
+		}
+	})
+
+	t.Run("PhysicalIdentityMismatchRestartRecovery_AC_P04A_19_21", func(t *testing.T) {
+		s := newRecoveryStore(t)
+		_, _, attemptID := seedBoundExecution(t, s, "mismatch-restart")
+		auth := &fakeWorkspaceAuthority{
+			snapshot: &domain.WorkspaceBindingSnapshot{
+				CanonicalWorktreePath:       "C:\\repo\\worktree",
+				WorktreeVolumeSerialHex:     "0000000099999999", // Mismatched volume serial
+				WorktreeFileIDHex:           "000000000000000012345678abcdef01",
+				LinkedGitDirPath:            "C:\\repo\\worktree\\.git",
+				LinkedGitDirVolumeSerialHex: "0000000012345678",
+				LinkedGitDirFileIDHex:       "000000000000000012345678abcdef02",
+				PinnedAOCommit:              strings.Repeat("0", 40),
+			},
+		}
+		observer := &testObserver{}
+		r := &Runner{
+			Store:                s,
+			AO:                   observer,
+			Host:                 &testHost{},
+			Authority:            auth,
+			ActivityPollInterval: time.Second,
+			ExecutionDeadline:    time.Minute,
+			Actor:                "supervisor",
+		}
+
+		report, err := r.Run(ctx)
+		if err != nil || !report.Complete {
+			t.Fatalf("Run failed: %+v %v", report, err)
+		}
+		if auth.acquireCalls != 1 {
+			t.Fatalf("acquire calls = %d, want 1", auth.acquireCalls)
+		}
+		// Zero AO calls made
+		observer.mu.Lock()
+		gets := observer.gets
+		observer.mu.Unlock()
+		if gets != 0 {
+			t.Fatalf("AO gets = %d, want 0", gets)
+		}
+
+		// Variant B verified: hold INVARIANT_MISMATCH active, binding INVALIDATED, task DISPATCHED, attempt open
+		holds, err := s.GetActiveReviewIntegrityHolds(ctx, attemptID)
+		if err != nil || len(holds) != 1 || holds[0].HoldReason != domain.HoldReasonInvariantMismatch {
+			t.Fatalf("expected 1 INVARIANT_MISMATCH hold, got: %+v %v", holds, err)
+		}
+		binding, err := s.GetAttemptWorkspaceBinding(ctx, attemptID)
+		if err != nil || binding.BindingState != domain.BindingStateInvalidated {
+			t.Fatalf("binding state = %v, want INVALIDATED: %v", binding.BindingState, err)
+		}
+		task, err := s.GetTask(ctx, "mismatch-restart")
+		if err != nil || task.State != domain.StateDispatched {
+			t.Fatalf("task state = %v, want DISPATCHED: %v", task.State, err)
+		}
+		op, err := s.GetDispatchOperation(ctx, "dispatch-mismatch-restart")
+		if err != nil || op.Stage != domain.DispatchBound {
+			t.Fatalf("dispatch stage = %v, want DISPATCH_BOUND: %v", op.Stage, err)
+		}
+		attempt, err := s.GetTaskAttempt(ctx, attemptID)
+		if err != nil || attempt.EndedAt != nil {
+			t.Fatalf("attempt ended prematurely: %+v %v", attempt, err)
+		}
+	})
+}

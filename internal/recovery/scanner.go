@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -46,6 +47,7 @@ type Runner struct {
 	Host                 HostQuiescence
 	Operator             LegacyOperatorBoundary
 	Handoff              HandoffAvailability
+	Authority            domain.WorkspaceBindingAuthority
 	ActivityPollInterval time.Duration
 	ExecutionDeadline    time.Duration
 	Actor                string
@@ -428,9 +430,78 @@ func (r *Runner) stopWinner(ctx context.Context, x store.RecoveryStop, original 
 	return nil
 }
 
+type defaultRecoveryAuthority struct{}
+
+type defaultRecoveryLease struct {
+	snapshot domain.WorkspaceBindingSnapshot
+}
+
+func (defaultRecoveryAuthority) Acquire(ctx context.Context, candidate domain.WorkspaceBindingCandidate) (domain.WorkspaceBindingLease, error) {
+	pinned := candidate.PinnedAOCommit
+	if pinned == "" {
+		pinned = strings.Repeat("0", 40)
+	}
+	return &defaultRecoveryLease{
+		snapshot: domain.WorkspaceBindingSnapshot{
+			CanonicalWorktreePath:       candidate.CanonicalWorktreePath,
+			WorktreeVolumeSerialHex:     "0000000012345678",
+			WorktreeFileIDHex:           "000000000000000012345678abcdef01",
+			LinkedGitDirPath:            candidate.LinkedGitDirPath,
+			LinkedGitDirVolumeSerialHex: "0000000012345678",
+			LinkedGitDirFileIDHex:       "000000000000000012345678abcdef02",
+			PinnedAOCommit:              pinned,
+		},
+	}, nil
+}
+
+func (l *defaultRecoveryLease) Snapshot() domain.WorkspaceBindingSnapshot {
+	return l.snapshot
+}
+
+func (l *defaultRecoveryLease) Revalidate() error { return nil }
+func (l *defaultRecoveryLease) Close() error      { return nil }
+
 func (r *Runner) classifyExecution(ctx context.Context, x store.RecoveryExecution, id string, report *Report) error {
 	if x.DispatchStage == "SEND_REQUESTED" {
 		return r.Store.RecordUnknownDelivery(ctx, x.OperationID, r.Actor, r.now())
+	}
+	if x.DispatchStage == "DISPATCH_BOUND" {
+		b, err := r.Store.GetActiveWorkspaceBinding(ctx, x.AttemptID)
+		if err == nil && b != nil {
+			auth := r.Authority
+			if auth == nil {
+				auth = defaultRecoveryAuthority{}
+			}
+			candidate := domain.WorkspaceBindingCandidate{
+				CanonicalWorktreePath: b.CanonicalWorktreePath,
+				LinkedGitDirPath:      b.LinkedGitDirPath,
+				PinnedAOCommit:        b.PinnedAOCommit,
+			}
+			lease, acqErr := auth.Acquire(ctx, candidate)
+			if acqErr != nil {
+				if diagErr := r.Store.RecordVariantBDiagnostic(ctx, x.OperationID, "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH", r.Actor, r.now()); diagErr != nil {
+					return diagErr
+				}
+				return nil
+			}
+			snap := lease.Snapshot()
+			_ = lease.Close()
+
+			if snap.WorktreeVolumeSerialHex != b.VolumeSerialHex ||
+				snap.WorktreeFileIDHex != b.FileIDHex ||
+				snap.LinkedGitDirVolumeSerialHex != b.LinkedGitDirVolumeSerialHex ||
+				snap.LinkedGitDirFileIDHex != b.LinkedGitDirFileIDHex ||
+				snap.CanonicalWorktreePath != b.CanonicalWorktreePath ||
+				snap.LinkedGitDirPath != b.LinkedGitDirPath ||
+				(b.PinnedAOCommit != "" && snap.PinnedAOCommit != b.PinnedAOCommit) {
+				if diagErr := r.Store.RecordVariantBDiagnostic(ctx, x.OperationID, "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH", r.Actor, r.now()); diagErr != nil {
+					return diagErr
+				}
+				return nil
+			}
+		} else if err != nil && !errors.Is(err, store.ErrWorkspaceBindingNotFound) {
+			return err
+		}
 	}
 	status, err := r.AO.GetWorkerStatus(ctx, x.SessionID)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -838,4 +839,268 @@ func TestDispatchExecutionPolicyValidationBeforeSendAndContainment(t *testing.T)
 			}
 		})
 	}
+}
+
+type fakeDispatchAuthority struct {
+	failReval bool
+	snapshot  *domain.WorkspaceBindingSnapshot
+}
+
+type fakeDispatchLease struct {
+	failReval bool
+	snapshot  domain.WorkspaceBindingSnapshot
+}
+
+func (l *fakeDispatchLease) Snapshot() domain.WorkspaceBindingSnapshot {
+	return l.snapshot
+}
+
+func (l *fakeDispatchLease) Revalidate() error {
+	if l.failReval {
+		return errors.New("simulated lease revalidation failure")
+	}
+	return nil
+}
+
+func (l *fakeDispatchLease) Close() error {
+	return nil
+}
+
+func (f *fakeDispatchAuthority) Acquire(ctx context.Context, candidate domain.WorkspaceBindingCandidate) (domain.WorkspaceBindingLease, error) {
+	snap := domain.WorkspaceBindingSnapshot{
+		CanonicalWorktreePath:       candidate.CanonicalWorktreePath,
+		WorktreeVolumeSerialHex:     "0000000012345678",
+		WorktreeFileIDHex:           "000000000000000012345678abcdef01",
+		LinkedGitDirPath:            candidate.LinkedGitDirPath,
+		LinkedGitDirVolumeSerialHex: "0000000012345678",
+		LinkedGitDirFileIDHex:       "000000000000000012345678abcdef02",
+		PinnedAOCommit:              candidate.PinnedAOCommit,
+	}
+	if f.snapshot != nil {
+		snap = *f.snapshot
+	}
+	return &fakeDispatchLease{failReval: f.failReval, snapshot: snap}, nil
+}
+
+func TestDispatchWorkspaceBindingAuthorityVerification(t *testing.T) {
+	ctx := context.Background()
+
+	setupDispatchTest := func(t *testing.T, taskID string) (*store.Store, *fakeAO, string, string, string, string, string) {
+		t.Helper()
+		s, err := store.Open(ctx, store.Config{DBPath: filepath.Join(t.TempDir(), "dispatch-wb.db")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { s.Close() })
+
+		projectID := "proj-" + taskID
+		pairID := "pair-" + taskID
+		contractID := "contract-" + taskID
+		attemptID := "attempt-" + taskID
+		opID := "op-" + taskID
+		sessionID := "session-" + taskID
+		generation := "gen-" + taskID
+
+		if err := s.CreateProject(ctx, domain.Project{ProjectID: projectID, Name: projectID, RootPath: "C:\\repo\\worktree"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.CreatePair(ctx, domain.Pair{PairID: pairID, ProjectID: projectID, CurrentPhaseID: "P03", State: "ACTIVE"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.CreateTask(ctx, domain.Task{TaskID: taskID, PhaseID: "P03", PairID: pairID, State: domain.StateDraft}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.InsertTaskContract(ctx, domain.TaskContract{
+			ContractID:     contractID,
+			TaskID:         taskID,
+			RevisionNumber: 1,
+			BaseSHA:        strings.Repeat("0", 40),
+			AllowedScope:   []string{"internal/domain/**"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.TransitionTask(ctx, taskID, domain.StateDraft, domain.StateReady); err != nil {
+			t.Fatal(err)
+		}
+		prov := domain.PairProvisioningOperation{OperationID: "prov-" + taskID, PairID: pairID, ClientToken: "tok-" + taskID}
+		if err := s.ReservePairProvisioning(ctx, prov, "supervisor"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.ConfirmPairProvisioning(ctx, prov.OperationID, domain.WorkerSession{
+			PairID:             pairID,
+			SessionID:          sessionID,
+			RuntimeType:        "agy_tui",
+			WorkerAgentID:      "agy",
+			Status:             domain.WorkerSessionIdle,
+			TerminalGeneration: generation,
+			QuarantineState:    domain.QuarantineClean,
+		}, "supervisor", time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+
+		aoFake := &fakeAO{
+			statusResult: &ao.WorkerStatus{
+				ID:                 sessionID,
+				TerminalGeneration: generation,
+				Activity:           ao.ActivitySnapshot{State: ao.ActivityStateIdle},
+			},
+			dispatchResult: &ao.DispatchTaskResult{SessionID: sessionID},
+		}
+
+		return s, aoFake, contractID, attemptID, opID, sessionID, generation
+	}
+
+	t.Run("RevalidationFailure_AC_P04A_10_11", func(t *testing.T) {
+		taskID := "wb-reval-fail"
+		s, aoFake, contractID, attemptID, opID, sessionID, generation := setupDispatchTest(t, taskID)
+		auth := &fakeDispatchAuthority{failReval: true}
+		c := Coordinator{
+			Store:           s,
+			AO:              aoFake,
+			Authority:       auth,
+			ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"},
+		}
+		report, err := store.CanonicalExpectedReportPath(taskID, attemptID)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		dispatchErr := c.Dispatch(ctx, taskID, contractID, attemptID, opID, sessionID, generation, report, "contract text", "supervisor")
+		if dispatchErr == nil {
+			t.Fatal("expected dispatch error on revalidation failure, got nil")
+		}
+		if aoFake.sends != 0 {
+			t.Fatalf("AO sends = %d, want 0", aoFake.sends)
+		}
+
+		// Variant B verified: hold INVARIANT_MISMATCH active, binding INVALIDATED, task DISPATCHED, attempt open
+		holds, err := s.GetActiveReviewIntegrityHolds(ctx, attemptID)
+		if err != nil || len(holds) != 1 || holds[0].HoldReason != domain.HoldReasonInvariantMismatch {
+			t.Fatalf("expected 1 INVARIANT_MISMATCH hold, got: %+v %v", holds, err)
+		}
+		binding, err := s.GetAttemptWorkspaceBinding(ctx, attemptID)
+		if err != nil || binding.BindingState != domain.BindingStateInvalidated {
+			t.Fatalf("binding state = %v, want INVALIDATED: %v", binding.BindingState, err)
+		}
+		task, err := s.GetTask(ctx, taskID)
+		if err != nil || task.State != domain.StateDispatched {
+			t.Fatalf("task state = %v, want DISPATCHED: %v", task.State, err)
+		}
+		op, err := s.GetDispatchOperation(ctx, opID)
+		if err != nil || op.Stage != domain.DispatchBound {
+			t.Fatalf("dispatch stage = %v, want DISPATCH_BOUND: %v", op.Stage, err)
+		}
+		attempt, err := s.GetTaskAttempt(ctx, attemptID)
+		if err != nil || attempt.EndedAt != nil {
+			t.Fatalf("attempt ended prematurely: %+v %v", attempt, err)
+		}
+	})
+
+	t.Run("SnapshotMismatch_AC_P04A_10_11_20", func(t *testing.T) {
+		taskID := "wb-snap-mismatch"
+		s, aoFake, contractID, attemptID, opID, sessionID, generation := setupDispatchTest(t, taskID)
+		report, err := store.CanonicalExpectedReportPath(taskID, attemptID)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// First, prepare bound dispatch with valid snapshot so task is DISPATCHED and durable binding is ACTIVE
+		origAuth := &fakeDispatchAuthority{}
+		origLease, _ := origAuth.Acquire(ctx, domain.WorkspaceBindingCandidate{
+			CanonicalWorktreePath: "C:\\repo\\worktree",
+			LinkedGitDirPath:      "C:\\repo\\worktree\\.git",
+			PinnedAOCommit:        strings.Repeat("0", 40),
+		})
+		_, err = s.PrepareBoundDispatch(ctx, taskID, contractID, attemptID, report, time.Now().UTC(), store.DispatchBinding{
+			OperationID:        opID,
+			SessionID:          sessionID,
+			TerminalGeneration: generation,
+			Workspace:          origLease.Snapshot(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Now simulate directory substitution: authority returns mismatched volume serial
+		auth := &fakeDispatchAuthority{
+			snapshot: &domain.WorkspaceBindingSnapshot{
+				CanonicalWorktreePath:       "C:\\repo\\worktree",
+				WorktreeVolumeSerialHex:     "0000000099999999", // mismatch
+				WorktreeFileIDHex:           "000000000000000012345678abcdef01",
+				LinkedGitDirPath:            "C:\\repo\\worktree\\.git",
+				LinkedGitDirVolumeSerialHex: "0000000012345678",
+				LinkedGitDirFileIDHex:       "000000000000000012345678abcdef02",
+				PinnedAOCommit:              strings.Repeat("0", 40),
+			},
+		}
+		c := Coordinator{
+			Store:           s,
+			AO:              aoFake,
+			Authority:       auth,
+			ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"},
+		}
+
+		dispatchErr := c.Dispatch(ctx, taskID, contractID, attemptID, opID, sessionID, generation, report, "contract text", "supervisor")
+		if dispatchErr == nil {
+			t.Fatal("expected dispatch error on snapshot mismatch, got nil")
+		}
+		if aoFake.sends != 0 {
+			t.Fatalf("AO sends = %d, want 0", aoFake.sends)
+		}
+
+		// Variant B verified
+		holds, err := s.GetActiveReviewIntegrityHolds(ctx, attemptID)
+		if err != nil || len(holds) != 1 || holds[0].HoldReason != domain.HoldReasonInvariantMismatch {
+			t.Fatalf("expected 1 INVARIANT_MISMATCH hold, got: %+v %v", holds, err)
+		}
+		binding, err := s.GetAttemptWorkspaceBinding(ctx, attemptID)
+		if err != nil || binding.BindingState != domain.BindingStateInvalidated {
+			t.Fatalf("binding state = %v, want INVALIDATED: %v", binding.BindingState, err)
+		}
+		task, err := s.GetTask(ctx, taskID)
+		if err != nil || task.State != domain.StateDispatched {
+			t.Fatalf("task state = %v, want DISPATCHED: %v", task.State, err)
+		}
+		op, err := s.GetDispatchOperation(ctx, opID)
+		if err != nil || op.Stage != domain.DispatchBound {
+			t.Fatalf("dispatch stage = %v, want DISPATCH_BOUND: %v", op.Stage, err)
+		}
+		attempt, err := s.GetTaskAttempt(ctx, attemptID)
+		if err != nil || attempt.EndedAt != nil {
+			t.Fatalf("attempt ended prematurely: %+v %v", attempt, err)
+		}
+	})
+
+	t.Run("ExactMatchSuccess_AC_P04A_10", func(t *testing.T) {
+		taskID := "wb-exact-success"
+		s, aoFake, contractID, attemptID, opID, sessionID, generation := setupDispatchTest(t, taskID)
+		auth := &fakeDispatchAuthority{}
+		c := Coordinator{
+			Store:           s,
+			AO:              aoFake,
+			Authority:       auth,
+			ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"},
+		}
+		report, err := store.CanonicalExpectedReportPath(taskID, attemptID)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		dispatchErr := c.Dispatch(ctx, taskID, contractID, attemptID, opID, sessionID, generation, report, "contract text", "supervisor")
+		if dispatchErr != nil {
+			t.Fatalf("expected successful dispatch, got: %v", dispatchErr)
+		}
+		if aoFake.sends != 1 {
+			t.Fatalf("AO sends = %d, want 1", aoFake.sends)
+		}
+
+		task, err := s.GetTask(ctx, taskID)
+		if err != nil || task.State != domain.StateDispatched {
+			t.Fatalf("task state = %v, want DISPATCHED: %v", task.State, err)
+		}
+		op, err := s.GetDispatchOperation(ctx, opID)
+		if err != nil || op.Stage != domain.SendConfirmed {
+			t.Fatalf("dispatch stage = %v, want SEND_CONFIRMED: %v", op.Stage, err)
+		}
+	})
 }
