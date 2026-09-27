@@ -44,3 +44,11 @@ Runtime timeout monitor tái sử dụng `stop.Coordinator` và `Store.ReserveSt
 - **Windows Win32 Kernel APIs**: Tái sử dụng `CreateFileW` (share mode 0 cho sidecar lock, và share READ|WRITE không DELETE cho pinned DB handle), `GetFinalPathNameByHandleW` (chuẩn hóa đường dẫn), `GetFileInformationByHandleEx` (`FILE_ID_INFO` 128-bit trên ReFS/NTFS).
 - **Store SQLite Layer**: Tái sử dụng trọn vẹn `internal/store` và `store.Open(ctx, store.Config{DBPath, BusyTimeoutMs})` mà không viết lại kết nối SQLite hay duplicate migrations.
 - **Domain & Lifecycle Engines**: Tái sử dụng `recovery.Runner`, `stop.Coordinator`, `audit.Store` cho integration harness của Phase P03 mà không tạo mới test surfaces dư thừa.
+
+## Phase P04 Evidence Review & Verification Isolation Reuse Decision (ADR-018, CR-12)
+
+- **Windows Win32 Process & Job Isolation**: Tái sử dụng Windows OS Win32 APIs (`CreateProcessW`, `STARTUPINFOEXW`, `UpdateProcThreadAttribute`, `CreateJobObjectW`, `SetInformationJobObject`, `AssignProcessToJobObject`) cho unforgeable Windows AppContainer process isolation, explicit stdio-only `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, atomic Job Object kill-on-close (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`), và network restriction SID. Không triển khai custom process runner hay unconstrained shell execution.
+- **Standard Library `crypto/sha256`**: Tái sử dụng thư viện chuẩn Go `crypto/sha256` cho RFC 8785 JCS canonical event hashing, Descriptors A/B/C identity derivation, và Content-Addressed Store (`artifacts/<first-two-hex>/<captured_sha256>`). Không sử dụng third-party crypto packages hay non-standard hash algorithms.
+- **JSON Schema Validation (`github.com/google/jsonschema-go`)**: Tái sử dụng thư viện chuẩn JSON Schema Draft-07 để biên dịch và kiểm chứng ReviewBundle documents và task contract verification profile parameters. Không phát minh custom schema DSLs.
+- **Inert Fake AO Adapter Test Harness**: Tái sử dụng in-process synthetic session harness trả về deterministic JSON fixtures cho test suite Subtask P04D mà không tạo tiến trình live hay kết nối socket ngoài.
+- **Pinned Upstream Boundaries**: Giữ nguyên wire contract của Untrivial Agent Orchestrator `v0.13.0`; không phụ thuộc vào các unverified AO endpoints.

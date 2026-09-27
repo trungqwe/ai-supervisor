@@ -57,10 +57,24 @@ interface AOWorkerStatus {
 
 ### Pre-Send Admissibility & Process Control Policies
 
-1. **Strict Pre-Send Admissibility Whitelist (ADR-016 D7)**:
-   - Positioned in the dispatch saga strictly after committing the atomic `DISPATCH_BOUND` transaction and immediately before recording `SEND_REQUESTED` (`DISPATCH_BOUND -> pre-send check -> SEND_REQUESTED -> HTTP 200 -> SEND_CONFIRMED`).
-   - The Supervisor invokes `getWorkerStatus(sessionId)` and verifies string equality against the bound `session_id` and `terminal_generation`.
-   - Dispatch is permitted **ONLY** when `AOWorkerStatus.status IN ('idle', 'waiting_input')`.
+1. **Strict Pre-Send Admissibility Whitelist & 14 Verification Guards (ADR-016 D7, ADR-018 D1)**:
+   - Positioned in the dispatch saga strictly after committing the atomic `DISPATCH_BOUND` + workspace binding transaction and immediately before recording `SEND_REQUESTED` (`DISPATCH_BOUND -> pre-send check -> SEND_REQUESTED -> HTTP 200 -> SEND_CONFIRMED`).
+   - Single Coordinator Effect Gate (`Coordinator.Dispatch` in `internal/dispatch/coordinator.go`) holds the live `WorkspaceBindingLease` in its call frame across the entire pre-send sequence. Prohibits invoking `/send` with snapshot only.
+   - All 14 mandatory guards must evaluate successfully before transitioning to `SEND_REQUESTED`:
+     1. `dispatch_operations.stage = 'DISPATCH_BOUND'`
+     2. `dispatch_operations.resolution_state IS NULL`
+     3. `task_attempts.recovery_disposition IS NULL`
+     4. `tasks.state = 'DISPATCHED'`
+     5. Exact current open attempt (`current_attempt = attempt_number`, `ended_at IS NULL`)
+     6. Exact task/contract/Pair/session/generation lineage match
+     7. Current `WorkerSession` matches and `quarantine_state = 'CLEAN'`
+     8. Current `TaskAttempt` `quarantine_state = 'CLEAN'`
+     9. Zero unresolved `pair_restore_operations` (`NOT EXISTS (SELECT 1 FROM pair_restore_operations WHERE pair_id = ? AND resolution_state <> 'RESTORE_RESOLVED')`)
+     10. Zero unresolved `pair_provisioning_operations` (`NOT EXISTS (SELECT 1 FROM pair_provisioning_operations WHERE pair_id = ? AND stage IN ('PROVISION_REQUESTED','PROVISION_FAILED'))`)
+     11. Fresh AO observation is `idle` or `waiting_input`, not terminated
+     12. Exactly one `attempt_workspace_bindings` row with `binding_state = 'ACTIVE'`
+     13. Live `WorkspaceBindingLease.Revalidate()` passes and matches database row
+     14. Zero `ACTIVE` `review_integrity_holds` for the attempt (`NOT EXISTS (SELECT 1 FROM review_integrity_holds WHERE attempt_id = ? AND hold_state = 'ACTIVE')`)
    - Dispatch is **STRICTLY PROHIBITED** and must fail closed if status is `active` (indicating an unexpected foreign or lingering turn in flight) or terminal (`blocked`, `exited`, `isTerminated == true`).
 
 2. **Purpose-Aware Stop Lifecycle & Wire Realism (ADR-016 D11)**:
@@ -94,6 +108,7 @@ interface AOWorkerStatus {
 3. **Graceful Fallback**: If an AO API endpoint fails, the adapter emits domain-typed exceptions (`AODaemonUnavailableException`, `AOSessionNotFoundException`) rather than unhandled transport crashes.
 4. **No StateStore Ownership**: The `AOAdapter` is strictly an anti-corruption transport adapter. It has zero dependency on StateStore or SQLite (`AOADAPTER_STATESTORE_DEPENDENCY = FORBIDDEN`, `AOADAPTER_DIRECT_SQL = FORBIDDEN`), performs zero `TaskAttempt` allocations, and does not own or execute Task state transitions. All Task state transitions are owned and executed exclusively by the Supervisor orchestration/use-case layer using existing P02 domain/StateStore APIs.
 5. **Read-Only Workspace File Retrieval**: `getWorkspaceFile` calls AO public REST (`GET /api/v1/sessions/{id}/workspace/file?path={relPath}`) strictly within session-scoped relative paths; returns raw bounded artifact content; performs zero `WorkerReport` semantic validation, zero `WorkerClaim` creation, and zero StateStore transitions (strictly reserved for Phase P04 `EvidenceCollector`).
+6. **Windows AppContainer Isolation & Verification Boundary (ADR-018 D3)**: Independent test verification runs under Subtask P04C as a pure in-memory component (zero SQLite writes) using Win32 `CreateProcessW` with `STARTUPINFOEXW`, explicit stdio-only `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, atomic Job Object assignment with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, network restriction SID, and authoritative process-death proof. Artifact streaming enforces 10 MB capture limit vs 50 MB hard safety limit.
 
 ---
 
@@ -137,3 +152,9 @@ Pinned AO /restore chỉ nhận sessionId; không có client operation/idempoten
 ## 4. Execution budget: AO observation và effect boundary
 
 Pinned AO không cung cấp actual execution-start timestamp, durable policy snapshot hay idempotent `/kill` permit. Supervisor dùng `dispatch_operations.confirmed_at` của validated HTTP 200 làm budget origin, không gọi đó là execution start. Fresh GET trước Tx R và GET thứ hai sau reservation chỉ là observation tại từng thời điểm; AO có thể đổi ngay sau GET. `/kill` wire vẫn chỉ có `sessionId`; exact generation/Pair, budget, purpose và timeout cause là Supervisor metadata/precheck, không là upstream generation fence. Chỉ live winner của Tx R dưới shared host admission được effect một lần. Persisted stop row hoặc maintenance release không cấp lại quyền. Trusted maintenance cho legacy giữ normal admission đóng, drain/join các caller xung đột; fake host/principal tests không chứng minh runtime authentication hay cross-process exclusivity. Xem addendum execution budget §§4–6.
+
+## 5. Inert Fake AO Adapter Harness (ADR-018 D4)
+
+- **Pure In-Process Synthetic Session Harness**: Designed for automated test suites under Subtask P04D, returning deterministic JSON fixtures and simulated agent execution results without spawning live processes or communicating over external network sockets.
+- **Decoupled Live AO Track**: Live AO integration remains held in an unverified evidence track (`LIVE_AO_INTEGRATION = UNVERIFIED_EVIDENCE_TRACK`). Live daemon dependencies do not block Phase P04 evidence collection, verification, or bundle compilation.
+- **Fail-Closed Invariant**: `AUTOMATIC_RESTORE = DISABLED` remains permanently fail-closed across all test and production environments until verified operator principal reaches the trusted boundary.

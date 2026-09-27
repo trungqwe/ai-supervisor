@@ -1,4 +1,4 @@
-﻿# SOURCE REGISTRY & UPSTREAM REPOSITORY REGISTER
+# SOURCE REGISTRY & UPSTREAM REPOSITORY REGISTER
 
 > **Authority**: Comprehensive Repository Register & Architectural Provenance  
 > **Status**: Approved Documentation Baseline (Post-Re-Audit #2 Hygiene)  
@@ -60,3 +60,11 @@
 ## 4. Execution budget source boundary (ADR-016 addendum)
 
 Không thêm upstream hoặc thay pinned AO trong quyết định execution budget. Nguồn AO đã đăng ký chỉ cung cấp status theo session và `/kill` theo `sessionId`; không cung cấp actual execution-start timestamp, policy/deadline bền vững hay one-use kill permit. `dispatch_operations.confirmed_at` là provenance HTTP 200 do Supervisor Store ghi, không phải thuộc tính AO về lúc bắt đầu execution. Xem ADR-016 addendum execution budget §§1, 4–5; host admission/quiescence và historical policy evidence là dependency do host/operator cung cấp, không suy từ upstream.
+
+## 5. Phase P04 Technology Register & Inert Test Harness (ADR-018, CR-07, CR-12)
+
+- **`crypto/sha256` (Go Standard Library)**: Cryptographic SHA-256 implementation used for RFC 8785 JCS event derivation, Descriptors A/B/C identity hashing, and CAS artifact addressing (`artifacts/<first-two-hex>/<captured_sha256>`).
+- **`kernel32.dll` (Windows Win32 OS API)**: Core Windows system library providing `CreateProcessW`, `STARTUPINFOEXW`, `UpdateProcThreadAttribute`, `CreateJobObjectW`, `SetInformationJobObject`, and `AssignProcessToJobObject` for unforgeable process isolation, stdio-only handle inheritance lists, and atomic Job Object kill-on-close.
+- **`github.com/google/jsonschema-go`**: Standard JSON Schema Draft-07 compilation and validation library for ReviewBundle documents and verification profile parameter validation.
+- **Inert Fake AO Adapter Test Harness**: Pure in-process synthetic session harness designed for automated test suites under Subtask P04D, returning deterministic JSON fixtures without spawning live processes or communicating over external network sockets.
+- **Pinned Upstream Wire Contract**: Untrivial Agent Orchestrator `v0.13.0` (`15e9ea971f1711ec8b50e157d6eb300db6cbe0d6`) wire contract remains unchanged; zero reliance on unverified AO endpoints.

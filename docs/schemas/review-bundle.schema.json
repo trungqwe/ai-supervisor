@@ -1,11 +1,14 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "ReviewBundle",
+  "title": "ReviewBundlePayload",
+  "description": "Canonical pre-hash ReviewBundle payload validated and canonicalized via RFC 8785 JCS as the hash preimage for bundle_hash",
   "type": "object",
   "required": [
     "bundle_id",
+    "evidence_set_id",
     "task_id",
     "attempt_id",
+    "contract_id",
     "task_contract",
     "worker_claims",
     "actual_git_evidence",
@@ -13,10 +16,14 @@
     "policy_findings",
     "unverified_claims",
     "recommended_review_focus",
-    "generated_at"
+    "generated_at",
+    "evidence_finalized_at_epoch_ms"
   ],
   "properties": {
     "bundle_id": {
+      "type": "string"
+    },
+    "evidence_set_id": {
       "type": "string"
     },
     "task_id": {
@@ -25,11 +32,23 @@
     "attempt_id": {
       "type": "string"
     },
+    "contract_id": {
+      "type": "string"
+    },
     "task_contract": {
       "type": "object"
     },
     "worker_claims": {
-      "type": "object"
+      "type": "object",
+      "required": [
+        "reported_head_sha"
+      ],
+      "properties": {
+        "reported_head_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$"
+        }
+      }
     },
     "actual_git_evidence": {
       "type": "object",
@@ -44,7 +63,8 @@
           "type": "string"
         },
         "actual_head_sha": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$"
         },
         "actual_changed_files": {
           "type": "array",
@@ -109,6 +129,11 @@
     "generated_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "evidence_finalized_at_epoch_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Durable committed timestamp (T0) from Transaction B, established prior to ReviewBundle synthesis"
     }
   },
   "additionalProperties": false

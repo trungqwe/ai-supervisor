@@ -166,3 +166,41 @@ AO không cung cấp actual execution start, policy snapshot, deadline persisten
 - **`internal/host`**: Subsystem chịu trách nhiệm quản lý vòng đời tiến trình, machine-wide exclusivity qua sidecar lock (`<canonical_db_path>.owner.lock`), pinned DB handle (`hPinnedDB`), chuẩn hóa Win32 DOS path, xác thực Named Pipe caller token SID, và điều phối shutdown drain. Nguồn gốc: thiết kế nội bộ chuẩn hóa theo ADR-017 và Windows kernel security best practices.
 - **`cmd/supervisor`**: Binary daemon entrypoint tích hợp `HostQuiescence`, startup-before-serve probe, listener readiness, và shutdown signal handling.
 - **`test/integration`**: P03 Integration Harness (`ao_harness_test.go`) kiểm chứng 5 bước AO exit gate thông qua public API thư viện nội bộ mà không kéo dependencies của P04/P05.
+
+# 7. Phase P04 Evidence Review & Verification Isolation Modules (ADR-018)
+
+### 7.1 Planned Modules & Subsystems
+- **`internal/store` (Subtask P04A Persistence Seam)**:
+  - **Purpose**: Schema v6 persistence seam, establishing canonical workspace binding authority, anti-rename handle hold, Transaction A report ingestion & `worker_claims` persistence, dirty rollback on unclean inspection result, and intake diagnostic persistence (`review_integrity_holds` with `DIRTY_WORKTREE_DETECTED`, `EVIDENCE_COLLECTION_FAILED`).
+  - **Mechanism**: SQLite WAL transactions on Schema v6 tables (`attempt_workspace_bindings`, `worker_claims`, `review_integrity_holds`).
+  - **Persistence Boundary**: Sole persistence owner of Schema v6. Owns Transaction A and the intake diagnostic transaction.
+- **`internal/evidence` (Subtask P04B Pure Collector)**:
+  - **Purpose**: Pure in-memory workspace intake inspection and Git diff collection without mutating repository files.
+  - **Mechanism**: Runs `git status --porcelain=v1 -z --untracked-files=all` and `git diff-index --quiet HEAD --` within bound canonical worktrees, returning structured in-memory `GitEvidenceResult` to Subtask P04A.
+  - **Persistence Boundary**: Pure in-memory (zero migrations, zero SQLite writes, zero audit appends, zero hold mutations; does NOT own Transaction A or diagnostic transaction).
+- **`internal/verification` (Subtask P04C)**:
+  - **Purpose**: Pure in-memory isolated execution boundary for verification profile runs on Windows.
+  - **Mechanism**: Windows AppContainer sandbox using Win32 `CreateProcessW` with `STARTUPINFOEXW`, explicit stdio-only `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, atomic Job Object assignment with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, network restriction SID, 10MB/50MB stream limits, and process-death proof.
+  - **Persistence Boundary**: Pure in-memory (zero migrations, zero SQLite writes, zero audit appends, zero hold mutations).
+- **`internal/review` (Subtask P04D)**:
+  - **Purpose**: Assembles immutable ReviewBundles into Content-Addressed Store, derives RFC 8785 JCS hashes, manages linear verification leases, and provides inert fake AO adapter test harness.
+  - **CAS Layout**: Atomic write-through to `artifacts/<first-two-hex>/<captured_sha256>`.
+  - **Latency Semantics**: Computes `compilation_latency_ms = bundle_assembled_at_epoch_ms - evidence_finalized_at_epoch_ms`, sets `nfr008_compliance_status = 'UNVERIFIED'`, maintains 2x2 measurement provenance matrix, and decouples post-commit monotonic telemetry.
+
+### 7.2 Model 1 Persistence Ownership & Schema Versioning (CR-09)
+Phase P04 strictly enforces Model 1 persistence ownership across subtasks:
+1. **Schema v6 (Subtask P04A)**:
+   - Owns `attempt_workspace_bindings` (with trigger requiring `dispatch_operations.stage = 'DISPATCH_BOUND'`), `worker_claims`, and `review_integrity_holds` (with active deduplication index and triggers). Owns Transaction A and the intake diagnostic transaction.
+2. **Schema v9 (Subtask P04D)**:
+   - Owns `task_verification_leases` (with linear lease chain `predecessor_lease_id` and monotonic token validation), `evidence_sets`, `review_artifacts`, and `review_bundles`.
+3. **Pure In-Memory Subtasks (P04B & P04C)**:
+   - Zero SQLite migrations, zero SQLite table writes, zero audit log appends, and zero hold mutations.
+4. **Sequencing Guard**:
+   - Implementation contract sequencing is strictly `P04A -> P04B -> P04C -> P04D`.
+   - P04 runtime admission remains closed until Subtask P04D startup recovery scanner is operational.
+
+### 7.3 Anti-Reinvention Proof & Reused Technologies (CR-12)
+- **`crypto/sha256`**: Standard library hashing for RFC 8785 JCS canonical event IDs, descriptor identity hashing, and CAS artifact addressing. Zero third-party crypto dependencies.
+- **`kernel32.dll`**: Win32 OS APIs (`CreateProcessW`, `STARTUPINFOEXW`, `UpdateProcThreadAttribute`, `CreateJobObjectW`, `SetInformationJobObject`, `AssignProcessToJobObject`) for unforgeable Windows process isolation and handle inheritance gating. Zero custom process wrappers.
+- **`github.com/google/jsonschema-go`**: Standard JSON Schema Draft-07 compilation and validation for ReviewBundle documents and verification profile parameters. Zero bespoke schema DSLs.
+- **Inert Fake AO Adapter Test Harness**: In-process synthetic session harness returning deterministic JSON fixtures for automated integration suites without spawning live external processes.
