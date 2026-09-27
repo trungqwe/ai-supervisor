@@ -333,6 +333,12 @@ BEGIN
 END;
 ```
 
+#### 3.1.8. Migration v5 Testing Preservation Constraint (Finding P04A-R2-001)
+`internal/store/migrations_v5_test.go` asserts schema properties including `user_version` against `CurrentSchemaVersion`. When `CurrentSchemaVersion` advances from 5 to 6 in Subtask P04A:
+- `migrations_v5_test.go` is included in `allowed_scope` strictly to preserve v5 upgrade and rollback test coverage without regression.
+- Modifications to `migrations_v5_test.go` are strictly restricted to accommodating `CurrentSchemaVersion = 6` (e.g. testing intermediate migration state up to v5).
+- Zero weakening of v5 fixtures, v5 rollback tests, or historical migration verification is permitted.
+
 ---
 
 ### 3.2. Host Workspace Binding Authority (`internal/host/`)
@@ -374,15 +380,15 @@ END;
 
 ---
 
-### 3.4. 14 Pre-Send Verification Guards & Coordinator Effect Gate (`internal/dispatch/coordinator.go`)
+### 3.4. 14 Pre-Send Verification Guards & Coordinator Effect Gate (`internal/dispatch/coordinator.go`, `internal/store/dispatch_transactions.go`)
 
 In `Coordinator.Dispatch`, a single continuous function frame manages handle lifetime across the 9-step dispatch sequence:
 1. `authority.Acquire(ctx, candidate)` -> live `lease` (Win32 handles open).
-2. Extract immutable `WorkspaceBindingSnapshot`.
+2. Extract immutable `WorkspaceBindingSnapshot` via `lease.Snapshot()`.
 3. Commit `store.PrepareBoundDispatch` with snapshot.
 4. Query fresh `GetWorkerStatus` from AO client.
-5. Revalidate live lease: `lease.Revalidate()`.
-6. Commit `store.RecordSendRequested` evaluating all 14 guards:
+5. Revalidate live lease: `lease.Revalidate()`, confirming held OS handles remain valid and physical identity matches snapshot.
+6. Commit `store.RecordSendRequested(ctx, operationID, ..., verifiedSnapshot, ...)` evaluating all 14 guards in a single SQLite transaction:
    1. `dispatch_operations.stage = 'DISPATCH_BOUND'`
    2. `dispatch_operations.resolution_state IS NULL`
    3. `task_attempts.recovery_disposition IS NULL`
@@ -395,17 +401,26 @@ In `Coordinator.Dispatch`, a single continuous function frame manages handle lif
    10. Provisioning Guard: `NOT EXISTS (SELECT 1 FROM pair_provisioning_operations WHERE pair_id = ? AND stage IN ('PROVISION_REQUESTED','PROVISION_FAILED'))`
    11. Fresh AO observation is idle or waiting_input (not terminated)
    12. Exactly one `attempt_workspace_bindings` row with `binding_state = 'ACTIVE'`
-   13. Live `WorkspaceBindingLease.Revalidate()` PASS
-   14. Zero `ACTIVE` holds in `review_integrity_holds` for attempt
+   13. Snapshot Equality Guard (Finding P04A-R2-002): Store performs pure DB equality check between the verified `WorkspaceBindingSnapshot` passed by Coordinator and the active `attempt_workspace_bindings` row in the same transaction:
+       - `canonical_worktree_path`
+       - `worktree_volume_serial_hex`
+       - `worktree_file_id_hex`
+       - `linked_gitdir_path`
+       - `linked_gitdir_volume_serial_hex`
+       - `linked_gitdir_file_id_hex`
+       - `pinned_ao_commit`
+       - exact task/attempt/contract/Pair/session/generation lineage
+   14. Zero `ACTIVE` holds in `review_integrity_holds` for attempt (`NOT EXISTS (SELECT 1 FROM review_integrity_holds WHERE attempt_id = ? AND hold_state = 'ACTIVE')`)
 7. Issue AO `/send` (`DispatchTaskContract`) while lease remains open.
 8. Commit confirmed or containment transition.
 9. Close lease in `defer`.
 
-#### 3.4.1. Pre-Send Diagnostic Variant B Transaction (Finding P04A-C1-003)
-If any workspace binding guard fails:
-- `/send` is strictly forbidden.
+#### 3.4.1. Pre-Send Diagnostic Variant B Transaction (Findings P04A-C1-003, P04A-R2-002, P04A-R2-003)
+If any workspace binding guard fails (Guards 12-14 or snapshot mismatch):
+- Merely having an `ACTIVE` binding row in the DB is strictly NOT sufficient; snapshot mismatch is treated as an active binding integrity failure.
+- `/send` is strictly forbidden (AO send call count remains exactly 0).
 - Task remains `DISPATCHED`, operation remains `DISPATCH_BOUND`, attempt remains open.
-- Separate atomic diagnostic transaction:
+- Separate atomic diagnostic transaction (Variant B: `WORKSPACE_BINDING_GUARD`):
   1. Derives `hold_id` via Descriptor A (`kind: "review_integrity_hold"`).
   2. Derives `rejection_event_id` via Descriptor B Variant B:
      ```json
@@ -430,7 +445,21 @@ If any workspace binding guard fails:
   3. Appends audit event `REVIEW_INTEGRITY_CONFLICT` with `actor = 'ai-supervisor-daemon'` and `details_json` containing: `conflict_source`, `dispatch_operation_id`, `attempted_reason`, `conflict_type`, `sanitized_input_fingerprint`, `diagnostic_fingerprint`, and `actor_role = 'SUPERVISOR'`.
   4. Inserts `ACTIVE` hold into `review_integrity_holds` (`hold_reason = 'INVARIANT_MISMATCH'`).
   5. CAS invalidates binding: `UPDATE attempt_workspace_bindings SET binding_state = 'INVALIDATED', released_at_epoch_ms = now WHERE attempt_id = ? AND binding_state = 'ACTIVE'`.
-- Attempt terminalization requires separate governed operator action (`DISPATCHED -> FAILED`, `recovery_disposition = 'WORKSPACE_BINDING_INTEGRITY_FAILURE'`).
+  6. Commits diagnostic transaction atomically.
+- **Governed Terminal Resolution Sequence (Finding P04A-R2-003)**:
+  * Attempt terminalization is strictly NOT performed in the scanner or coordinator diagnostic transaction.
+  * Terminalization requires a separate D12 atomic terminal transition transaction executed by a verified operator:
+    - `tasks`: CAS `state = 'FAILED'` where `task_id = ? AND state = 'DISPATCHED'`.
+    - `task_attempts`: `ended_at = now`, `recovery_disposition = 'WORKSPACE_BINDING_INTEGRITY_FAILURE'`.
+  * The system never automatically transitions the attempt to `HUMAN_REQUIRED` or terminal failure during diagnostic handling.
+- **Behavior Tests**:
+  * Exact snapshot PASS;
+  * Stale/fake snapshot FAIL;
+  * Path or worktree FileId mismatch FAIL;
+  * Linked gitdir identity mismatch FAIL;
+  * Pinned AO commit mismatch FAIL;
+  * All failure pathways verify AO `/send` call count is exactly 0 and audit/hold/binding CAS rollback is atomic.
+- All direct callers of `RecordSendRequested` must supply a valid `WorkspaceBindingSnapshot`; zero snapshot-less bypass pathways are permitted.
 
 ---
 
@@ -518,58 +547,69 @@ If `GitEvidenceResult.IsClean` is false:
 
 ---
 
-### 3.6. Caller Impact Matrix, Scope Closure & Daemon Restart Recovery (Finding P04A-R1-003)
+### 3.6. Caller Impact Matrix, Scope Closure & Daemon Restart Recovery (Findings P04A-R1-003, P04A-R2-001, P04A-R2-003)
 
-#### 3.6.1. Caller Impact Matrix
-To guarantee that no API pathway or caller can allocate an attempt or issue `/send` without an active, verified workspace binding, all callers of `PrepareBoundDispatch`, `RecordSendRequested`, and `dispatch.Coordinator` are cataloged and reconciled:
+#### 3.6.1. Comprehensive Caller Impact Matrix
+To guarantee that no API pathway or caller can allocate an attempt or issue `/send` without an active, verified workspace binding, every direct caller of `PrepareBoundDispatch`, `RecordSendRequested`, and `dispatch.Coordinator` construction identified via static repository analysis is explicitly cataloged, reconciled, and bounded within `allowed_scope`:
 
 | Function / Seam | Affected File | Caller Role / Impact | Remediation & Scope Allocation |
 |---|---|---|---|
-| `PrepareBoundDispatch` | `internal/store/dispatch.go` | Seam Definition | Extends transaction to accept `WorkspaceBindingSnapshot` and insert `attempt_workspace_bindings` (ACTIVE) atomically. (In `allowed_scope`). |
-| `PrepareBoundDispatch` | `internal/dispatch/coordinator.go` | Coordinator Effect Gate | Calls `PrepareBoundDispatch` with live lease snapshot during 9-step dispatch sequence. (In `allowed_scope`). |
-| `PrepareBoundDispatch` | `internal/dispatch/coordinator_test.go` | Dispatch Tests | Exercises atomic dispatch + workspace binding creation and rollback pathways. (In `allowed_scope`). |
-| `PrepareBoundDispatch` | `internal/store/session_lifecycle_test.go` | Store Lifecycle Tests | Updated to pass valid test workspace binding snapshot. (In `allowed_scope`). |
-| `PrepareBoundDispatch` | `internal/store/session_lifecycle_remediation_test.go` | Remediation Tests | Updated to pass valid test workspace binding snapshot. (In `allowed_scope`). |
-| `PrepareBoundDispatch` | `internal/store/atomic_transitions_test.go` | Atomic Tests | Updated to pass valid test workspace binding snapshot. (In `allowed_scope`). |
-| `PrepareBoundDispatch` | `internal/store/dispatch_test.go` | Dispatch Seam Tests | Updated to pass valid test workspace binding snapshot. (In `allowed_scope`). |
-| `PrepareBoundDispatch` | `internal/recovery/scanner_test.go` | Recovery Test Helper | `seedBoundExecution` helper updated to supply valid test workspace binding snapshot, cascading to all recovery tests. (In `allowed_scope`). |
-| `RecordSendRequested` | `internal/store/dispatch_transactions.go` | Seam Definition | Enforces 14 pre-send guards including Guard 12 (active binding) and Guard 14 (zero active holds). (In `allowed_scope`). |
-| `RecordSendRequested` | `internal/dispatch/coordinator.go` | Coordinator Pre-Send | Commits send intent only after live lease revalidation passes. (In `allowed_scope`). |
-| `RecordSendRequested` | `internal/store/dispatch_transactions_test.go` | Transaction Tests | Exercises Guard 12 and Guard 14 validation and rejection. (In `allowed_scope`). |
-| `RecordSendRequested` | `internal/store/stop_transactions_test.go` | Stop Invariant Tests | Indirectly satisfied via bound dispatch fixtures with active binding. (In `allowed_scope`). |
-| `RecordSendRequested` | `internal/store/restore_transactions_test.go` | Restore Tests | Indirectly satisfied via bound dispatch fixtures with active binding. (In `allowed_scope`). |
-| `RecordSendRequested` | `internal/store/recovery_transactions_test.go` | Recovery Store Tests | Indirectly satisfied via bound dispatch fixtures with active binding. (In `allowed_scope`). |
-| `RecordSendRequested` | `internal/recovery/scanner.go` | Recovery Scanner | Evaluates in-flight recovery executions; fail-closed without reacquired binding. (In `allowed_scope`). |
-| `RecordSendRequested` | `internal/recovery/timeout_monitor_test.go` | Monitor Tests | Seeds executions via `seedBoundExecution` (in `allowed_scope` via `scanner_test.go`). |
-| `RecordSendRequested` | `internal/recovery/poller_test.go` | Poller Tests | Seeds executions via `seedBoundExecution` (in `allowed_scope` via `scanner_test.go`). |
-| `RecordSendRequested` | `internal/recovery/integration_test.go` | Integration Tests | Seeds executions via `seedBoundExecution` (in `allowed_scope` via `scanner_test.go`). |
-| `Coordinator` Construction | `internal/dispatch/coordinator.go` | Struct Definition | Injects `WorkspaceBindingAuthority` domain interface. (In `allowed_scope`). |
-| `Coordinator` Construction | `internal/dispatch/coordinator_test.go` | Unit Tests | Injects mock/fake `WorkspaceBindingAuthority`. (In `allowed_scope`). |
-| `Coordinator` Construction | `test/integration/ao_harness_test.go` | Full Harness Test | Injects test `WorkspaceBindingAuthority`. (In `allowed_scope`). |
+| `PrepareBoundDispatch` | `internal/store/dispatch.go` | Seam Definition | Extends transaction to accept `WorkspaceBindingSnapshot` and insert `attempt_workspace_bindings` (ACTIVE) atomically. (Directly in `allowed_scope`). |
+| `PrepareBoundDispatch` | `internal/dispatch/coordinator.go` | Coordinator Effect Gate | Calls `PrepareBoundDispatch` with live lease snapshot during 9-step dispatch sequence. (Directly in `allowed_scope`). |
+| `PrepareBoundDispatch` | `internal/dispatch/coordinator_test.go` | Dispatch Tests | Exercises atomic dispatch + workspace binding creation and rollback pathways. (Directly in `allowed_scope`). |
+| `PrepareBoundDispatch` | `internal/store/session_lifecycle_test.go` | Store Lifecycle Tests | Test helper `setupBoundAttempt` and test cases updated to pass valid `WorkspaceBindingSnapshot`. (Directly in `allowed_scope`). |
+| `PrepareBoundDispatch` | `internal/store/session_lifecycle_remediation_test.go` | Remediation Tests | Updated to pass valid test workspace binding snapshot. (Directly in `allowed_scope`). |
+| `PrepareBoundDispatch` | `internal/store/atomic_transitions_test.go` | Atomic Tests | Updated to pass valid test workspace binding snapshot. (Directly in `allowed_scope`). |
+| `PrepareBoundDispatch` | `internal/store/dispatch_test.go` | Dispatch Seam Tests | Asserts legacy unbound dispatch rejection and exercises bound dispatch. (Directly in `allowed_scope`). |
+| `PrepareBoundDispatch` | `internal/recovery/scanner_test.go` | Recovery Test Helper | `seedBoundExecution` helper updated to supply valid test workspace binding snapshot. (Directly in `allowed_scope`). |
+| `RecordSendRequested` | `internal/store/dispatch_transactions.go` | Seam Definition | Enforces 14 pre-send guards including Guard 12 (active binding) and Guard 13 (snapshot equality). (Directly in `allowed_scope`). |
+| `RecordSendRequested` | `internal/dispatch/coordinator.go` | Coordinator Pre-Send | Passes verified `WorkspaceBindingSnapshot` to Store after live lease revalidation. (Directly in `allowed_scope`). |
+| `RecordSendRequested` | `internal/store/dispatch_transactions_test.go` | Transaction Tests | Exercises Guard 12 and Guard 13 snapshot equality validation and rejection. (Directly in `allowed_scope`). |
+| `RecordSendRequested` | `internal/store/session_lifecycle_test.go` | Store Lifecycle Tests | Updated to pass valid test workspace binding snapshot. (Directly in `allowed_scope`). |
+| `RecordSendRequested` | `internal/store/stop_transactions_test.go` | Stop Invariant Tests | Updated to pass valid test workspace binding snapshot matching attempt binding. (Directly in `allowed_scope`). |
+| `RecordSendRequested` | `internal/store/restore_transactions_test.go` | Restore Tests | Updated to pass valid test workspace binding snapshot matching attempt binding. (Directly in `allowed_scope`). |
+| `RecordSendRequested` | `internal/store/recovery_transactions_test.go` | Recovery Store Tests | Updated to pass valid test workspace binding snapshot matching attempt binding. (Directly in `allowed_scope`). |
+| `RecordSendRequested` | `internal/store/session_lifecycle_test.go` | Store Lifecycle Tests | Updated to pass valid test workspace binding snapshot matching attempt binding. (Directly in `allowed_scope`). |
+| `RecordSendRequested` | `internal/recovery/scanner_test.go` | Recovery Scanner Tests | Updated to pass valid test workspace binding snapshot matching attempt binding. (Directly in `allowed_scope`). |
+| `RecordSendRequested` | `internal/recovery/timeout_monitor_test.go` | Timeout Monitor Tests | Updated to pass valid test workspace binding snapshot matching attempt binding. (Directly in `allowed_scope`). |
+| `RecordSendRequested` | `internal/recovery/poller_test.go` | Poller Tests | Updated to pass valid test workspace binding snapshot matching attempt binding. (Directly in `allowed_scope`). |
+| `RecordSendRequested` | `internal/recovery/integration_test.go` | Recovery Integration Tests | Updated to pass valid test workspace binding snapshot matching attempt binding. (Directly in `allowed_scope`). |
+| `RecordSendRequested` | `internal/recovery/scanner.go` | Recovery Scanner | Evaluates in-flight executions, passing fresh acquired snapshot; fail-closed on mismatch. (Directly in `allowed_scope`). |
+| `Coordinator` Construction | `internal/dispatch/coordinator.go` | Struct Definition | Injects `WorkspaceBindingAuthority` domain interface. (Directly in `allowed_scope`). |
+| `Coordinator` Construction | `internal/dispatch/coordinator_test.go` | Unit Tests | Injects mock/fake `WorkspaceBindingAuthority`. (Directly in `allowed_scope`). |
+| `Coordinator` Construction | `test/integration/ao_harness_test.go` | Full Harness Test | Injects test `WorkspaceBindingAuthority`. (Directly in `allowed_scope`). |
 
 #### 3.6.2. Elimination of Unprotected Dispatch Pathways
 - All legacy and unbound dispatch entrypoints (`PrepareDispatch`, unbound `CreateDispatchOperation`) are strictly disabled.
 - Zero public APIs permit allocating a `TaskAttempt` or transitioning a task to `DISPATCHED` without committing an `ACTIVE` `attempt_workspace_bindings` row.
-- Any attempt to invoke `RecordSendRequested` without an existing active binding is rejected by pure DB Guard 12 (`ErrQuarantinedExecution`).
+- Any attempt to invoke `RecordSendRequested` without an existing active binding or with a mismatched snapshot is rejected by pure DB guards (`ErrQuarantinedExecution` or binding mismatch).
 
-#### 3.6.3. Daemon Restart Recovery (`internal/recovery/scanner.go`)
-- **Capability Invalidation**: Daemon restart invalidates all in-memory capability leases; all previous OS handles are closed by the operating system.
-- **Reacquire Authority**: When the daemon startup scanner sweeps in-flight dispatches, neither a prior handle token nor a standalone database row grants effect authority.
-- **Physical Identity Matching**: The recovery scanner must call `authority.Reacquire(ctx, snapshot)` to open fresh directory handles for both the worktree root and linked gitdir.
-- The scanner compares the newly acquired physical identity (`VolumeSerialNumber` and `FileIdInfo`) with the durable identity recorded in `attempt_workspace_bindings`:
-  * **Identical Identity**: `Reacquire` passes; the dispatch evaluation may safely continue.
-  * **Identity Mismatch or Failure**: If directory substitution occurred (e.g. junction swap, rename, directory deleted, missing, or volume serial mismatch), the scanner strictly fails closed. Zero `/send` calls are permitted. The binding is CAS-transitioned to `INVALIDATED`, a diagnostic hold `INVARIANT_MISMATCH` is inserted, and the attempt is escalated to human required/operator failure.
+#### 3.6.3. Daemon Restart Recovery (`internal/recovery/scanner.go`) (Finding P04A-R2-003)
+- **Capability Invalidation**: Daemon restart completely invalidates all in-memory capability leases; all previous OS handles are closed by the operating system on process exit.
+- **Startup Recovery Acquisition Sequence**:
+  1. The recovery scanner reads the durable canonical paths, volume serial, and file IDs from the database (`attempt_workspace_bindings` where `binding_state = 'ACTIVE'`).
+  2. The scanner constructs a `WorkspaceBindingCandidate` containing the canonical worktree root and linked gitdir paths.
+  3. The scanner invokes `authority.Acquire(ctx, candidate)` to open fresh directory handles and acquire a new `WorkspaceBindingLease`.
+  4. The scanner extracts `lease.Snapshot()` and compares the physical identity (`VolumeSerialNumber`, `FileIdInfo`) against the durable `attempt_workspace_bindings` record.
+  5. A prior in-memory handle token or a standalone database row alone grants zero effect authority.
+- **Physical Identity Matching Semantics**:
+  * **Identical Identity**: `Acquire` succeeds and physical identity matches the durable binding row; pre-send recovery evaluation proceeds.
+  * **Identity Mismatch or Failure**: If directory substitution occurred (e.g. junction swap, directory rename, directory deletion, or volume serial mismatch), the scanner strictly fails closed:
+    - Zero `/send` calls are permitted (AO call count remains exactly 0).
+    - Executes diagnostic Variant B transaction: appends `REVIEW_INTEGRITY_CONFLICT` (`attempted_reason = 'WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH'`), inserts `ACTIVE` hold `INVARIANT_MISMATCH`, and CAS transitions binding `ACTIVE -> INVALIDATED`.
+    - Task state remains `DISPATCHED`, operation remains `DISPATCH_BOUND`, attempt remains open.
+    - Terminalization is strictly deferred to a separate D12 transaction performed by a verified operator (`DISPATCHED -> FAILED`, `recovery_disposition = 'WORKSPACE_BINDING_INTEGRITY_FAILURE'`).
+    - The recovery scanner strictly never terminalizes the attempt in the diagnostic transaction and never automatically transitions to `HUMAN_REQUIRED`.
 - **Behavior Tests in `internal/recovery/scanner_test.go`**:
   * Test daemon restart capability invalidation.
-  * Test exact reacquire PASS when physical directory is unchanged.
-  * Test directory substitution / identity mismatch FAIL resulting in fail-closed zero effect.
+  * Test exact acquire PASS when physical directory is unchanged.
+  * Test directory substitution / identity mismatch FAIL resulting in fail-closed zero effect, `INVALIDATED` binding, open attempt, and task remaining `DISPATCHED`.
 
 #### 3.6.4. Narrow Domain Authority Interface
 To prevent circular package dependencies (`internal/host` -> `internal/recovery` -> `internal/host`), the authority contract is defined in `internal/domain/workspace_binding.go`:
 ```go
 type WorkspaceBindingAuthority interface {
-    Acquire(ctx context.Context, config WorkspaceConfig) (WorkspaceBindingLease, error)
-    Reacquire(ctx context.Context, snapshot WorkspaceBindingSnapshot) (WorkspaceBindingLease, error)
+    Acquire(ctx context.Context, candidate WorkspaceBindingCandidate) (WorkspaceBindingLease, error)
 }
 
 type WorkspaceBindingLease interface {
@@ -633,9 +673,9 @@ The implementation must pass validation through `TaskContractValidator.ValidateR
 
 ---
 
-## 5. Scope Boundaries & File Allocations (Finding P04A-R1-003)
+## 5. Scope Boundaries & File Allocations (Findings P04A-R1-003, P04A-R2-001)
 
-### 5.1. Explicit Allowed Scope (32 Files)
+### 5.1. Explicit Allowed Scope (39 Files)
 - `internal/domain/workspace_binding.go`
 - `internal/domain/workspace_binding_test.go`
 - `internal/domain/worker_claim.go`
@@ -649,11 +689,15 @@ The implementation must pass validation through `TaskContractValidator.ValidateR
 - `internal/host/workspace_binding_authority_windows.go`
 - `internal/host/workspace_binding_authority_test.go`
 - `internal/store/migrations.go`
+- `internal/store/migrations_v5_test.go`
 - `internal/store/migrations_v6_test.go`
 - `internal/store/models.go`
 - `internal/store/dispatch.go`
 - `internal/store/dispatch_transactions.go`
 - `internal/store/dispatch_transactions_test.go`
+- `internal/store/recovery_transactions_test.go`
+- `internal/store/restore_transactions_test.go`
+- `internal/store/stop_transactions_test.go`
 - `internal/store/workspace_binding_store.go`
 - `internal/store/workspace_binding_test.go`
 - `internal/store/report_intake_transactions.go`
@@ -666,17 +710,17 @@ The implementation must pass validation through `TaskContractValidator.ValidateR
 - `internal/dispatch/coordinator_test.go`
 - `internal/recovery/scanner.go`
 - `internal/recovery/scanner_test.go`
+- `internal/recovery/integration_test.go`
+- `internal/recovery/poller_test.go`
+- `internal/recovery/timeout_monitor_test.go`
 - `test/fakes/git_evidence_fake.go`
 - `test/integration/ao_harness_test.go`
 
 ### 5.2. Explicit Forbidden Scope (No Blanket Wildcards, Zero Overlap)
 - `cmd/supervisor/**` (Host daemon bootstrap & entrypoint admission control deferred)
 - `internal/ao/**` (Live AO client communication)
-- `internal/recovery/poller.go` (Poller lifecycle is isolated from P04A)
-- `internal/recovery/poller_test.go` (Poller tests isolated from P04A)
-- `internal/recovery/timeout_monitor.go` (Timeout monitor lifecycle is isolated from P04A)
-- `internal/recovery/timeout_monitor_test.go` (Timeout monitor tests isolated from P04A)
-- `internal/recovery/integration_test.go` (Recovery integration tests isolated from P04A)
+- `internal/recovery/poller.go` (Poller production daemon lifecycle isolated from P04A)
+- `internal/recovery/timeout_monitor.go` (Timeout monitor production daemon lifecycle isolated from P04A)
 - `internal/stop/**` (Quiescence stop coordinator)
 - `docs/adr/**` (Accepted ADRs are immutable)
 - `docs/audits/**` (Audit records are immutable)
