@@ -5,9 +5,9 @@
 > **Revision Number**: `1`
 > **Supersedes Contract ID**: `null`
 > **Phase ID**: `P04`
-> **Base SHA**: `ffb431b1c39b870f5689eb80e830d13f2151df57`
+> **Base SHA**: `b174ef3e88409f82b10afe0fcce88ba218530863`
 > **Status**: `CANDIDATE_NOT_RELEASED` (Status invariant: `NOT_RELEASED`)
-> **Authority**: Formulated pursuant to accepted [`docs/adr/ADR-018-evidence-review-and-verification-isolation.md`](../adr/ADR-018-evidence-review-and-verification-isolation.md) (`EXTERNAL_APPROVED` and `ADR_018_ACCEPTANCE = GRANTED` by External Supervisor Re-Audit 021), approved `PROPOSAL-P04-001` (Revision 22), approved baseline `PROPOSAL-P04-002` (Revision 9), and scope plan [`docs/plans/PLAN-P04-CANONICAL-RECONCILIATION-ADR-018.md`](../plans/PLAN-P04-CANONICAL-RECONCILIATION-ADR-018.md) (Revision 1).
+> **Authority**: Formulated pursuant to accepted [`docs/adr/ADR-018-evidence-review-and-verification-isolation.md`](../adr/ADR-018-evidence-review-and-verification-isolation.md) (`EXTERNAL_APPROVED` and `ADR_018_ACCEPTANCE = GRANTED` by External Supervisor Re-Audit 021), approved `PROPOSAL-P04-001` (Revision 22), approved baseline `PROPOSAL-P04-002` (Revision 9), and scope plan [`docs/plans/PLAN-P04-CANONICAL-RECONCILIATION-ADR-018.md`](../plans/PLAN-P04-CANONICAL-RECONCILIATION-ADR-018.md) (Revision 2).
 > **Governance Invariant**: Candidate contract submitted for External Supervisor audit. Strictly `NOT_RELEASED`. Zero canonical documentation edits, zero Go production code, zero migration scripts, and zero live AO calls authorized.
 
 ---
@@ -47,7 +47,7 @@
     "docs/08_TASK_CONTRACT.md",
     "docs/24_CHANGE_GOVERNANCE.md"
   ],
-  "base_sha": "ffb431b1c39b870f5689eb80e830d13f2151df57",
+  "base_sha": "b174ef3e88409f82b10afe0fcce88ba218530863",
   "allowed_scope": [
     "docs/02_REQUIREMENTS.md",
     "docs/04_ARCHITECTURE.md",
@@ -64,11 +64,7 @@
     "docs/sources/REUSE_MATRIX.md",
     "docs/schemas/review-bundle.schema.json",
     "docs/schemas/examples/review-bundle.valid.json",
-    "docs/schemas/examples/review-bundle.invalid.json",
-    "docs/plans/PLAN-P04-CANONICAL-RECONCILIATION-ADR-018.md",
-    "AGENTS.md",
-    "docs/18_CURRENT_STATE.md",
-    "docs/tasks/TASK_CONTRACT_P04_DOC_RECONCILIATION_ADR_018.md"
+    "docs/schemas/examples/review-bundle.invalid.json"
   ],
   "forbidden_scope": [
     "cmd/**",
@@ -78,6 +74,10 @@
     "docs/adr/**",
     "docs/proposals/**",
     "docs/audits/**",
+    "docs/plans/**",
+    "docs/tasks/**",
+    "AGENTS.md",
+    "docs/18_CURRENT_STATE.md",
     "docs/schemas/task-contract.schema.json",
     "docs/schemas/worker-report.schema.json",
     "docs/schemas/examples/task-contract.*.json",
@@ -108,7 +108,7 @@
     "AC-P04-DOC-10: Reconciles CR-10 in docs/04, docs/05, and docs/14 documenting RFC 8785 JCS event derivation, Descriptors A/B/C, and REVIEW_INTEGRITY_CONFLICT variant discrimination (AUDIT_EVENT_ID_COLLISION vs WORKSPACE_BINDING_GUARD)",
     "AC-P04-DOC-11: Reconciles CR-11 in docs/17, docs/21, and docs/phases/P04_EVIDENCE_REVIEW.md updating FR-008/NFR-008 traceability links and establishing Subtask P04A as first releaseable implementation work package",
     "AC-P04-DOC-12: Reconciles CR-12 in docs/sources/SOURCE_REGISTRY.md and docs/sources/REUSE_MATRIX.md updating reuse boundaries for crypto/sha256, kernel32.dll, and jsonschema-go with zero duplicate upstream logic",
-    "AC-P04-DOC-13: JSON Schema draft-07 validation passes on updated review-bundle.schema.json and its valid/invalid examples",
+    "AC-P04-DOC-13: JSON Schema draft-07 two-way validation: docs/schemas/examples/review-bundle.valid.json MUST validate successfully; docs/schemas/examples/review-bundle.invalid.json MUST be rejected due to expected schema constraint violation (not random JSON syntax/parse failure)",
     "AC-P04-DOC-14: Git diff hygiene passes with zero trailing whitespaces (git diff --check exit code 0) and zero modified files outside allowed_scope",
     "AC-P04-DOC-15: Portable relative markdown link validation passes with zero broken links and zero absolute file:// or Windows drive references"
   ],
@@ -161,7 +161,48 @@
 
 ---
 
-## 2. Release Guardrails & Governance
+## 2. Proposed Verification Profile Catalog Delta
+
+### 2.1. Declarative Profile Specification: `doc-reconciliation-check`
+
+Pursuant to ADR-013, ADR-018, and finding `P04-CRCONTRACT-R1-004`, this task contract declares the exact Verification Profile Catalog entry required to evaluate the documentation reconciliation verification requests.
+
+- **Profile ID**: `doc-reconciliation-check`
+- **Catalog Status**: `APPROVED_AT_DESIGN_LEVEL_PENDING_EXTERNAL_AUDIT`
+- **Runtime Stage B Status**: `STAGE_B_RUNTIME_CATALOG = UNVERIFIED` (remains unverified until concrete dispatch execution on trusted host)
+- **Maximum Timeout Seconds**: `60` (`MaxTimeoutSeconds = 60`)
+- **Cwd Policy**: `worktree_root` (cwd strictly constrained to `"."`; directory escape, parent traversal `..`, volume/drive prefixes, or non-root working directories are strictly forbidden)
+- **Execution Capability**: Pure host validation checks; does NOT accept arbitrary command, args, executable, path, or shell fragments.
+
+### 2.2. Parameter Schema Specification (JSON Schema Draft-07)
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DocReconciliationCheckParameters",
+  "type": "object",
+  "required": [
+    "check_kind"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "check_kind": {
+      "type": "string",
+      "enum": [
+        "git-diff-hygiene",
+        "portable-relative-link-validation",
+        "json-schema-draft07-validation"
+      ]
+    }
+  }
+}
+```
+
+- **Policy Invariant**: `additionalProperties = false` guarantees that any extraneous parameters (such as `command`, `args`, `executable`, `path`, or shell options) are rejected with a deterministic schema validation failure.
+
+---
+
+## 3. Release Guardrails & Governance
 
 - **Release Status**: `CANDIDATE_NOT_RELEASED` (Status invariant: `NOT_RELEASED`).
 - **Scope Restriction**: Authorized exclusively for documentation reconciliation across the 16 enumerated files in `allowed_scope` upon formal candidate release by the External Supervisor.
