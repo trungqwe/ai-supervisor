@@ -3,11 +3,15 @@ package store
 import (
 	"context"
 	"database/sql"
+	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
+	"sync"
 	"time"
 
+	"github.com/trungqwe/ai-supervisor/internal/contract"
 	"github.com/trungqwe/ai-supervisor/internal/domain"
 )
 
@@ -16,10 +20,87 @@ var (
 	ErrDirtyWorktreeDetected = errors.New("store: dirty worktree detected at report intake")
 )
 
-// IngestWorkerReport executes report intake: Transaction A on clean evidence,
-// IngestWorkerReport executes report intake: Transaction A on clean evidence,
-// or intake diagnostic transaction on dirty evidence.
-func (s *Store) IngestWorkerReport(
+//go:embed worker_report_schema.json
+var workerReportSchemaBytes []byte
+
+var (
+	workerReportValidatorOnce sync.Once
+	workerReportValidatorFunc func([]byte) (any, error)
+	workerReportValidatorErr  error
+
+	// Test seam for validating schema compile failure fail-closed behavior
+	testSchemaOverrideBytes []byte
+)
+
+func getWorkerReportValidator() (func([]byte) (any, error), error) {
+	if testSchemaOverrideBytes != nil {
+		resolved, err := contract.CompileSchema(testSchemaOverrideBytes)
+		if err != nil {
+			return nil, fmt.Errorf("store: failed to compile worker report schema: %w", err)
+		}
+		if resolved == nil {
+			return nil, errors.New("store: compiled worker report schema is nil")
+		}
+		return func(rawJSON []byte) (any, error) {
+			return contract.ParseAndValidateRaw(rawJSON, resolved)
+		}, nil
+	}
+
+	workerReportValidatorOnce.Do(func() {
+		resolved, err := contract.CompileSchema(workerReportSchemaBytes)
+		if err != nil {
+			workerReportValidatorErr = fmt.Errorf("store: failed to compile worker report schema: %w", err)
+			return
+		}
+		if resolved == nil {
+			workerReportValidatorErr = errors.New("store: compiled worker report schema is nil")
+			return
+		}
+		workerReportValidatorFunc = func(rawJSON []byte) (any, error) {
+			return contract.ParseAndValidateRaw(rawJSON, resolved)
+		}
+	})
+	if workerReportValidatorErr != nil {
+		return nil, workerReportValidatorErr
+	}
+	if workerReportValidatorFunc == nil {
+		return nil, errors.New("store: worker report validator unavailable")
+	}
+	return workerReportValidatorFunc, nil
+}
+
+// IngestWorkerReportRaw parses and validates raw JSON against schema before ingesting.
+// It is the sole exported admission entry point for worker reports.
+func (s *Store) IngestWorkerReportRaw(
+	ctx context.Context,
+	taskID string,
+	contractID string,
+	attemptID string,
+	rawReport []byte,
+	gitEvidence domain.GitEvidenceResult,
+	actor string,
+	at time.Time,
+) error {
+	validate, err := getWorkerReportValidator()
+	if err != nil {
+		return fmt.Errorf("store: worker report schema validation unavailable: %w", err)
+	}
+	if _, err := validate(rawReport); err != nil {
+		return fmt.Errorf("store: worker report schema validation failed: %w", err)
+	}
+
+	var report domain.WorkerReport
+	if err := json.Unmarshal(rawReport, &report); err != nil {
+		return fmt.Errorf("store: failed to unmarshal worker report: %w", err)
+	}
+
+	return s.ingestWorkerReportDecoded(ctx, taskID, contractID, attemptID, report, gitEvidence, actor, at)
+}
+
+// ingestWorkerReportDecoded executes report intake: Transaction A on clean evidence,
+// or intake diagnostic transaction on dirty evidence. It is a package-private helper
+// called exclusively after successful raw JSON schema validation.
+func (s *Store) ingestWorkerReportDecoded(
 	ctx context.Context,
 	taskID string,
 	contractID string,
@@ -62,24 +143,6 @@ func (s *Store) IngestWorkerReport(
 
 	// Case 2: Clean Worktree -> execute Transaction A atomically
 	return s.executeTransactionA(ctx, taskID, contractID, attemptID, report, actor, at, epochMS)
-}
-
-// IngestWorkerReportRaw parses and validates raw JSON against schema before ingesting.
-func (s *Store) IngestWorkerReportRaw(
-	ctx context.Context,
-	taskID string,
-	contractID string,
-	attemptID string,
-	rawReport []byte,
-	gitEvidence domain.GitEvidenceResult,
-	actor string,
-	at time.Time,
-) error {
-	report, err := domain.ValidateWorkerReportJSON(rawReport)
-	if err != nil {
-		return fmt.Errorf("store: worker report schema validation failed: %w", err)
-	}
-	return s.IngestWorkerReport(ctx, taskID, contractID, attemptID, *report, gitEvidence, actor, at)
 }
 
 func (s *Store) recordDirtyIntakeDiagnostic(

@@ -141,7 +141,14 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	r := Runner{Store: p.Store, AO: p.AO, Handoff: p.Owner.Handoff, Actor: p.Actor}
+	r := Runner{
+		Store:     p.Store,
+		AO:        p.AO,
+		Handoff:   p.Owner.Handoff,
+		Actor:     p.Actor,
+		Authority: p.Owner.Authority,
+		Now:       p.Owner.Now,
+	}
 	stopOwnedAttempts := make(map[string]bool, len(snap.StopOwnedAttemptIDs))
 	for _, id := range snap.StopOwnedAttemptIDs {
 		stopOwnedAttempts[id] = true

@@ -698,3 +698,40 @@ func TestPollerDoneAndErrLifecycle_StopAlwaysJoinsGoroutine(t *testing.T) {
 		t.Fatal("expected done channel to be closed after Stop joined")
 	}
 }
+
+func TestPoller_PollOnceForwardsOwnerAuthority(t *testing.T) {
+	ctx := context.Background()
+	s := newRecoveryStore(t)
+	session, generation, attemptID := seedBoundExecution(t, s, "poller-fwd-auth")
+	auth := &fakeWorkspaceAuthority{}
+	o := &testObserver{
+		result: &ao.WorkerStatus{
+			ID:                 session,
+			TerminalGeneration: generation,
+			Activity:           ao.ActivitySnapshot{State: ao.ActivityStateIdle},
+		},
+	}
+	owner := &Runner{
+		Store:     s,
+		AO:        o,
+		Authority: auth,
+		ready:     true,
+	}
+	p := &Poller{
+		Store:    s,
+		AO:       o,
+		Owner:    owner,
+		Interval: 5 * time.Millisecond,
+		Actor:    "test-supervisor",
+	}
+
+	if err := p.PollOnce(ctx); err != nil {
+		t.Fatalf("PollOnce failed: %v", err)
+	}
+
+	// Verify Owner.Authority was forwarded to the Runner executed by PollOnce
+	if auth.acquireCalls != 1 {
+		t.Fatalf("Owner.Authority not invoked: acquire calls = %d, want 1", auth.acquireCalls)
+	}
+	_ = attemptID
+}

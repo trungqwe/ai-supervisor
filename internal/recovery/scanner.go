@@ -218,11 +218,6 @@ func (r *Runner) Run(ctx context.Context) (report Report, err error) {
 	if err = ctx.Err(); err != nil {
 		return report, err
 	}
-	if r.Authority != nil && r.Store != nil {
-		storeAuthoritiesMu.Lock()
-		storeAuthorities[r.Store] = r.Authority
-		storeAuthoritiesMu.Unlock()
-	}
 	id := fmt.Sprintf("startup-%d", invocationSequence.Add(1))
 	if r.InvocationID != nil {
 		id = r.InvocationID()
@@ -434,11 +429,6 @@ func (r *Runner) stopWinner(ctx context.Context, x store.RecoveryStop, original 
 	return nil
 }
 
-var (
-	storeAuthoritiesMu sync.RWMutex
-	storeAuthorities   = make(map[*store.Store]domain.WorkspaceBindingAuthority)
-)
-
 func (r *Runner) classifyExecution(ctx context.Context, x store.RecoveryExecution, id string, report *Report) error {
 	if x.DispatchStage == "SEND_REQUESTED" {
 		return r.Store.RecordUnknownDelivery(ctx, x.OperationID, r.Actor, r.now())
@@ -455,13 +445,7 @@ func (r *Runner) classifyExecution(ctx context.Context, x store.RecoveryExecutio
 			return err
 		}
 		if b != nil {
-			auth := r.Authority
-			if auth == nil && r.Store != nil {
-				storeAuthoritiesMu.RLock()
-				auth = storeAuthorities[r.Store]
-				storeAuthoritiesMu.RUnlock()
-			}
-			if auth == nil {
+			if r.Authority == nil {
 				if diagErr := r.Store.RecordVariantBDiagnostic(ctx, x.OperationID, "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH", r.Actor, r.now()); diagErr != nil {
 					return diagErr
 				}
@@ -472,18 +456,16 @@ func (r *Runner) classifyExecution(ctx context.Context, x store.RecoveryExecutio
 				LinkedGitDirPath:      b.LinkedGitDirPath,
 				PinnedAOCommit:        b.PinnedAOCommit,
 			}
-			lease, acqErr := auth.Acquire(ctx, candidate)
+			lease, acqErr := r.Authority.Acquire(ctx, candidate)
 			if acqErr != nil {
 				if diagErr := r.Store.RecordVariantBDiagnostic(ctx, x.OperationID, "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH", r.Actor, r.now()); diagErr != nil {
 					return diagErr
 				}
 				return nil
 			}
-			defer func() {
-				_ = lease.Close()
-			}()
 
 			if revErr := lease.Revalidate(); revErr != nil {
+				_ = lease.Close()
 				if diagErr := r.Store.RecordVariantBDiagnostic(ctx, x.OperationID, "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH", r.Actor, r.now()); diagErr != nil {
 					return diagErr
 				}
@@ -492,10 +474,15 @@ func (r *Runner) classifyExecution(ctx context.Context, x store.RecoveryExecutio
 
 			snap := lease.Snapshot()
 			if !snap.MatchesBinding(b) {
+				_ = lease.Close()
 				if diagErr := r.Store.RecordVariantBDiagnostic(ctx, x.OperationID, "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH", r.Actor, r.now()); diagErr != nil {
 					return diagErr
 				}
 				return nil
+			}
+
+			if cErr := lease.Close(); cErr != nil {
+				return fmt.Errorf("recovery: lease close failed: %w", cErr)
 			}
 		}
 	}

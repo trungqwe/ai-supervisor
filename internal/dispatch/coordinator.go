@@ -229,7 +229,7 @@ func (c *Coordinator) ClaimRestoreRecovery(ctx context.Context, operationID, pai
 // Dispatch allocates only a bound attempt, checks AO identity/activity before
 // committing SEND_REQUESTED, then makes one send call. It never retries an
 // ambiguous delivery and HTTP 200 leaves the Task DISPATCHED.
-func (c *Coordinator) Dispatch(ctx context.Context, taskID, contractID, attemptID, operationID, sessionID, generation, reportPath, message, actor string) error {
+func (c *Coordinator) Dispatch(ctx context.Context, taskID, contractID, attemptID, operationID, sessionID, generation, reportPath, message, actor string) (err error) {
 	if c.Store == nil || c.AO == nil {
 		return errors.New("dispatch: coordinator dependencies are not configured")
 	}
@@ -280,7 +280,29 @@ func (c *Coordinator) Dispatch(ctx context.Context, taskID, contractID, attemptI
 	if err != nil {
 		return fmt.Errorf("dispatch: failed to acquire workspace lease: %w", err)
 	}
-	defer lease.Close()
+	var wireInitiated bool
+	var boundPrepared bool
+	defer func() {
+		if cErr := lease.Close(); cErr != nil {
+			closeErr := fmt.Errorf("dispatch: workspace lease close failed: %w", cErr)
+			if !wireInitiated {
+				if boundPrepared {
+					_ = c.Store.RecordVariantBDiagnostic(context.WithoutCancel(ctx), operationID, "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH", actor, time.Now().UTC())
+				}
+				if err == nil {
+					err = closeErr
+				} else {
+					err = errors.Join(err, closeErr)
+				}
+			} else {
+				if err == nil {
+					err = closeErr
+				} else {
+					err = errors.Join(err, closeErr)
+				}
+			}
+		}
+	}()
 	snapshot := lease.Snapshot()
 
 	if task.State != domain.StateReady {
@@ -295,6 +317,7 @@ func (c *Coordinator) Dispatch(ctx context.Context, taskID, contractID, attemptI
 	if err != nil {
 		return err
 	}
+	boundPrepared = true
 
 	status, err := c.AO.GetWorkerStatus(ctx, sessionID)
 	if err != nil {
@@ -353,6 +376,7 @@ func (c *Coordinator) Dispatch(ctx context.Context, taskID, contractID, attemptI
 		return fmt.Errorf("dispatch: live workspace lease revalidation failed: %w", err)
 	}
 
+	wireInitiated = true
 	if err := c.Store.RecordSendRequested(ctx, operationID, status.ID, status.TerminalGeneration, string(status.Activity.State), status.IsTerminated, actor, time.Now().UTC(), snapshot); err != nil {
 		return err
 	}

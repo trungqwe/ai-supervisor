@@ -1069,6 +1069,7 @@ func TestLegacyManualStopExactRunningWithoutBudget(t *testing.T) {
 type testRecoveryLease struct {
 	snapshot        domain.WorkspaceBindingSnapshot
 	failRevalidate  bool
+	failClose       bool
 	revalidateCalls int
 	closeCalls      int
 }
@@ -1087,6 +1088,9 @@ func (l *testRecoveryLease) Revalidate() error {
 
 func (l *testRecoveryLease) Close() error {
 	l.closeCalls++
+	if l.failClose {
+		return errors.New("simulated lease close failure")
+	}
 	return nil
 }
 
@@ -1094,6 +1098,7 @@ type fakeWorkspaceAuthority struct {
 	acquireCalls   int
 	failAcquire    bool
 	failRevalidate bool
+	failClose      bool
 	snapshot       *domain.WorkspaceBindingSnapshot
 	lastLease      *testRecoveryLease
 }
@@ -1118,6 +1123,7 @@ func (f *fakeWorkspaceAuthority) Acquire(ctx context.Context, candidate domain.W
 	lease := &testRecoveryLease{
 		snapshot:       snap,
 		failRevalidate: f.failRevalidate,
+		failClose:      f.failClose,
 	}
 	f.lastLease = lease
 	return lease, nil
@@ -1391,4 +1397,126 @@ func TestRestartRecoveryWorkspaceBindingVerification(t *testing.T) {
 			t.Fatalf("binding state = %v, want INVALIDATED: %v", binding.BindingState, err)
 		}
 	})
+}
+
+func TestRecoveryScanner_PriorRunnerAuthorityNotReusedBySubsequentNilRunner(t *testing.T) {
+	ctx := context.Background()
+	s := newRecoveryStore(t)
+
+	// Step 1: Runner 1 with non-nil Authority executes on store s
+	session1, generation1, attemptID1 := seedBoundExecution(t, s, "prior-auth-task")
+	auth := &fakeWorkspaceAuthority{}
+	observer1 := &testObserver{
+		result: &ao.WorkerStatus{
+			ID:                 session1,
+			TerminalGeneration: generation1,
+			Activity:           ao.ActivitySnapshot{State: ao.ActivityStateIdle},
+		},
+	}
+	r1 := &Runner{
+		Store:                s,
+		AO:                   observer1,
+		Host:                 &testHost{},
+		Authority:            auth,
+		ActivityPollInterval: time.Second,
+		ExecutionDeadline:    time.Minute,
+		Actor:                "supervisor-1",
+	}
+	report1, err := r1.Run(ctx)
+	if err != nil || !report1.Complete {
+		t.Fatalf("Runner 1 failed: %+v %v", report1, err)
+	}
+	if auth.acquireCalls != 1 {
+		t.Fatalf("Runner 1 acquire calls = %d, want 1", auth.acquireCalls)
+	}
+
+	// Step 2: Seed attempt 2 on the SAME store s
+	_, _, attemptID2 := seedBoundExecution(t, s, "nil-auth-task")
+	observer2 := &testObserver{}
+	r2 := &Runner{
+		Store:                s,
+		AO:                   observer2,
+		Host:                 &testHost{},
+		Authority:            nil, // nil authority MUST NOT reuse Runner 1's authority!
+		ActivityPollInterval: time.Second,
+		ExecutionDeadline:    time.Minute,
+		Actor:                "supervisor-2",
+	}
+
+	report2, err := r2.Run(ctx)
+	if err != nil || !report2.Complete {
+		t.Fatalf("Runner 2 failed: %+v %v", report2, err)
+	}
+
+	// Verify Runner 1's authority was NOT called during Runner 2 execution
+	if auth.acquireCalls != 1 {
+		t.Fatalf("Runner 2 reused Runner 1's authority: acquire calls = %d, want 1", auth.acquireCalls)
+	}
+
+	// Verify Zero AO calls made by Runner 2
+	observer2.mu.Lock()
+	gets2 := observer2.gets
+	observer2.mu.Unlock()
+	if gets2 != 0 {
+		t.Fatalf("Runner 2 AO gets = %d, want 0", gets2)
+	}
+
+	// Verify Runner 2 executed Variant B on attempt 2:
+	// binding ACTIVE -> INVALIDATED, active hold INVARIANT_MISMATCH, task DISPATCHED, attempt open
+	holds2, err := s.GetActiveReviewIntegrityHolds(ctx, attemptID2)
+	if err != nil || len(holds2) != 1 || holds2[0].HoldReason != domain.HoldReasonInvariantMismatch {
+		t.Fatalf("expected 1 INVARIANT_MISMATCH hold for attempt 2, got: %+v %v", holds2, err)
+	}
+	binding2, err := s.GetAttemptWorkspaceBinding(ctx, attemptID2)
+	if err != nil || binding2.BindingState != domain.BindingStateInvalidated {
+		t.Fatalf("binding 2 state = %v, want INVALIDATED: %v", binding2.BindingState, err)
+	}
+	task2, err := s.GetTask(ctx, "nil-auth-task")
+	if err != nil || task2.State != domain.StateDispatched {
+		t.Fatalf("task 2 state = %v, want DISPATCHED: %v", task2.State, err)
+	}
+	attempt2, err := s.GetTaskAttempt(ctx, attemptID2)
+	if err != nil || attempt2.EndedAt != nil {
+		t.Fatalf("attempt 2 ended: %+v %v", attempt2, err)
+	}
+	_ = attemptID1
+}
+
+func TestRecoveryScanner_LeaseCloseFailureReturnsNonNilError(t *testing.T) {
+	ctx := context.Background()
+	s := newRecoveryStore(t)
+
+	_, _, attemptID := seedBoundExecution(t, s, "closefail-task")
+	auth := &fakeWorkspaceAuthority{failClose: true}
+	observer := &testObserver{}
+	r := &Runner{
+		Store:                s,
+		AO:                   observer,
+		Host:                 &testHost{},
+		Authority:            auth,
+		ActivityPollInterval: time.Second,
+		ExecutionDeadline:    time.Minute,
+		Actor:                "supervisor",
+	}
+
+	report, err := r.Run(ctx)
+	if err == nil {
+		t.Fatal("expected non-nil error on lease close failure")
+	}
+	if !strings.Contains(err.Error(), "lease close failed") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+	if report.Complete {
+		t.Fatal("expected report.Complete = false on lease close failure")
+	}
+
+	// Zero AO wire effect
+	observer.mu.Lock()
+	gets := observer.gets
+	observer.mu.Unlock()
+	if gets != 0 {
+		t.Fatalf("AO gets = %d, want 0", gets)
+	}
+
+	_ = attemptID
 }

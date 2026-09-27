@@ -307,8 +307,7 @@ func TestWindowsWorkspaceBindingAuthority_AC07_SymlinkProbe(t *testing.T) {
 	}
 
 	if err := os.Symlink(targetDir, symlinkDir); err != nil {
-		t.Logf("skipping symlink probe (unprivileged account without symlink evaluation): %v", err)
-		return
+		t.Skipf("skipping symlink probe: SeCreateSymbolicLinkPrivilege not held by client: %v", err)
 	}
 
 	auth := NewWindowsWorkspaceBindingAuthority()

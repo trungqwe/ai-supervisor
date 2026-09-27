@@ -77,6 +77,7 @@ var testCandidate = domain.WorkspaceBindingCandidate{
 
 type fakeDispatchLease struct {
 	failReval bool
+	failClose bool
 	snapshot  domain.WorkspaceBindingSnapshot
 }
 
@@ -92,11 +93,15 @@ func (l *fakeDispatchLease) Revalidate() error {
 }
 
 func (l *fakeDispatchLease) Close() error {
+	if l.failClose {
+		return errors.New("simulated lease close failure")
+	}
 	return nil
 }
 
 type fakeDispatchAuthority struct {
 	failReval bool
+	failClose bool
 	snapshot  *domain.WorkspaceBindingSnapshot
 }
 
@@ -113,7 +118,7 @@ func (f *fakeDispatchAuthority) Acquire(ctx context.Context, candidate domain.Wo
 	if f.snapshot != nil {
 		snap = *f.snapshot
 	}
-	return &fakeDispatchLease{failReval: f.failReval, snapshot: snap}, nil
+	return &fakeDispatchLease{failReval: f.failReval, failClose: f.failClose, snapshot: snap}, nil
 }
 
 func TestRestoreIsDisabledWithoutExplicitHostBoundaryEnablement(t *testing.T) {
@@ -1134,6 +1139,127 @@ func TestDispatchWorkspaceBindingAuthorityVerification(t *testing.T) {
 		}
 		if aoFake.sends != 0 {
 			t.Fatalf("AO sends = %d, want 0", aoFake.sends)
+		}
+	})
+
+	t.Run("PreWireLeaseCloseFailure_VariantBAndZeroSend", func(t *testing.T) {
+		taskID := "wb-prewire-closefail"
+		s, aoFake, contractID, attemptID, opID, sessionID, generation := setupDispatchTest(t, taskID)
+		auth := &fakeDispatchAuthority{failReval: true, failClose: true}
+		c := Coordinator{
+			Store:           s,
+			AO:              aoFake,
+			Authority:       auth,
+			Candidate:       &testCandidate,
+			ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"},
+		}
+		report, err := store.CanonicalExpectedReportPath(taskID, attemptID)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		dispatchErr := c.Dispatch(ctx, taskID, contractID, attemptID, opID, sessionID, generation, report, "contract text", "supervisor")
+		if dispatchErr == nil {
+			t.Fatal("expected dispatch error on pre-wire revalidation and close failure")
+		}
+		if !strings.Contains(dispatchErr.Error(), "workspace lease close failed") {
+			t.Fatalf("expected close failure in error, got: %v", dispatchErr)
+		}
+
+		// 1. Zero /send issued to AO
+		if aoFake.sends != 0 {
+			t.Fatalf("AO sends = %d, want 0", aoFake.sends)
+		}
+
+		// 2. Operation stays DISPATCH_BOUND
+		op, err := s.GetDispatchOperation(ctx, opID)
+		if err != nil || op.Stage != domain.DispatchBound {
+			t.Fatalf("dispatch stage = %v, want DISPATCH_BOUND: %v", op.Stage, err)
+		}
+
+		// 3. Task stays DISPATCHED, attempt stays open
+		task, err := s.GetTask(ctx, taskID)
+		if err != nil || task.State != domain.StateDispatched {
+			t.Fatalf("task state = %v, want DISPATCHED: %v", task.State, err)
+		}
+		attempt, err := s.GetTaskAttempt(ctx, attemptID)
+		if err != nil || attempt.EndedAt != nil {
+			t.Fatalf("attempt ended: %+v %v", attempt, err)
+		}
+
+		// 4. Variant B hold INVARIANT_MISMATCH is active, binding INVALIDATED
+		holds, err := s.GetActiveReviewIntegrityHolds(ctx, attemptID)
+		if err != nil || len(holds) != 1 || holds[0].HoldReason != domain.HoldReasonInvariantMismatch {
+			t.Fatalf("expected 1 active INVARIANT_MISMATCH hold, got: %+v %v", holds, err)
+		}
+		binding, err := s.GetAttemptWorkspaceBinding(ctx, attemptID)
+		if err != nil || binding.BindingState != domain.BindingStateInvalidated {
+			t.Fatalf("binding state = %v, want INVALIDATED: %v", binding.BindingState, err)
+		}
+	})
+
+	t.Run("PostWireLeaseCloseFailure_PreservesDurableOutcomeAndRejectsResend", func(t *testing.T) {
+		taskID := "wb-postwire-closefail"
+		s, aoFake, contractID, attemptID, opID, sessionID, generation := setupDispatchTest(t, taskID)
+		aoFake.statusResult = &ao.WorkerStatus{
+			ID:                 sessionID,
+			TerminalGeneration: generation,
+			Activity:           ao.ActivitySnapshot{State: ao.ActivityStateIdle},
+		}
+		aoFake.dispatchResult = &ao.DispatchTaskResult{SessionID: sessionID}
+
+		auth := &fakeDispatchAuthority{failReval: false, failClose: true}
+		c := Coordinator{
+			Store:           s,
+			AO:              aoFake,
+			Authority:       auth,
+			Candidate:       &testCandidate,
+			ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"},
+		}
+		report, err := store.CanonicalExpectedReportPath(taskID, attemptID)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		dispatchErr := c.Dispatch(ctx, taskID, contractID, attemptID, opID, sessionID, generation, report, "contract text", "supervisor")
+		if dispatchErr == nil {
+			t.Fatal("expected dispatch error on post-wire lease close failure")
+		}
+		if !strings.Contains(dispatchErr.Error(), "workspace lease close failed") {
+			t.Fatalf("expected close failure in error, got: %v", dispatchErr)
+		}
+
+		// Wire effect WAS sent
+		if aoFake.sends != 1 {
+			t.Fatalf("AO sends = %d, want 1", aoFake.sends)
+		}
+
+		// Durable outcome SEND_CONFIRMED is preserved
+		op, err := s.GetDispatchOperation(ctx, opID)
+		if err != nil || op.Stage != domain.SendConfirmed {
+			t.Fatalf("dispatch stage = %v, want SEND_CONFIRMED: %v", op.Stage, err)
+		}
+		task, err := s.GetTask(ctx, taskID)
+		if err != nil || task.State != domain.StateDispatched {
+			t.Fatalf("task state = %v, want DISPATCHED: %v", task.State, err)
+		}
+
+		// Binding remains ACTIVE (not invalidated by post-wire close failure)
+		binding, err := s.GetAttemptWorkspaceBinding(ctx, attemptID)
+		if err != nil || binding.BindingState != domain.BindingStateActive {
+			t.Fatalf("binding state = %v, want ACTIVE: %v", binding.BindingState, err)
+		}
+
+		// Replay Dispatch is strictly rejected because task is DISPATCHED (not READY)
+		replayErr := c.Dispatch(ctx, taskID, contractID, attemptID, "new-op-id", sessionID, generation, report, "contract text", "supervisor")
+		if replayErr == nil {
+			t.Fatal("expected replay Dispatch to be rejected")
+		}
+		if !strings.Contains(replayErr.Error(), "only READY allocation is admissible") {
+			t.Fatalf("expected READY allocation rejection, got: %v", replayErr)
+		}
+		if aoFake.sends != 1 {
+			t.Fatalf("AO sends after replay = %d, want 1 (resend must not occur)", aoFake.sends)
 		}
 	})
 }
