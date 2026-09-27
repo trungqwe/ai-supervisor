@@ -1,9 +1,9 @@
 # PLAN-P04-CANONICAL-RECONCILIATION-ADR-018: Canonical Specification Reconciliation Scope Plan
 
 > **Authority**: Formulated pursuant to accepted [ADR-018](../adr/ADR-018-evidence-review-and-verification-isolation.md) (`EXTERNAL_APPROVED` and `ADR_018_ACCEPTANCE = GRANTED` by External Supervisor Re-Audit 021, commit `9c53ac3ee82a7035d458b1abe15f7a6bc315987d`), approved `PROPOSAL-P04-001` (Revision 22), approved baseline `PROPOSAL-P04-002` (Revision 9), and `docs/24_CHANGE_GOVERNANCE.md` (Decision Hierarchy Level 2: Approved ADR takes precedence over Level 3: Canonical Architecture and Level 4: Requirement Specifications).
-> **Status**: `REVISION_2_SUBMITTED` (Remediated Scope Plan pursuant to External Re-Audit 001)
-> **Active Gate**: `P04_CANONICAL_RECONCILIATION_PLAN_REMEDIATION_2`
-> **Mode**: DOCUMENTATION RECONCILIATION PLANNING ONLY (Zero canonical specification edits until this plan is approved and reconciliation contract released; zero Go production code, zero migrations).
+> **Status**: `EXTERNAL_AUDIT_APPROVED` (Revision 2 Approved pursuant to External Re-Audit 001 and Contract Release Audit)
+> **Active Gate**: `P04_CANONICAL_RECONCILIATION_IMPLEMENTATION`
+> **Mode**: DOCUMENTATION RECONCILIATION EXECUTION GOVERNED BY RELEASED CONTRACT (Zero Go production code, zero migrations).
 > **Date**: 2026-09-27
 
 ---
@@ -19,14 +19,14 @@ External Audit 001 (`docs/audits/P04_CANONICAL_RECONCILIATION_PLAN_EXTERNAL_AUDI
 
 External Re-Audit 001 (`docs/audits/P04_CANONICAL_RECONCILIATION_PLAN_EXTERNAL_REAUDIT_001.md`, commit `2cedd63edcc2770ad73db2a060b0e3898c4e2df2`) confirmed findings `P04-CRPLAN-R1-001`, `P04-CRPLAN-R1-002`, and `P04-CRPLAN-R1-003` as `CLOSED`, and recorded follow-up finding `P04-CRPLAN-R2-001` requiring the full verbatim SQLite check constraint for `reported_head_sha` (including hex exclusion check) in CR-05.
 
-This remediated plan (Revision 2) establishes complete design-level resolution of finding `P04-CRPLAN-R2-001`, defining the **precise inventory categorized into MODIFY_ALLOWED and VERIFY_ONLY, itemized mapping, exact literals/schemas/APIs to synchronize, subtask ownership boundaries, and acceptance criteria** for reconciling canonical specifications with accepted ADR-018, approved PROPOSAL-P04-001 (Revision 22), and approved baseline PROPOSAL-P04-002 (Revision 9).
+This plan (Revision 2) is formally **`EXTERNAL_AUDIT_APPROVED`** (`docs/audits/P04_CANONICAL_RECONCILIATION_CONTRACT_RELEASE_AUDIT.md`), defining the **precise inventory categorized into MODIFY_ALLOWED and VERIFY_ONLY, itemized mapping, exact literals/schemas/APIs to synchronize, subtask ownership boundaries, and acceptance criteria** for reconciling canonical specifications with accepted ADR-018, approved PROPOSAL-P04-001 (Revision 22), and approved baseline PROPOSAL-P04-002 (Revision 9).
 
 ### 1.2. Baseline Partitioning Discipline
 
 | Dimension | Baseline A: Phase P03 Locked Baselines | Baseline B: Phase P04 ADR-018 Reconciliation (This Plan) |
 | :--- | :--- | :--- |
 | **Originating Authority** | `PROPOSAL-P03-001`, `ADR-016 Accepted`, `ADR-017 Accepted` | `PROPOSAL-P04-001 Rev 22`, `PROPOSAL-P04-002 Rev 9`, **ADR-018 Accepted** |
-| **Audit Status** | `P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED` (Rev 3); `P03_ADR_016_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED` | **`P04_CANONICAL_RECONCILIATION_PLAN_REMEDIATION_2` (REVISION 2 SUBMITTED)** |
+| **Audit Status** | `P03_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED` (Rev 3); `P03_ADR_016_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED` | **`PLAN_P04_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED` (Revision 2)** |
 | **Reconciled Scope** | P03 AO integration, durable dispatch saga, Pair session decoupling, Model A attempt snapshot, double-gated quarantine, stop lifecycle, and host quiescence. | P04 Evidence & Review Engine: Model 1 persistence ownership, Schema v6/v9, live lease capability vs snapshot separation, single coordinator effect gate, AppContainer verification runner, CAS store, JCS hashing, latency diagnostic intervals, Descriptor A/B/C, and REVIEW_INTEGRITY_CONFLICT variant discrimination. |
 | **Status Invariant** | Permanently locked and approved; zero retroactive modification. | Planning only; zero specification edits permitted until plan audit approval and contract release. |
 
