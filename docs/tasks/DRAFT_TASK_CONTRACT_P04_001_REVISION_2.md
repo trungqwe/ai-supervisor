@@ -7,8 +7,8 @@
 > **Phase ID**: P04
 > **Base SHA**: db6b654f03a7ce3c8e6ae2cd180f2cb7236bf7c2
 > **Status**: NOT_RELEASED (Draft Proposed)
-> **Authority**: Formulated pursuant to accepted [docs/adr/ADR-018-evidence-review-and-verification-isolation.md](../adr/ADR-018-evidence-review-and-verification-isolation.md), approved PROPOSAL-P04-001 (Revision 22), approved baseline PROPOSAL-P04-002 (Revision 9), approved PLAN-P04-EVIDENCE-REVIEW.md (Revision 22), approved subtask plan PLAN-P04A-WORKSPACE-BINDING-AND-CLAIMS.md, External Re-Audit 001 (docs/audits/P04_TASK_001_EXTERNAL_REAUDIT_001.md), and proposed [docs/proposals/PROPOSAL-P04-003-p04a-recovery-authority-seam-remediation.md](../proposals/PROPOSAL-P04-003-p04a-recovery-authority-seam-remediation.md).
-> **Implementation Scope**: Authorized strictly within allowed_scope (40 files) on isolated implementation branch codex/p04-001 once formally released.
+> **Authority**: Formulated pursuant to accepted [docs/adr/ADR-018-evidence-review-and-verification-isolation.md](../adr/ADR-018-evidence-review-and-verification-isolation.md), approved PROPOSAL-P04-001 (Revision 22), approved baseline PROPOSAL-P04-002 (Revision 9), approved PLAN-P04-EVIDENCE-REVIEW.md (Revision 22), approved subtask plan PLAN-P04A-WORKSPACE-BINDING-AND-CLAIMS.md, External Re-Audit 001 (docs/audits/P04_TASK_001_EXTERNAL_REAUDIT_001.md), and proposed [docs/proposals/PROPOSAL-P04-003-p04a-recovery-authority-seam-remediation.md](../proposals/PROPOSAL-P04-003-p04a-recovery-authority-seam-remediation.md) (Revision 2).
+> **Implementation Scope**: Authorized strictly within allowed_scope (41 files) on isolated implementation branch codex/p04-001 once formally released.
 > **Runtime Invariants**: AUTOMATIC_RESTORE = DISABLED; VERIFIED_OPERATOR_PRINCIPAL = OPEN_FAIL_CLOSED_DEPENDENCY; zero live AO calls; zero implementation of Subtasks P04B, P04C, or P04D; P04_CODE = HELD_PENDING_P04A_CONTRACT_REVISION; P05_CODE = NOT_AUTHORIZED.
 
 ---
@@ -32,7 +32,7 @@
   "revision_number": 2,
   "supersedes_contract_id": "CONTRACT-TASK-P04-001-01",
   "phase_id": "P04",
-  "objective": "Implement Schema Migration v6, host-boundary WorkspaceBindingAuthority with Win32 128-bit physical identity and anti-rename handle locks, unified PrepareBoundDispatch dispatch seam, 14 pre-send guards, single coordinator effect gate, recovery scanner direct authority forwarding via Poller seam without global mutable state, pre-send diagnostic Variant B, and Transaction A report intake via exclusive raw JSON schema admission consuming typed GitEvidenceResult interface seam.",
+  "objective": "Implement Schema Migration v6, host-boundary WorkspaceBindingAuthority with Win32 128-bit physical identity and anti-rename handle locks, unified PrepareBoundDispatch dispatch seam, 14 pre-send guards, single coordinator effect gate, recovery scanner direct authority forwarding via Poller seam without global mutable state, differentiated lease close error semantics, pre-send diagnostic Variant B, and Transaction A report intake via exclusive raw JSON schema admission using embedded canonical schema mirror consuming typed GitEvidenceResult interface seam.",
   "requirements": [
     "FR-008",
     "SEC-002",
@@ -83,6 +83,7 @@
     "internal/store/workspace_binding_test.go",
     "internal/store/report_intake_transactions.go",
     "internal/store/report_intake_test.go",
+    "internal/store/worker_report_schema.json",
     "internal/store/session_lifecycle_test.go",
     "internal/store/session_lifecycle_remediation_test.go",
     "internal/store/atomic_transitions_test.go",
@@ -123,9 +124,10 @@
     "Canonical worker claims mapping: WorkerReport fields map into worker_claims (head_sha -> reported_head_sha) and RFC 8785 JCS canonicalized payload_json (files_changed -> claimed_files_changed, tests -> tests, worker_claims -> textual_claims, build_status -> build_status)",
     "Daemon restart recovery invariant: daemon restart invalidates all in-memory lease capability; recovery scanner reads durable paths/lineage from DB, creates WorkspaceBindingCandidate, and calls authority.Acquire(ctx, candidate) to open a fresh lease and compare physical identity against durable attempt_workspace_bindings; scanner strictly never invokes Store.RecordSendRequested, never transitions stage to SEND_REQUESTED, and never invokes AO /send (RecordSendRequested call count = 0, AO /send call count = 0); exact match allows pre-send classification while preserving task DISPATCHED, operation DISPATCH_BOUND, and attempt open; identity mismatch or acquire failure strictly fails closed with zero /send, executes diagnostic Variant B, leaves task DISPATCHED, operation DISPATCH_BOUND, and attempt open; terminalization is strictly a separate D12 transaction performed by verified operator (DISPATCHED -> FAILED, recovery_disposition = WORKSPACE_BINDING_INTEGRITY_FAILURE); automated re-send after restart is not authorized",
     "Direct recovery authority forwarding without global state: Poller.PollOnce forwards authority directly from completed owner (Runner{..., Authority: p.Owner.Authority}); mutable global map storeAuthorities and all package-level registries are strictly prohibited; Runner with nil authority unconditionally executes Variant B",
-    "Lease close error handling: any error returned by WorkspaceBindingLease.Close() in recovery or coordinator must be captured and handled; closing handles must not fail silently",
-    "Sole public raw JSON report admission: Store.IngestWorkerReportRaw is the sole public admission entry point for worker reports, validating raw JSON bytes against docs/schemas/worker-report.schema.json using the Draft-07 JSON Schema engine; exported struct bypass is strictly prohibited",
-    "Explicit symlink privilege policy: host symlink probe in workspace_binding_authority_test.go must check client privileges; if privilege is unheld, test must call t.Skip() and AC-P04A-07 symlink status must remain UNVERIFIED; false PASS via unasserted return is strictly forbidden",
+    "Lease close outcome semantics: WorkspaceBindingLease.Close() error handling is strictly differentiated: (A) in recovery scanner, Close error returns non-nil error from Run, reports Complete=false, preserves committed DB transactions without rollback, and issues zero AO wire effects; (B) in coordinator prior to wire effect, Close or acquire/revalidate failure forbids /send and triggers diagnostic Variant B; (C) in coordinator post wire effect (after SEND_REQUESTED/SEND_CONFIRMED), Close error is logged and returned but strictly never permits resend, preserving durable dispatch outcome; caller must re-read durable operation state; regression tests must verify both pre-effect and post-effect Close error behaviors",
+    "Sole public raw JSON report admission: Store.IngestWorkerReportRaw is the sole public admission entry point for worker reports with signature (ctx, taskID, contractID, attemptID, rawReportJSON, evidence, actor, at), validating raw JSON bytes against the embedded Draft-07 JSON Schema; exported struct bypass is eliminated and any struct helper must be package-private and called exclusively after raw JSON schema validation succeeds",
+    "Embedded canonical schema mirror: internal/store/worker_report_schema.json is the embedded byte-exact mirror of docs/schemas/worker-report.schema.json accessed via go:embed; runtime validation must compile and validate against this embedded schema; parity test must verify byte-exact or SHA-256 equivalence with docs/schemas/worker-report.schema.json; parallel hand-written validator as independent authority is strictly prohibited",
+    "Symlink probe verification requirement: host symlink probe in workspace_binding_authority_test.go must execute and PASS on a capability-qualified Windows host holding SeCreateSymbolicLinkPrivilege; if unheld, test may call t.Skip() to avoid false PASS, but any skip leaves AC-P04A-07 and AC-P04A-24 UNVERIFIED, forces WorkerReport to record status BLOCKED or ready_for_review=false, and prevents External Audit Approval; final verification requires verified execution log",
     "Preservation of migrations_v5_test.go: modifications to internal/store/migrations_v5_test.go are strictly limited to preserving historical v5 upgrade and rollback test coverage when CurrentSchemaVersion advances to 6 without weakening v5 fixtures or assertions",
     "Worker profile constraint: antigravity-standard is restricted strictly to worker_profile; all verification requests must use host profile go-test-p04-001",
     "Verification request policy: each request must declare profile_id: go-test-p04-001, cwd: \".\", timeout_seconds <= 300, and typed parameters.package and parameters.flags (const [\"-v\", \"-race\", \"-count=1\"]); no command or shell command strings",
@@ -139,8 +141,8 @@
     "AC-P04A-04: CAS triggers (trg_attempt_workspace_bindings_cas_guard, trg_review_integrity_holds_cas_guard) enforce valid forward state transitions and reject invalid downgrades or modifications to resolved holds",
     "AC-P04A-05: Immutability triggers reject DELETE operations on attempt_workspace_bindings, worker_claims, and review_integrity_holds, and reject UPDATE operations on worker_claims",
     "AC-P04A-06: Host WorkspaceBindingAuthority acquires directory handles omitting FILE_SHARE_DELETE; OS returns ERROR_SHARING_VIOLATION on concurrent directory rename or deletion attempts while lease is active",
-    "AC-P04A-07: Win32 128-bit physical identity capture verified via GetFileInformationByHandleEx(FileIdInfo); directory substitution probes (junctions, symlinks, subst, rename) fail physical identity verification; unheld symlink privilege explicitly skips probe without false PASS",
-    "AC-P04A-08: WorkspaceBindingLease Revalidate() detects handle invalidation, path changes, and identity mismatch; Close() idempotently releases both handles and propagates close errors",
+    "AC-P04A-07: Win32 128-bit physical identity capture verified via GetFileInformationByHandleEx(FileIdInfo); directory substitution probes (junctions, symlinks, subst, rename) fail physical identity verification; unheld symlink privilege explicitly calls t.Skip() keeping AC-P04A-07 UNVERIFIED without false PASS; final task acceptance requires executed and passing symlink probe evidence",
+    "AC-P04A-08: WorkspaceBindingLease Revalidate() detects handle invalidation, path changes, and identity mismatch; Close() idempotently releases both handles and propagates close errors; error behavior follows differentiated scanner vs pre-effect vs post-effect semantics",
     "AC-P04A-09: PrepareBoundDispatch store seam atomically claims task READY -> DISPATCHED, allocates task_attempts with session snapshot, inserts dispatch_operations (DISPATCH_BOUND), inserts attempt_workspace_bindings (ACTIVE), and appends TASK_DISPATCH_BOUND and WORKSPACE_BINDING_CREATED audit events in a single transaction",
     "AC-P04A-10: Single coordinator effect gate in Coordinator.Dispatch revalidates live WorkspaceBindingLease and passes verified WorkspaceBindingSnapshot to Store.RecordSendRequested; in the same transaction, Store compares worktree/gitdir paths, 128-bit physical file IDs, volume serials, pinned AO commit, and exact lineage against active attempt_workspace_bindings before committing send intent; snapshot mismatch strictly forbids /send, preserves task DISPATCHED, operation DISPATCH_BOUND, and attempt open, and triggers diagnostic Variant B",
     "AC-P04A-11: Pre-send binding rejection executes diagnostic Variant B transaction: appends REVIEW_INTEGRITY_CONFLICT (conflict_source = 'WORKSPACE_BINDING_GUARD', attempted_reason = literal, colliding_event_id absent), inserts hold INVARIANT_MISMATCH, CAS invalidates binding, and preserves task DISPATCHED and attempt open",
@@ -155,8 +157,8 @@
     "AC-P04A-20: RecordSendRequested non-variadic snapshot guard behavior tests: exact snapshot PASS; stale or fake snapshot FAIL; path or worktree FileId mismatch FAIL; linked gitdir identity mismatch FAIL; pinned AO commit mismatch FAIL; all failure probes verify AO send call count = 0 and atomic rollback of audit, hold, and binding CAS",
     "AC-P04A-21: Exact-match restart recovery effect boundary: scanner Acquire and physical identity comparison PASS verifies durable binding, but RecordSendRequested call count = 0, AO /send call count = 0, and dispatch operation stage remains DISPATCH_BOUND; directory mismatch or Acquire failure executes atomic Variant B, CAS invalidates binding, and keeps attempt open; zero snapshot-only or scanner-direct effect pathways permitted",
     "AC-P04A-22: Poller transient runner direct authority forwarding verified: Poller.PollOnce forwards authority directly from completed owner; package-level mutable global map storeAuthorities is deleted; Runner with nil authority unconditionally executes Variant B, leaving binding INVALIDATED",
-    "AC-P04A-23: Exclusive raw JSON worker report intake verified: IngestWorkerReportRaw is the sole public admission entry point; payloads with unrecognized fields violate additionalProperties: false and fail admission before initiating store transaction; bypass via decoded struct is eliminated",
-    "AC-P04A-24: Symlink probe execution integrity: test checks Windows privilege; executes and verifies substitution when elevated; explicitly calls t.Skip() when unheld without producing false-positive PASS"
+    "AC-P04A-23: Exclusive raw JSON worker report intake and schema parity verified: internal/store/worker_report_schema.json is an embedded byte-exact mirror of docs/schemas/worker-report.schema.json; parity test asserts 100% byte or SHA-256 identity; IngestWorkerReportRaw is the sole public admission entry point; payloads with unrecognized fields violate additionalProperties: false and fail admission before initiating store transaction; bypass via decoded struct or parallel hand-written validator is eliminated",
+    "AC-P04A-24: Symlink probe execution integrity: test checks Windows privilege; executes and verifies substitution when elevated; explicitly calls t.Skip() when unheld without producing false-positive PASS; any skip leaves task UNVERIFIED and not ready for review"
   ],
   "verification_requests": [
     {
@@ -258,7 +260,10 @@
     "test_log_full_suite_race_exit_zero",
     "test_log_restart_recovery_scanner_exact_match_zero_send_effect",
     "test_log_recovery_poller_direct_authority_forwarding_zero_global_map",
-    "test_log_raw_worker_report_schema_rejection_additional_properties"
+    "test_log_raw_worker_report_schema_rejection_additional_properties",
+    "test_log_worker_report_schema_parity",
+    "test_log_symlink_probe_executed_and_passed_on_capability_qualified_windows_host",
+    "test_log_lease_close_pre_and_post_effect_error_handling"
   ],
   "worker_profile": "antigravity-standard",
   "report_contract": "docs/schemas/worker-report.schema.json",
@@ -273,7 +278,10 @@
     "Any failure to preserve RUNNING state during dirty report intake",
     "Any introduction of unapproved audit literals or unapproved verification profiles",
     "Any introduction of mutable global authority state across runner instances",
-    "Any bypass of Draft-07 JSON Schema validation during worker report admission"
+    "Any bypass of Draft-07 JSON Schema validation during worker report admission",
+    "Any byte or hash mismatch between internal/store/worker_report_schema.json and docs/schemas/worker-report.schema.json",
+    "Symlink probe SKIPPED or UNVERIFIED during final verification (blocks ready_for_review)",
+    "Any permission to resend granted upon post-wire lease close failure"
   ]
 }
 ```
@@ -346,8 +354,8 @@ Pursuant to ADR-013, host verification profile `go-test-p04-001` is defined by t
 - `internal/recovery/poller.go`: Direct forwarding of `Authority: p.Owner.Authority` to transient `Runner`.
 
 ### 3.3. Scope Non-Overlap Verification
-- `allowed_scope` contains exactly 40 files.
-- `forbidden_scope` explicitly lists:
+- `allowed_scope` contains exactly **41 files**.
+- `forbidden_scope` explicitly lists 7 entries/patterns:
   * `cmd/supervisor/**`
   * `internal/ao/**`
   * `internal/recovery/timeout_monitor.go`
