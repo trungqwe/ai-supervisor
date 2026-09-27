@@ -6,9 +6,9 @@
 > **Author**: AI Engineering Supervisor Worker (under External Supervisor direction)
 > **Date**: 2026-09-27
 > **Base SHA**: `db6b654f03a7ce3c8e6ae2cd180f2cb7236bf7c2` (Canonical Reconciliation Merge Commit)
-> **Active Gate**: `TASK_P04A_CONTRACT_PLANNING`
-> **Audited Baseline Reference**: `80b997c89d57280286c63599c1c539161b31b5eb`
-> **Audit Record**: [`docs/audits/P04_TASK_001_CONTRACT_PLANNING_EXTERNAL_AUDIT_001.md`](../audits/P04_TASK_001_CONTRACT_PLANNING_EXTERNAL_AUDIT_001.md) (`REVISION_REQUIRED`)
+> **Active Gate**: `TASK_P04A_CONTRACT_RELEASE_AUDIT`
+> **Audited Baseline Reference**: `8582e339d417c184122421701e3c86b4115d5a7d`
+> **Audit Record**: [`docs/audits/P04_TASK_001_CONTRACT_PLANNING_EXTERNAL_REAUDIT_004.md`](../audits/P04_TASK_001_CONTRACT_PLANNING_EXTERNAL_REAUDIT_004.md) (`READY_FOR_RELEASE_AUDIT`)
 > **Related Architecture**:
 > - [`ADR-018`](../adr/ADR-018-evidence-review-and-verification-isolation.md) (ACCEPTED / Level 2 Canonical Specification)
 > - [`PROPOSAL-P04-001`](../proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md) (Revision 22, `EXTERNAL_APPROVED`)
@@ -547,13 +547,13 @@ If `GitEvidenceResult.IsClean` is false:
 
 ---
 
-### 3.6. Caller Impact Matrix, Scope Closure & Daemon Restart Recovery (Findings P04A-R1-003, P04A-R2-001, P04A-R2-003, P04A-R3-001)
+### 3.6. Caller Impact Matrix, Scope Closure & Daemon Restart Recovery (Findings P04A-R1-003, P04A-R2-001, P04A-R2-003, P04A-R3-001, P04A-R4-001)
 
-#### 3.6.1. Categorized Caller Impact Matrix (Finding P04A-R3-001)
+#### 3.6.1. Categorized Caller Impact Matrix (Findings P04A-R3-001, P04A-R4-001)
 To guarantee that no API pathway or caller can allocate an attempt or issue `/send` without an active, verified workspace binding, all repository files referencing `PrepareBoundDispatch`, `RecordSendRequested`, and `dispatch.Coordinator` construction identified via static repository analysis are explicitly categorized into four granular groups within `allowed_scope`:
 1. **Seam Definitions**: Core domain and store API definitions.
 2. **Direct Production Callers**: Production code paths invoking the seams.
-3. **Direct Test Callers**: Test suites invoking seams directly with test fixtures.
+3. **Direct Test Callers/Constructions**: Test suites invoking seams directly or constructing the coordinator.
 4. **Indirect Behavior Tests**: Test suites exercising seams indirectly through higher-level component interfaces.
 
 | Category | Function / Seam | Affected File | Caller Role / Impact | Remediation & Scope Allocation |
@@ -563,7 +563,6 @@ To guarantee that no API pathway or caller can allocate an attempt or issue `/se
 | **Seam Definition** | `Coordinator` | `internal/dispatch/coordinator.go` | Struct Definition | Injects `WorkspaceBindingAuthority` domain interface. (Directly in `allowed_scope`). |
 | **Direct Production Caller** | `PrepareBoundDispatch` | `internal/dispatch/coordinator.go` | Coordinator Effect Gate | Calls `PrepareBoundDispatch` with live lease snapshot during 9-step atomic dispatch sequence. (Directly in `allowed_scope`). |
 | **Direct Production Caller** | `RecordSendRequested` | `internal/dispatch/coordinator.go` | Exclusive Pre-Send Effect Gate | Sole production caller: passes verified `WorkspaceBindingSnapshot` to Store after live lease revalidation before wire `/send`. (Directly in `allowed_scope`). |
-| **Direct Test Caller** | `PrepareBoundDispatch` | `internal/store/dispatch_test.go` | Dispatch Seam Tests | Asserts legacy unbound dispatch rejection and exercises bound dispatch directly. (Directly in `allowed_scope`). |
 | **Direct Test Caller** | `PrepareBoundDispatch` | `internal/store/atomic_transitions_test.go` | Atomic Tests | Updated to pass valid test workspace binding snapshot. (Directly in `allowed_scope`). |
 | **Direct Test Caller** | `PrepareBoundDispatch` | `internal/store/session_lifecycle_test.go` | Store Lifecycle Tests | Test helper `setupBoundAttempt` and test cases updated to pass valid `WorkspaceBindingSnapshot`. (Directly in `allowed_scope`). |
 | **Direct Test Caller** | `PrepareBoundDispatch` | `internal/store/session_lifecycle_remediation_test.go` | Remediation Tests | Updated to pass valid test workspace binding snapshot. (Directly in `allowed_scope`). |
@@ -584,10 +583,11 @@ To guarantee that no API pathway or caller can allocate an attempt or issue `/se
 **Summary of Categorized References**:
 - **Seam Definitions**: 3 entries (`internal/store/dispatch.go`, `internal/store/dispatch_transactions.go`, `internal/dispatch/coordinator.go`).
 - **Direct Production Callers**: 2 seam invocations across 1 file (`internal/dispatch/coordinator.go` for both `PrepareBoundDispatch` and `RecordSendRequested`).
-- **Direct Test Callers**: 16 entries across 10 distinct test files.
+- **Direct Test Callers/Constructions**: 15 entries across 13 distinct test files.
 - **Indirect Behavior Tests**: 1 entry (`internal/dispatch/coordinator_test.go`).
-- **Total Cataloged Entries**: 22 entries across 12 distinct repository files, 100% of which are directly included in `allowed_scope`.
+- **Total Cataloged Entries**: 21 entries across 16 distinct repository files, 100% of which are directly included in `allowed_scope`.
 - **Exclusion of Recovery Scanner from Effect Calls (Finding P04A-R3-001)**: `internal/recovery/scanner.go` is strictly NOT a caller of `RecordSendRequested` and strictly NOT a caller of wire `/send`. It remains in `allowed_scope` because it consumes `WorkspaceBindingAuthority.Acquire` and performs physical identity comparison against durable bindings.
+- **Preservation of `internal/store/dispatch_test.go` in `allowed_scope` (Finding P04A-R4-001)**: While `internal/store/dispatch_test.go` does not directly invoke `PrepareBoundDispatch` (testing legacy unbound rejection via `prepareLegacyDispatchForTest` instead), it is explicitly retained in `allowed_scope` to ensure legacy rejection invariants remain unbroken under Schema v6.
 
 #### 3.6.2. Elimination of Unprotected Dispatch Pathways
 - All legacy and unbound dispatch entrypoints (`PrepareDispatch`, unbound `CreateDispatchOperation`) are strictly disabled.

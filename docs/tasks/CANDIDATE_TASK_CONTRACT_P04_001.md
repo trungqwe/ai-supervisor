@@ -1,4 +1,4 @@
-# DRAFT TASK CONTRACT: TASK-P04-001
+# CANDIDATE TASK CONTRACT: TASK-P04-001
 
 > **Contract ID**: `CONTRACT-TASK-P04-001-01`
 > **Task ID**: `TASK-P04-001` (Workspace Binding Authority, Schema Migration v6, Seam Extension & Report Intake)
@@ -6,19 +6,20 @@
 > **Supersedes Contract ID**: `null`
 > **Phase ID**: `P04`
 > **Base SHA**: `db6b654f03a7ce3c8e6ae2cd180f2cb7236bf7c2`
-> **Status**: `DRAFT_NOT_RELEASED`
-> **Authority**: Formulated pursuant to accepted `ADR-018` (ACCEPTED / Level 2 Canonical Specification), approved `PROPOSAL-P04-001` (Revision 22), approved `PLAN-P04-EVIDENCE-REVIEW.md` (Revision 22), and `PLAN-P04A-WORKSPACE-BINDING-AND-CLAIMS.md`.
-> **Governance Notice**: This contract is in DRAFT status and is strictly NOT RELEASED. Code writing is strictly HELD pending external audit and formal release.
+> **Status**: `CANDIDATE_NOT_RELEASED` (Status invariant: `NOT_RELEASED`)
+> **Authority**: Formulated pursuant to accepted `ADR-018` (ACCEPTED / Level 2 Canonical Specification), approved `PROPOSAL-P04-001` (Revision 22), approved baseline `PROPOSAL-P04-002` (Revision 9), approved `PLAN-P04-EVIDENCE-REVIEW.md` (Revision 22), and approved subtask plan `PLAN-P04A-WORKSPACE-BINDING-AND-CLAIMS.md`.
+> **Governance Invariant**: Candidate contract submitted for External Supervisor release audit. Strictly `NOT_RELEASED`. Zero Go production code, zero migration scripts, and zero live AO calls authorized.
 > **Runtime Invariants**: `AUTOMATIC_RESTORE = DISABLED`; `VERIFIED_OPERATOR_PRINCIPAL = OPEN_FAIL_CLOSED_DEPENDENCY`; zero live AO calls; zero implementation of Subtasks P04B, P04C, or P04D.
 
 ---
 
-> [!CAUTION]
-> **GOVERNANCE STATUS: DRAFT — NOT RELEASED FOR IMPLEMENTATION**.
-> This document is a non-executable draft task contract prepared for External Supervisor audit.
-> Absolutely ZERO production Go code, migration files, or unit tests may be created under this draft.
-> Release authorization requires formal release audit approval by the External Supervisor.
-> Verification profiles are proposed and subject to host catalog verification; Stage B validation is NOT declared as passed.
+> [!CRITICAL]
+> **GOVERNANCE STATUS: CANDIDATE ONLY / NOT_RELEASED**.
+> This document is a candidate task contract awaiting External Supervisor release audit.
+> It does **NOT** authorize production code execution or library implementation.
+> Production code writing remains strictly **`HELD_PENDING_TASK_P04A_CONTRACT_RELEASE`**.
+> Status invariant remains strictly **`NOT_RELEASED`**.
+> Candidate contract does **NOT** self-claim Stage B runtime catalog or task release authorization.
 
 ## 1. Immutable TaskContract JSON
 
