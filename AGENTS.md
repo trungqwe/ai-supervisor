@@ -52,7 +52,7 @@ This document establishes immutable operational directives for all AI coding age
 
 ---
 
-# SECTION 2: CURRENT PHASE RULES — P04 CANONICAL RECONCILIATION PLANNING
+# SECTION 2: CURRENT PHASE RULES — P04 CANONICAL RECONCILIATION PLAN REMEDIATION 1
 
 > [!CRITICAL]
 > Phase P01 runtime proof activity is **COMPLETE**.
@@ -98,18 +98,20 @@ This document establishes immutable operational directives for all AI coding age
 > External Supervisor approved and released `CONTRACT-TASK-P03-003D-01` from candidate commit `7701b8b02c68006c4e692a1c8a61609c72a6c033`, blob `604c4786281354565c8e37238f0b5ba95542e4f9`, code base `583e700eb125a08cc6bd7d63b6b27a6f3d4cc527` (`docs/audits/P03_TASK_003D_CONTRACT_RELEASE_AUDIT.md`).
 > Historical 3B release: External Supervisor released CONTRACT-TASK-P03-003B-01 from candidate SHA `ae8deb9ee41479d0e0868dced53ed89135252923`, blob `84bd84535352c2d28dbc1eba820aa8b22382dd99`, with code base SHA `b8b0c95576d87677e8d48210d9838cc2f599752a`.
 
-> External Supervisor Re-Audit 021 (docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_021.md) issued verdict EXTERNAL_AUDIT_APPROVED for Phase P04 pre-contract architecture at audited commit 9c53ac3ee82a7035d458b1abe15f7a6bc315987d; PROPOSAL-P04-001 is EXTERNAL_APPROVED; PROPOSAL-P04-002 Revision 9 is APPROVED_AS_DESIGN_BASELINE; ADR-018 is formally ACCEPTED (ADR_018 = EXTERNAL_APPROVED, ADR_018_ACCEPTANCE = GRANTED, docs/adr/ADR-018-evidence-review-and-verification-isolation.md); PLAN-P04-EVIDENCE-REVIEW is EXTERNAL_APPROVED; findings P04-ARCH-R20-001..002 and P04-ARCH-R21-001..003 are CLOSED_AT_DESIGN_LEVEL; all six tracked design blockers (DESIGN_BLOCKER_P04_WORKTREE_BINDING, DESIGN_BLOCKER_P04_GIT_EVIDENCE_AUTHORITY, DESIGN_BLOCKER_P04_VERIFICATION_ISOLATION, DESIGN_BLOCKER_P04_REVIEW_SCHEMA_RECONCILIATION, DESIGN_BLOCKER_P04_EVIDENCE_ATOMICITY, and DESIGN_BLOCKER_P04_INERT_AO_HARNESS) are CLOSED_AT_DESIGN_LEVEL. Reconciliation scope plan formulated in docs/plans/PLAN-P04-CANONICAL-RECONCILIATION-ADR-018.md (PLANNING_PENDING_EXTERNAL_AUDIT). Task Contract for P04 is NOT_RELEASED. Code writing for Phase P04 remains strictly held pending canonical reconciliation and task contract release (P04_CODE = HELD_PENDING_CANONICAL_RECONCILIATION_AND_TASK_CONTRACT). P05_CODE = NOT_AUTHORIZED. ACTIVE_GATE = P04_CANONICAL_RECONCILIATION_PLANNING.
+> External Supervisor Re-Audit 021 (docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_021.md) issued verdict EXTERNAL_AUDIT_APPROVED for Phase P04 pre-contract architecture at audited commit 9c53ac3ee82a7035d458b1abe15f7a6bc315987d; PROPOSAL-P04-001 is EXTERNAL_APPROVED; PROPOSAL-P04-002 Revision 9 is APPROVED_AS_DESIGN_BASELINE; ADR-018 is formally ACCEPTED (ADR_018 = EXTERNAL_APPROVED, ADR_018_ACCEPTANCE = GRANTED, docs/adr/ADR-018-evidence-review-and-verification-isolation.md); PLAN-P04-EVIDENCE-REVIEW is EXTERNAL_APPROVED; findings P04-ARCH-R20-001..002 and P04-ARCH-R21-001..003 are CLOSED_AT_DESIGN_LEVEL; all six tracked design blockers (DESIGN_BLOCKER_P04_WORKTREE_BINDING, DESIGN_BLOCKER_P04_GIT_EVIDENCE_AUTHORITY, DESIGN_BLOCKER_P04_VERIFICATION_ISOLATION, DESIGN_BLOCKER_P04_REVIEW_SCHEMA_RECONCILIATION, DESIGN_BLOCKER_P04_EVIDENCE_ATOMICITY, and DESIGN_BLOCKER_P04_INERT_AO_HARNESS) are CLOSED_AT_DESIGN_LEVEL. External Audit 001 of PLAN-P04-CANONICAL-RECONCILIATION-ADR-018 (docs/audits/P04_CANONICAL_RECONCILIATION_PLAN_EXTERNAL_AUDIT_001.md, commit ffb431b1c39b870f5689eb80e830d13f2151df57) recorded findings P04-CRPLAN-R1-001..003 with verdict REVISION_1_REQUIRED. Plan remediated to Revision 1 (REVISION_1_SUBMITTED). Task contracts DRAFT_TASK_CONTRACT_P04_DOC_RECONCILIATION_ADR_018.md and CANDIDATE_TASK_CONTRACT_P04_DOC_RECONCILIATION_ADR_018.md prepared with byte-identical JSON (status invariant: NOT_RELEASED). Task Contract for P04 is NOT_RELEASED. Code writing for Phase P04 remains strictly held pending canonical reconciliation and task contract release (P04_CODE = HELD_PENDING_CANONICAL_RECONCILIATION_AND_TASK_CONTRACT). P05_CODE = NOT_AUTHORIZED. ACTIVE_GATE = P04_CANONICAL_RECONCILIATION_PLAN_REMEDIATION_1.
 >
-1. **PHASE P04 CANONICAL RECONCILIATION PLANNING DIRECTIVES**:
+1. **PHASE P04 CANONICAL RECONCILIATION PLAN REMEDIATION DIRECTIVES**:
    - `PHASE_P03 = COMPLETE`; `P03_EXIT_GATE = EXTERNAL_AUDIT_APPROVED`.
-   - `ACTIVE_GATE = P04_CANONICAL_RECONCILIATION_PLANNING`.
+   - `ACTIVE_GATE = P04_CANONICAL_RECONCILIATION_PLAN_REMEDIATION_1`.
    - `P04_PRECONTRACT_ARCHITECTURE = EXTERNAL_AUDIT_APPROVED` (External Supervisor Re-Audit 021, commit `9c53ac3ee82a7035d458b1abe15f7a6bc315987d`).
    - `PROPOSAL_P04_001 = EXTERNAL_APPROVED` (`docs/proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md`, Revision 22).
    - `PROPOSAL_P04_002 = APPROVED_AS_DESIGN_BASELINE` (`docs/proposals/PROPOSAL-P04-002-review-bundle-latency-semantics.md`, Revision 9).
    - `ADR_018 = EXTERNAL_APPROVED` & `ADR_018_ACCEPTANCE = GRANTED` (`docs/adr/ADR-018-evidence-review-and-verification-isolation.md`).
    - `PLAN_P04_EVIDENCE_REVIEW = EXTERNAL_APPROVED` (`docs/plans/PLAN-P04-EVIDENCE-REVIEW.md`, Revision 22).
-   - `PLAN_P04_CANONICAL_RECONCILIATION = PLANNING_PENDING_EXTERNAL_AUDIT` (`docs/plans/PLAN-P04-CANONICAL-RECONCILIATION-ADR-018.md`).
+   - `PLAN_P04_CANONICAL_RECONCILIATION = REVISION_1_SUBMITTED` (`docs/plans/PLAN-P04-CANONICAL-RECONCILIATION-ADR-018.md`, Revision 1).
+   - External Audit 001 Record: `docs/audits/P04_CANONICAL_RECONCILIATION_PLAN_EXTERNAL_AUDIT_001.md` (`REVISION_1_REQUIRED`; findings `P04-CRPLAN-R1-001`, `P04-CRPLAN-R1-002`, `P04-CRPLAN-R1-003` remediated in Revision 1).
    - Findings `P04-ARCH-R20-001`, `P04-ARCH-R20-002`, `P04-ARCH-R21-001`, `P04-ARCH-R21-002`, and `P04-ARCH-R21-003` = `CLOSED_AT_DESIGN_LEVEL`.
+   - Reconciliation Contracts Prepared: `docs/tasks/DRAFT_TASK_CONTRACT_P04_DOC_RECONCILIATION_ADR_018.md` and `docs/tasks/CANDIDATE_TASK_CONTRACT_P04_DOC_RECONCILIATION_ADR_018.md` (byte-identical JSON, status invariant: `NOT_RELEASED`).
    - Proof Plan & Contract: `docs/plans/PLAN-P04-WORKTREE-BINDING-PROOF.md` Revision 5 (`HISTORICAL_DEFERRED_NON_BLOCKING`); `docs/tasks/DRAFT_TASK_CONTRACT_P04_WORKTREE_BINDING_PROOF.md` (`RETIRED_NON_EXECUTABLE_DRAFT`, Model A Draft Lineage, status invariant: `NOT_RELEASED`). Decoupled from execution graph; Subtask P04A is unblocked as first releaseable task once reconciliation is approved.
    - `P04_TASK_CONTRACT = NOT_RELEASED`.
    - `P04_CODE = HELD_PENDING_CANONICAL_RECONCILIATION_AND_TASK_CONTRACT`.
@@ -127,9 +129,10 @@ This document establishes immutable operational directives for all AI coding age
      * Approved Proposal 001: `docs/proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md` (`EXTERNAL_APPROVED`, Revision 22)
      * Design Baseline Proposal 002: `docs/proposals/PROPOSAL-P04-002-review-bundle-latency-semantics.md` (`APPROVED_AS_DESIGN_BASELINE`, Revision 9)
      * Approved Execution Plan: `docs/plans/PLAN-P04-EVIDENCE-REVIEW.md` (`EXTERNAL_APPROVED_FOR_CANONICAL_RECONCILIATION`, Revision 22)
-     * Reconciliation Scope Plan: `docs/plans/PLAN-P04-CANONICAL-RECONCILIATION-ADR-018.md` (`PLANNING_PENDING_EXTERNAL_AUDIT`)
+     * Remediated Scope Plan: `docs/plans/PLAN-P04-CANONICAL-RECONCILIATION-ADR-018.md` (`REVISION_1_SUBMITTED`, Revision 1)
+     * Audit 001 Record: `docs/audits/P04_CANONICAL_RECONCILIATION_PLAN_EXTERNAL_AUDIT_001.md` (`REVISION_1_REQUIRED`)
      * Re-Audit 021 Record: `docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_021.md` (`EXTERNAL_AUDIT_APPROVED`)
-   - Next Approved Action: Await External Supervisor audit of `PLAN-P04-CANONICAL-RECONCILIATION-ADR-018.md`. Zero production or test code writing for Phase P04 or P05, and zero canonical specification mutations until formal reconciliation approval.
+   - Next Approved Action: Await External Supervisor audit of `PLAN-P04-CANONICAL-RECONCILIATION-ADR-018.md` Revision 1 and candidate contract `CANDIDATE_TASK_CONTRACT_P04_DOC_RECONCILIATION_ADR_018.md`. Canonical reconciliation has not been executed; zero canonical specifications mutated, and zero production or test code written.
    - Maintain strict fail-closed dependencies: `AUTOMATIC_RESTORE = DISABLED`; operator restore and linked stop remain disabled until verified operator principal reaches trusted boundary (`VERIFIED_OPERATOR_PRINCIPAL = OPEN_FAIL_CLOSED_DEPENDENCY`).
    - Stage B runtime catalog is deferred: `STAGE_B_RUNTIME_CATALOG = DEFERRED_TO_P04_RUNTIME_INTEGRATION`.
    - Candidate WIP artifact preserved externally in `D:\TU_CODE\ai-supervisor-user-wip-recovery\P03-EXIT-R2-001`; never restore, overwrite, or touch.
