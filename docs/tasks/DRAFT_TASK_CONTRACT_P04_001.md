@@ -117,7 +117,7 @@
     "Zero unapproved audit event literals: no creation of new event literals; all events must exist in accepted ADRs",
     "Claim/evidence zero-trust separation: WorkerReport.head_sha is the sole source of worker_claims.reported_head_sha (length 7..40 lowercase hex, stored verbatim); GitEvidenceResult strictly provides independent evidence (actual_head_sha, actual_base_sha, diff details) without ReportedHeadSHA field; Subtask P04A strictly never writes actual_head_sha into worker_claims",
     "Canonical worker claims mapping: WorkerReport fields map into worker_claims (head_sha -> reported_head_sha) and RFC 8785 JCS canonicalized payload_json (files_changed -> claimed_files_changed, tests -> tests, worker_claims -> textual_claims, build_status -> build_status)",
-    "Daemon restart recovery invariant: daemon restart invalidates all in-memory lease capability; recovery scanner reads durable paths/lineage from DB, creates WorkspaceBindingCandidate, and calls authority.Acquire(ctx, candidate) to open a fresh lease and compare physical identity against durable attempt_workspace_bindings; prior handle token or database row alone grants zero effect authority; identity mismatch or acquire failure strictly fails closed with zero /send, leaves task DISPATCHED, operation DISPATCH_BOUND, and attempt open; terminalization is strictly a separate D12 transaction performed by verified operator (DISPATCHED -> FAILED, recovery_disposition = WORKSPACE_BINDING_INTEGRITY_FAILURE)",
+    "Daemon restart recovery invariant: daemon restart invalidates all in-memory lease capability; recovery scanner reads durable paths/lineage from DB, creates WorkspaceBindingCandidate, and calls authority.Acquire(ctx, candidate) to open a fresh lease and compare physical identity against durable attempt_workspace_bindings; scanner strictly never invokes Store.RecordSendRequested, never transitions stage to SEND_REQUESTED, and never invokes AO /send (RecordSendRequested call count = 0, AO /send call count = 0); exact match allows pre-send classification while preserving task DISPATCHED, operation DISPATCH_BOUND, and attempt open; identity mismatch or acquire failure strictly fails closed with zero /send, executes diagnostic Variant B, leaves task DISPATCHED, operation DISPATCH_BOUND, and attempt open; terminalization is strictly a separate D12 transaction performed by verified operator (DISPATCHED -> FAILED, recovery_disposition = WORKSPACE_BINDING_INTEGRITY_FAILURE); automated re-send after restart is not authorized",
     "Preservation of migrations_v5_test.go: modifications to internal/store/migrations_v5_test.go are strictly limited to preserving historical v5 upgrade and rollback test coverage when CurrentSchemaVersion advances to 6 without weakening v5 fixtures or assertions",
     "Worker profile constraint: antigravity-standard is restricted strictly to worker_profile; all verification requests must use host profile go-test-p04-001",
     "Verification request policy: each request must declare profile_id: go-test-p04-001, cwd: \".\", timeout_seconds <= 300, and typed parameters.package and parameters.flags (const [\"-v\", \"-race\", \"-count=1\"]); no command or shell command strings",
@@ -144,7 +144,8 @@
     "AC-P04A-17: All verification requests declare profile_id go-test-p04-001, cwd \".\", timeout_seconds <= 300, and typed package/flags parameters; pass TaskContractValidator.ValidateRaw with catalog metadata and reject all 6 negative probes",
     "AC-P04A-18: Claim/evidence zero-trust separation: WorkerReport.head_sha is the sole source for worker_claims.reported_head_sha; GitEvidenceResult provides independent actual_head_sha without ReportedHeadSHA field; behavior tests verify that simulating reported_head_sha != actual_head_sha preserves both values independently without mutual overwrite",
     "AC-P04A-19: Daemon restart recovery in recovery.Runner: scanner reopens worktree root and linked gitdir by constructing WorkspaceBindingCandidate and invoking authority.Acquire, matching exact canonical path, VolumeSerialNumber, and FileIdInfo against durable attempt_workspace_bindings; prior in-memory handle token or standalone DB row does not grant effect authority; acquire with identical physical identity passes, while mismatch or acquire failure fails closed with zero /send, executes diagnostic Variant B, leaves task DISPATCHED, operation DISPATCH_BOUND, and attempt open; terminalization requires verified operator D12 transaction",
-    "AC-P04A-20: RecordSendRequested snapshot guard behavior tests: exact snapshot PASS; stale or fake snapshot FAIL; path or worktree FileId mismatch FAIL; linked gitdir identity mismatch FAIL; pinned AO commit mismatch FAIL; all failure probes verify AO send call count = 0 and atomic rollback of audit, hold, and binding CAS"
+    "AC-P04A-20: RecordSendRequested snapshot guard behavior tests: exact snapshot PASS; stale or fake snapshot FAIL; path or worktree FileId mismatch FAIL; linked gitdir identity mismatch FAIL; pinned AO commit mismatch FAIL; all failure probes verify AO send call count = 0 and atomic rollback of audit, hold, and binding CAS",
+    "AC-P04A-21: Exact-match restart recovery effect boundary: scanner Acquire and physical identity comparison PASS verifies durable binding, but RecordSendRequested call count = 0, AO /send call count = 0, and dispatch operation stage remains DISPATCH_BOUND; directory mismatch or Acquire failure executes atomic Variant B, CAS invalidates binding, and keeps attempt open; zero snapshot-only or scanner-direct effect pathways permitted"
   ],
   "verification_requests": [
     {
@@ -243,7 +244,8 @@
     "test_log_hold_dedup_and_recurrence_lifecycle",
     "test_log_claim_evidence_decoupling_reported_vs_actual_sha",
     "test_log_restart_recovery_scanner_acquire_and_mismatch_fail_closed",
-    "test_log_full_suite_race_exit_zero"
+    "test_log_full_suite_race_exit_zero",
+    "test_log_restart_recovery_scanner_exact_match_zero_send_effect"
   ],
   "worker_profile": "antigravity-standard",
   "report_contract": "docs/schemas/worker-report.schema.json",
@@ -315,34 +317,45 @@ Pursuant to ADR-013 and Findings `P04A-C1-004` and `P04A-R1-002`, host verificat
 5. **Cwd Traversal Probe**: Specifying relative escape paths (e.g. `../escape`) is rejected by `CwdPolicy: worktree_root`.
 6. **Extra Property Probe**: Supplying unauthorized parameters (e.g. `"command": "..."`) violates `additionalProperties: false` and is rejected.
 
-### 2.2. Caller Impact Matrix & Scope Reconciliation (Findings P04A-R1-003, P04A-R2-001, P04A-R2-002)
-To guarantee that no API pathway or caller can allocate an attempt or issue `/send` without an active, verified workspace binding matching the durable snapshot, all direct callers across `internal/store`, `internal/recovery`, `internal/dispatch`, and `test/integration` are cataloged directly from actual `rg` results. Every caller is explicitly included in `allowed_scope`:
+### 2.2. Categorized Caller Impact Matrix & Scope Reconciliation (Findings P04A-R1-003, P04A-R2-001, P04A-R2-002, P04A-R3-001)
+To guarantee that no API pathway or caller can allocate an attempt or issue `/send` without an active, verified workspace binding matching the durable snapshot, all repository files referencing `PrepareBoundDispatch`, `RecordSendRequested`, and `dispatch.Coordinator` construction identified via static repository analysis are explicitly categorized into four granular groups within `allowed_scope`:
+1. **Seam Definitions**: Core domain and store API definitions.
+2. **Direct Production Callers**: Production code paths invoking the seams.
+3. **Direct Test Callers**: Test suites invoking seams directly with test fixtures.
+4. **Indirect Behavior Tests**: Test suites exercising seams indirectly through higher-level component interfaces.
 
-| Seam / Constructor | Affected File | Caller Role / Impact | Scope Allocation |
-|---|---|---|---|
-| `PrepareBoundDispatch` | `internal/store/dispatch.go` | Seam Definition | Accepts `WorkspaceBindingSnapshot`, inserts `attempt_workspace_bindings` ACTIVE in transaction. (Directly in `allowed_scope`). |
-| `PrepareBoundDispatch` | `internal/dispatch/coordinator.go` | Coordinator Effect Gate | Calls seam with live lease snapshot during 9-step atomic dispatch. (Directly in `allowed_scope`). |
-| `PrepareBoundDispatch` | `internal/dispatch/coordinator_test.go` | Dispatch Tests | Tests atomic dispatch + workspace binding rollback on coordinator failure. (Directly in `allowed_scope`). |
-| `PrepareBoundDispatch` | `internal/store/session_lifecycle_test.go` | Store Lifecycle Tests | Updated to pass valid test workspace binding snapshot. (Directly in `allowed_scope`). |
-| `PrepareBoundDispatch` | `internal/store/session_lifecycle_remediation_test.go` | Remediation Tests | Updated to pass valid test workspace binding snapshot. (Directly in `allowed_scope`). |
-| `PrepareBoundDispatch` | `internal/store/atomic_transitions_test.go` | Atomic Tests | Updated to pass valid test workspace binding snapshot. (Directly in `allowed_scope`). |
-| `PrepareBoundDispatch` | `internal/store/dispatch_test.go` | Dispatch Seam Tests | Updated to pass valid test workspace binding snapshot. (Directly in `allowed_scope`). |
-| `PrepareBoundDispatch` | `internal/recovery/scanner_test.go` | Recovery Helper (`seedBoundExecution`) | Passes valid test workspace binding snapshot for in-flight recovery seeding. (Directly in `allowed_scope`). |
-| `RecordSendRequested` | `internal/store/dispatch_transactions.go` | Seam Definition | Receives verified `WorkspaceBindingSnapshot`, compares with DB ACTIVE binding in transaction. (Directly in `allowed_scope`). |
-| `RecordSendRequested` | `internal/dispatch/coordinator.go` | Pre-Send Intent | Revalidates live lease, extracts snapshot, passes to Store before /send. (Directly in `allowed_scope`). |
-| `RecordSendRequested` | `internal/store/dispatch_transactions_test.go` | Transaction Tests | Exercises Guard 12 snapshot comparison and Guard 14 validation and rejection. (Directly in `allowed_scope`). |
-| `RecordSendRequested` | `internal/store/stop_transactions_test.go` | Stop Store Tests | Updated to pass valid test workspace binding snapshot matching attempt binding. (Directly in `allowed_scope`). |
-| `RecordSendRequested` | `internal/store/restore_transactions_test.go` | Restore Tests | Updated to pass valid test workspace binding snapshot matching attempt binding. (Directly in `allowed_scope`). |
-| `RecordSendRequested` | `internal/store/recovery_transactions_test.go` | Recovery Store Tests | Updated to pass valid test workspace binding snapshot matching attempt binding. (Directly in `allowed_scope`). |
-| `RecordSendRequested` | `internal/store/session_lifecycle_test.go` | Store Lifecycle Tests | Updated to pass valid test workspace binding snapshot matching attempt binding. (Directly in `allowed_scope`). |
-| `RecordSendRequested` | `internal/recovery/scanner_test.go` | Recovery Scanner Tests | Updated to pass valid test workspace binding snapshot matching attempt binding. (Directly in `allowed_scope`). |
-| `RecordSendRequested` | `internal/recovery/timeout_monitor_test.go` | Timeout Monitor Tests | Updated to pass valid test workspace binding snapshot matching attempt binding. (Directly in `allowed_scope`). |
-| `RecordSendRequested` | `internal/recovery/poller_test.go` | Poller Tests | Updated to pass valid test workspace binding snapshot matching attempt binding. (Directly in `allowed_scope`). |
-| `RecordSendRequested` | `internal/recovery/integration_test.go` | Recovery Integration Tests | Updated to pass valid test workspace binding snapshot matching attempt binding. (Directly in `allowed_scope`). |
-| `RecordSendRequested` | `internal/recovery/scanner.go` | Recovery Scanner | Evaluates in-flight executions, passing fresh acquired snapshot; fail-closed on mismatch. (Directly in `allowed_scope`). |
-| `Coordinator` Construction | `internal/dispatch/coordinator.go` | Struct Definition | Injects `WorkspaceBindingAuthority` domain interface. (Directly in `allowed_scope`). |
-| `Coordinator` Construction | `internal/dispatch/coordinator_test.go` | Unit Tests | Injects mock/fake `WorkspaceBindingAuthority`. (Directly in `allowed_scope`). |
-| `Coordinator` Construction | `test/integration/ao_harness_test.go` | Full Harness Test | Injects test `WorkspaceBindingAuthority`. (Directly in `allowed_scope`). |
+| Category | Function / Seam | Affected File | Caller Role / Impact | Remediation & Scope Allocation |
+|---|---|---|---|---|
+| **Seam Definition** | `PrepareBoundDispatch` | `internal/store/dispatch.go` | Seam Definition | Extends transaction to accept `WorkspaceBindingSnapshot` and insert `attempt_workspace_bindings` (ACTIVE) atomically. (Directly in `allowed_scope`). |
+| **Seam Definition** | `RecordSendRequested` | `internal/store/dispatch_transactions.go` | Seam Definition | Enforces 14 pre-send guards including Guard 12 (active binding) and Guard 13 (snapshot equality). (Directly in `allowed_scope`). |
+| **Seam Definition** | `Coordinator` | `internal/dispatch/coordinator.go` | Struct Definition | Injects `WorkspaceBindingAuthority` domain interface. (Directly in `allowed_scope`). |
+| **Direct Production Caller** | `PrepareBoundDispatch` | `internal/dispatch/coordinator.go` | Coordinator Effect Gate | Calls `PrepareBoundDispatch` with live lease snapshot during 9-step atomic dispatch sequence. (Directly in `allowed_scope`). |
+| **Direct Production Caller** | `RecordSendRequested` | `internal/dispatch/coordinator.go` | Exclusive Pre-Send Effect Gate | Sole production caller: passes verified `WorkspaceBindingSnapshot` to Store after live lease revalidation before wire `/send`. (Directly in `allowed_scope`). |
+| **Direct Test Caller** | `PrepareBoundDispatch` | `internal/store/dispatch_test.go` | Dispatch Seam Tests | Asserts legacy unbound dispatch rejection and exercises bound dispatch directly. (Directly in `allowed_scope`). |
+| **Direct Test Caller** | `PrepareBoundDispatch` | `internal/store/atomic_transitions_test.go` | Atomic Tests | Updated to pass valid test workspace binding snapshot. (Directly in `allowed_scope`). |
+| **Direct Test Caller** | `PrepareBoundDispatch` | `internal/store/session_lifecycle_test.go` | Store Lifecycle Tests | Test helper `setupBoundAttempt` and test cases updated to pass valid `WorkspaceBindingSnapshot`. (Directly in `allowed_scope`). |
+| **Direct Test Caller** | `PrepareBoundDispatch` | `internal/store/session_lifecycle_remediation_test.go` | Remediation Tests | Updated to pass valid test workspace binding snapshot. (Directly in `allowed_scope`). |
+| **Direct Test Caller** | `PrepareBoundDispatch` | `internal/recovery/scanner_test.go` | Recovery Test Helper | `seedBoundExecution` helper updated to supply valid test workspace binding snapshot. (Directly in `allowed_scope`). |
+| **Direct Test Caller** | `RecordSendRequested` | `internal/store/dispatch_transactions_test.go` | Transaction Tests | Exercises Guard 12 and Guard 13 snapshot equality validation and rejection directly. (Directly in `allowed_scope`). |
+| **Direct Test Caller** | `RecordSendRequested` | `internal/store/recovery_transactions_test.go` | Recovery Store Tests | Direct test fixtures seed dispatch state matching attempt binding. (Directly in `allowed_scope`). |
+| **Direct Test Caller** | `RecordSendRequested` | `internal/store/restore_transactions_test.go` | Restore Tests | Direct test fixtures seed dispatch state matching attempt binding. (Directly in `allowed_scope`). |
+| **Direct Test Caller** | `RecordSendRequested` | `internal/store/stop_transactions_test.go` | Stop Invariant Tests | Direct test fixtures seed dispatch state matching attempt binding. (Directly in `allowed_scope`). |
+| **Direct Test Caller** | `RecordSendRequested` | `internal/store/session_lifecycle_test.go` | Store Lifecycle Tests | Updated to pass valid test workspace binding snapshot matching attempt binding. (Directly in `allowed_scope`). |
+| **Direct Test Caller** | `RecordSendRequested` | `internal/recovery/scanner_test.go` | Recovery Scanner Tests | Direct test fixtures seed dispatch state matching attempt binding. (Directly in `allowed_scope`). |
+| **Direct Test Caller** | `RecordSendRequested` | `internal/recovery/timeout_monitor_test.go` | Timeout Monitor Tests | Direct test fixtures seed dispatch state matching attempt binding. (Directly in `allowed_scope`). |
+| **Direct Test Caller** | `RecordSendRequested` | `internal/recovery/poller_test.go` | Poller Tests | Direct test fixtures seed dispatch state matching attempt binding. (Directly in `allowed_scope`). |
+| **Direct Test Caller** | `RecordSendRequested` | `internal/recovery/integration_test.go` | Recovery Integration Tests | Direct test fixtures seed dispatch state matching attempt binding. (Directly in `allowed_scope`). |
+| **Direct Test Caller** | `Coordinator` Construction | `internal/dispatch/coordinator_test.go` | Unit Tests | Injects mock/fake `WorkspaceBindingAuthority`. (Directly in `allowed_scope`). |
+| **Direct Test Caller** | `Coordinator` Construction | `test/integration/ao_harness_test.go` | Full Harness Test | Injects test `WorkspaceBindingAuthority`. (Directly in `allowed_scope`). |
+| **Indirect Behavior Test** | `PrepareBoundDispatch` & `RecordSendRequested` | `internal/dispatch/coordinator_test.go` | Dispatch Component Tests | Exercises `PrepareBoundDispatch` and `RecordSendRequested` indirectly through `Coordinator.Dispatch`. (Directly in `allowed_scope`). |
+
+**Summary of Categorized References**:
+- **Seam Definitions**: 3 entries (`internal/store/dispatch.go`, `internal/store/dispatch_transactions.go`, `internal/dispatch/coordinator.go`).
+- **Direct Production Callers**: 2 seam invocations across 1 file (`internal/dispatch/coordinator.go` for both `PrepareBoundDispatch` and `RecordSendRequested`).
+- **Direct Test Callers**: 16 entries across 10 distinct test files.
+- **Indirect Behavior Tests**: 1 entry (`internal/dispatch/coordinator_test.go`).
+- **Total Cataloged Entries**: 22 entries across 12 distinct repository files, 100% of which are directly included in `allowed_scope`.
+- **Exclusion of Recovery Scanner from Effect Calls (Finding P04A-R3-001)**: `internal/recovery/scanner.go` is strictly NOT a caller of `RecordSendRequested` and strictly NOT a caller of wire `/send`. It remains in `allowed_scope` because it consumes `WorkspaceBindingAuthority.Acquire` and performs physical identity comparison against durable bindings.
 
 **Scope Non-Overlap Guarantee**:
 - Blanket wildcard `internal/recovery/**` is eliminated from `forbidden_scope`.
@@ -350,7 +363,7 @@ To guarantee that no API pathway or caller can allocate an attempt or issue `/se
 - Other recovery files are explicitly listed in `forbidden_scope` (`internal/recovery/poller.go`, `internal/recovery/timeout_monitor.go`), guaranteeing zero overlap between `allowed_scope` and `forbidden_scope`.
 - Modifications to `internal/store/migrations_v5_test.go` are strictly limited to preserving v5 upgrade/rollback testing when `CurrentSchemaVersion` advances to 6 without weakening historical test coverage.
 
-### 2.3. Daemon Restart Recovery Specification (Findings P04A-R1-003, P04A-R2-003)
+### 2.3. Daemon Restart Recovery Specification (Findings P04A-R1-003, P04A-R2-003, P04A-R3-001)
 Pursuant to ADR-018:
 1. **Capability Invalidation**: Daemon restart completely invalidates all in-memory handle capability; all prior OS handles were closed by the OS on process exit.
 2. **Startup Recovery Acquisition Sequence**: When the daemon startup recovery scanner (`internal/recovery/scanner.go`) sweeps in-flight dispatches:
@@ -359,12 +372,17 @@ Pursuant to ADR-018:
    - Scanner constructs a `WorkspaceBindingCandidate` containing canonical worktree and linked gitdir paths.
    - Scanner invokes `authority.Acquire(ctx, candidate)` to open fresh directory handles and acquire a new `WorkspaceBindingLease`.
    - Scanner extracts `lease.Snapshot()` and compares physical identity (`VolumeSerialNumber`, `FileIdInfo`) against durable binding.
-3. **Physical Identity Matching Semantics**:
-   - Exact identity match: `Acquire` succeeds and physical identity matches durable binding; pre-send recovery evaluation proceeds.
-   - Identity mismatch or failure (directory renamed, swapped, deleted, junction substituted): fail closed, zero `/send` calls (AO call count = 0), executes diagnostic Variant B transaction (`attempted_reason = 'WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH'`, active hold `INVARIANT_MISMATCH`, CAS binding `ACTIVE -> INVALIDATED`).
+3. **Strict Prohibition of Scanner Effect Calls (Finding P04A-R3-001)**:
+   - The recovery scanner strictly NEVER invokes `Store.RecordSendRequested`, strictly NEVER transitions dispatch operation stage to `SEND_REQUESTED`, and strictly NEVER invokes AO `/send` (`RecordSendRequested` call count = 0, AO `/send` call count = 0).
+   - `Coordinator.Dispatch` remains the sole, exclusive effect gate authorized to hold the live lease through `RecordSendRequested` and wire `/send`.
+4. **Physical Identity Matching Semantics**:
+   - Exact identity match: `Acquire` succeeds and physical identity matches durable binding; pre-send recovery evaluation proceeds pursuant to approved P03 APIs (e.g. evaluating in-flight state and clearing `RECOVERY_PENDING`).
+   - Post-condition strictly remains: task state `DISPATCHED`, dispatch operation stage `DISPATCH_BOUND`, attempt remains open.
+   - Absent an approved recovery effect API, the scanner cannot trigger or resume wire effects. Automated re-send after daemon restart is strictly not authorized in Subtask P04A and would require a formal Proposal / ADR-018 addendum.
+   - Identity mismatch or failure (directory renamed, swapped, deleted, junction substituted) or `Acquire` failure: fail closed, zero `/send` calls (AO call count = 0), executes diagnostic Variant B transaction (`attempted_reason = 'WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH'`, active hold `INVARIANT_MISMATCH`, CAS binding `ACTIVE -> INVALIDATED`).
    - Task state remains `DISPATCHED`, operation remains `DISPATCH_BOUND`, attempt remains open.
    - Terminalization is strictly deferred to a separate D12 transaction performed by a verified operator (`DISPATCHED -> FAILED`, `recovery_disposition = 'WORKSPACE_BINDING_INTEGRITY_FAILURE'`). The scanner never terminalizes the attempt in the diagnostic transaction and never automatically transitions to `HUMAN_REQUIRED`.
-4. **Narrow Authority Interface**: To avoid circular package imports (`internal/host` -> `internal/recovery` -> `internal/host`), `WorkspaceBindingAuthority` is declared in `internal/domain/workspace_binding.go` and consumed by both `internal/dispatch` and `internal/recovery`:
+5. **Narrow Authority Interface**: To avoid circular package imports (`internal/host` -> `internal/recovery` -> `internal/host`), `WorkspaceBindingAuthority` is declared in `internal/domain/workspace_binding.go` and consumed by both `internal/dispatch` and `internal/recovery`:
    ```go
    type WorkspaceBindingAuthority interface {
        Acquire(ctx context.Context, candidate WorkspaceBindingCandidate) (WorkspaceBindingLease, error)

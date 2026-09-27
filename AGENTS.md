@@ -142,12 +142,13 @@ This document establishes immutable operational directives for all AI coding age
    - P04A Contract Planning External Audit 001 Record: `docs/audits/P04_TASK_001_CONTRACT_PLANNING_EXTERNAL_AUDIT_001.md` (`REVISION_REQUIRED`, audited commit `80b997c89d57280286c63599c1c539161b31b5eb`).
    - P04A Contract Planning External Re-Audit 001 Record: `docs/audits/P04_TASK_001_CONTRACT_PLANNING_EXTERNAL_REAUDIT_001.md` (`REVISION_REQUIRED`, baseline commit `351164dc063394b6ca3dfa4e430d7c9697c68eff`).
    - P04A Contract Planning External Re-Audit 002 Record: `docs/audits/P04_TASK_001_CONTRACT_PLANNING_EXTERNAL_REAUDIT_002.md` (`REVISION_REQUIRED`, baseline commit `bcefbba9fd0875253b61e2a10f992b9be9a929d9`).
-   - P04A Findings Status: `P04A-C1-001 = CLOSED`, `P04A-C1-002 = CLOSED`, `P04A-C1-003 = CLOSED`, `P04A-C1-004 = CLOSED`, `P04A-C1-005 = CLOSED`; `P04A-R1-001 = CLOSED`, `P04A-R1-002 = CLOSED`, `P04A-R1-003 = PARTIALLY_CLOSED`; `P04A-R2-001 = OPEN_PENDING_EXTERNAL_REAUDIT`, `P04A-R2-002 = OPEN_PENDING_EXTERNAL_REAUDIT`, `P04A-R2-003 = OPEN_PENDING_EXTERNAL_REAUDIT`.
+   - P04A Contract Planning External Re-Audit 003 Record: `docs/audits/P04_TASK_001_CONTRACT_PLANNING_EXTERNAL_REAUDIT_003.md` (`REVISION_REQUIRED`, baseline commit `22581943fecd11c63d3c5e6f38586083cfc364ba`).
+   - P04A Findings Status: `P04A-C1-001 = CLOSED`, `P04A-C1-002 = CLOSED`, `P04A-C1-003 = CLOSED`, `P04A-C1-004 = CLOSED`, `P04A-C1-005 = CLOSED`; `P04A-R1-001 = CLOSED`, `P04A-R1-002 = CLOSED`, `P04A-R2-002 = CLOSED_AT_CONTRACT_LEVEL`; `P04A-R1-003 = PARTIALLY_CLOSED`, `P04A-R2-001 = PARTIALLY_CLOSED`, `P04A-R2-003 = PARTIALLY_CLOSED`; `P04A-R3-001 = OPEN_PENDING_EXTERNAL_REAUDIT`.
    - `DRAFT_P04A = REVISION_REQUIRED`.
    - `TASK_P04A_TASK_CONTRACT = NOT_RELEASED`.
    - `P04_CODE = HELD_PENDING_TASK_P04A_CONTRACT_RELEASE`.
    - `ACTIVE_GATE = TASK_P04A_CONTRACT_PLANNING`.
-   - Next Approved Action: Remediation submitted for findings `P04A-R1-003` and `P04A-R2-001..003` in `docs/plans/PLAN-P04A-WORKSPACE-BINDING-AND-CLAIMS.md` and `docs/tasks/DRAFT_TASK_CONTRACT_P04_001.md`; awaiting External Supervisor re-audit. Zero Go production code permitted.
+   - Next Approved Action: Remediation submitted for findings `P04A-R1-003`, `P04A-R2-001`, `P04A-R2-003`, and `P04A-R3-001` in `docs/plans/PLAN-P04A-WORKSPACE-BINDING-AND-CLAIMS.md` and `docs/tasks/DRAFT_TASK_CONTRACT_P04_001.md`; awaiting External Supervisor re-audit. Zero Go production code permitted.
    - Maintain strict fail-closed dependencies: `AUTOMATIC_RESTORE = DISABLED`; operator restore and linked stop remain disabled until verified operator principal reaches trusted boundary (`VERIFIED_OPERATOR_PRINCIPAL = OPEN_FAIL_CLOSED_DEPENDENCY`).
    - Stage B runtime catalog is deferred: `STAGE_B_RUNTIME_CATALOG = DEFERRED_TO_P04_RUNTIME_INTEGRATION`.
    - Candidate WIP artifact preserved externally in `D:\TU_CODE\ai-supervisor-user-wip-recovery\P03-EXIT-R2-001`; never restore, overwrite, or touch.
@@ -233,10 +234,12 @@ This document establishes immutable operational directives for all AI coding age
    - `P04A_AUDIT_001 = REVISION_REQUIRED` (`docs/audits/P04_TASK_001_CONTRACT_PLANNING_EXTERNAL_AUDIT_001.md`)
    - `P04A_REAUDIT_001 = REVISION_REQUIRED` (`docs/audits/P04_TASK_001_CONTRACT_PLANNING_EXTERNAL_REAUDIT_001.md`)
    - `P04A_REAUDIT_002 = REVISION_REQUIRED` (`docs/audits/P04_TASK_001_CONTRACT_PLANNING_EXTERNAL_REAUDIT_002.md`)
+   - `P04A_REAUDIT_003 = REVISION_REQUIRED` (`docs/audits/P04_TASK_001_CONTRACT_PLANNING_EXTERNAL_REAUDIT_003.md`)
    - `FINDINGS_P04A_C1_001_THROUGH_005 = CLOSED`
    - `FINDINGS_P04A_R1_001_002 = CLOSED`
-   - `FINDING_P04A_R1_003 = PARTIALLY_CLOSED`
-   - `FINDINGS_P04A_R2_001_THROUGH_003 = OPEN_PENDING_EXTERNAL_REAUDIT`
+   - `FINDING_P04A_R2_002 = CLOSED_AT_CONTRACT_LEVEL`
+   - `FINDINGS_P04A_R1_003_R2_001_R2_003 = PARTIALLY_CLOSED`
+   - `FINDING_P04A_R3_001 = OPEN_PENDING_EXTERNAL_REAUDIT`
    - `TASK_P04A_TASK_CONTRACT = NOT_RELEASED`
    - `P04_CODE = HELD_PENDING_TASK_P04A_CONTRACT_RELEASE`
    - `ACTIVE_GATE = TASK_P04A_CONTRACT_PLANNING`
