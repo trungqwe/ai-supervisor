@@ -1,4 +1,4 @@
-﻿# 02. REQUIREMENTS SPECIFICATION
+# 02. REQUIREMENTS SPECIFICATION
 
 > **Standard**: IEEE 830-compliant requirements with atomic, traceable IDs
 > **Status**: Baseline Specification
@@ -16,7 +16,7 @@
 | **FR-005** | Worker Task Dispatch | The system shall dispatch the immutable Task Contract to the Execution Control Plane (AO) to initiate or resume worker execution. | Task state transitions from `READY` to `DISPATCHED`; AO worker session is triggered. |
 | **FR-006** | Worker Lifecycle Observation | The system shall observe worker lifecycle and bounded execution health via AO public session/activity surfaces. | Active session observation permits state transition from `DISPATCHED` to `RUNNING`; AO `idle` represents worker turn completion per ADR-011; intentional termination and unexpected termination are distinguished using Supervisor operation provenance where possible; task/operation timeout handling uses separately configured bounded execution deadlines; no synthetic worker heartbeat is required; `lastActivityAt` is diagnostic activity evidence, not heartbeat proof. |
 | **FR-007** | Worker Report Ingestion | The system shall ingest structured worker completion reports and extract claims, changed files, and reported test results. | Ingested report conforms to `worker-report.schema.json` and is labeled as `WorkerClaim`. |
-| **FR-008** | Independent Evidence Collection | The system shall independently query Git for actual base/head SHAs, diffs, touched files, and check command exit codes. | Git evidence is collected directly from the worktree, independent of worker claims. |
+| **FR-008** | Independent Evidence Collection | The system shall independently query Git for actual base/head SHAs, diffs, touched files, enforce clean-worktree intake policy (`git status --porcelain=v1 -z --untracked-files=all`) and clean index (`git diff-index --quiet HEAD --`), validate dual head SHAs (`actual_head_sha` vs `reported_head_sha`), and execute verification commands. | Git evidence is collected directly from the worktree/snapshot by pure in-memory collector (P04B), independent of worker claims. Dirty intake records diagnostic hold preserving `RUNNING`. |
 | **FR-009** | Scope Violation Detection | The system shall compare touched files in the Git diff against the Task Contract `allowed_scope` and `forbidden_scope`. | Any edit outside `allowed_scope` flags a `PolicyViolation` in the review bundle. |
 | **FR-010** | Review Bundle Compilation | The system shall synthesize Task Contract, Worker Claims, Git Diff, Test Logs, and Policy Findings into a single Review Bundle. | Review Bundle conforms to `review-bundle.schema.json` and reduces ChatGPT inspection tool calls. |
 | **FR-011** | Supervisor Decision Ingestion | The system shall accept ChatGPT's decision: `APPROVE`, `REVISION_REQUIRED`, or `BLOCKED`. | State machine updates task status; triggers next task or initiates revision cycle. |
@@ -39,7 +39,7 @@
 | **NFR-005** | Upstream Decoupling | Third-party dependencies (AO, Antigravity CLI, ChatGPT transport) shall interact strictly via anti-corruption adapters. |
 | **NFR-006** | Minimal Tool Surface | The ChatGPT tool interface shall expose no more than 12–15 high-level tools to optimize reasoning and context efficiency. |
 | **NFR-007** | Version Pinning | All external runtimes and design sources shall have pinned versions or reference commits recorded in `third_party/SOURCE_VERSIONS.md`. |
-| **NFR-008** | Performance | The Supervisor Control Plane shall generate a Review Bundle within 3 seconds of worker completion on repos up to 10,000 files. |
+| **NFR-008** | Performance | The Supervisor Control Plane shall synthesize, canonicalize (JCS RFC 8785), validate, and prepare for durable commit the attempt-scoped ReviewBundle within 3.0 seconds (Interval 2: bundle_assembled_at_epoch_ms - evidence_finalized_at_epoch_ms <= 3.0 seconds) of durable verification evidence finalization (Transaction B commit) on repositories up to 10,000 files. Independent test execution and evidence collection duration (Interval 1) is governed by task contract verification budgets. If assembly latency exceeds 3.0 seconds due to restart recovery or system load, the ReviewBundle is durably persisted with nfr008_compliance_status = 'UNVERIFIED' and an assembly diagnostic finding without deadlock. |
 
 ---
 

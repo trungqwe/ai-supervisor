@@ -13,7 +13,13 @@
     "policy_findings",
     "unverified_claims",
     "recommended_review_focus",
-    "generated_at"
+    "generated_at",
+    "bundle_hash",
+    "evidence_finalized_at_epoch_ms",
+    "bundle_assembled_at_epoch_ms",
+    "compilation_latency_ms",
+    "latency_measurement_status",
+    "nfr008_compliance_status"
   ],
   "properties": {
     "bundle_id": {
@@ -29,7 +35,16 @@
       "type": "object"
     },
     "worker_claims": {
-      "type": "object"
+      "type": "object",
+      "required": [
+        "reported_head_sha"
+      ],
+      "properties": {
+        "reported_head_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$"
+        }
+      }
     },
     "actual_git_evidence": {
       "type": "object",
@@ -44,7 +59,8 @@
           "type": "string"
         },
         "actual_head_sha": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$"
         },
         "actual_changed_files": {
           "type": "array",
@@ -109,6 +125,35 @@
     "generated_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "bundle_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "evidence_finalized_at_epoch_ms": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "bundle_assembled_at_epoch_ms": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "compilation_latency_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "latency_measurement_status": {
+      "type": "string",
+      "enum": [
+        "MEASURED_IN_PROCESS",
+        "RECOVERED_AFTER_RESTART"
+      ]
+    },
+    "nfr008_compliance_status": {
+      "type": "string",
+      "enum": [
+        "UNVERIFIED"
+      ]
     }
   },
   "additionalProperties": false

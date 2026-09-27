@@ -131,26 +131,98 @@ classDiagram
     class WorkerClaim {
         +string claim_id
         +string attempt_id
+        +string contract_id
         +string reported_head_sha
         +string[] claimed_files_changed
         +ClaimedTestResult[] tests
     }
 
-    class Evidence {
-        +string evidence_id
+    class AttemptWorkspaceBinding {
         +string attempt_id
-        +string actual_base_sha
-        +string actual_head_sha
-        +string[] actual_files_changed
-        +string git_diff_hash
-        +ActualTestResult[] test_logs
-        +boolean scope_verified
+        +string task_id
+        +string contract_id
+        +string pair_id
+        +string session_id
+        +string terminal_generation
+        +string binding_state
+        +int volume_serial_number
+        +string file_index_high
+        +string file_index_low
+        +string canonical_worktree_path
+        +int bound_at_epoch_ms
+        +int released_at_epoch_ms
+    }
+
+    class ReviewIntegrityHold {
+        +string hold_id
+        +string attempt_id
+        +string task_id
+        +string contract_id
+        +string pair_id
+        +string hold_reason
+        +string hold_state
+        +string diagnostic_fingerprint
+        +int occurrence_number
+        +int created_at_epoch_ms
+        +int resolved_at_epoch_ms
+        +string resolved_by_principal
+    }
+
+    class TaskVerificationLease {
+        +string lease_id
+        +string task_id
+        +string attempt_id
+        +string contract_id
+        +string pair_id
+        +int fencing_token
+        +string lease_state
+        +int acquired_at_epoch_ms
+        +int expires_at_epoch_ms
+        +int released_at_epoch_ms
+        +string predecessor_lease_id
+    }
+
+    class EvidenceSet {
+        +string evidence_set_id
+        +string task_id
+        +string attempt_id
+        +string contract_id
+        +int fencing_token
+        +string git_evidence_json
+        +string test_evidence_json
+        +string policy_findings_json
+        +string unverified_claims_json
+        +int evidence_finalized_at_epoch_ms
+        +datetime collected_at
+    }
+
+    class ReviewArtifact {
+        +string artifact_id
+        +string evidence_set_id
+        +string task_id
+        +string attempt_id
+        +string contract_id
+        +string artifact_type
+        +string media_type
+        +string encoding
+        +string canonical_relative_path
+        +string captured_sha256
+        +string full_stream_sha256
+        +int capture_limit_bytes
+        +int hard_safety_limit_bytes
+        +int captured_bytes
+        +int total_observed_bytes
+        +boolean is_truncated
+        +string stream_state
+        +int created_at_epoch_ms
     }
 
     class ReviewBundle {
         +string bundle_id
+        +string evidence_set_id
         +string task_id
         +string attempt_id
+        +string contract_id
         +TaskContract task_contract
         +WorkerClaim worker_claims
         +ActualGitEvidence actual_git_evidence
@@ -158,6 +230,12 @@ classDiagram
         +PolicyFinding[] policy_findings
         +string[] unverified_claims
         +string recommended_review_focus
+        +string bundle_hash
+        +int evidence_finalized_at_epoch_ms
+        +int bundle_assembled_at_epoch_ms
+        +int compilation_latency_ms
+        +string latency_measurement_status
+        +string nfr008_compliance_status
         +datetime generated_at
     }
 
@@ -197,8 +275,13 @@ classDiagram
     TaskAttempt "1" --> "1" TaskContract
     TaskAttempt "1" o-- "1" DispatchOperation
     TaskAttempt "1" o-- "0..*" StopOperation
+    TaskAttempt "1" o-- "1" AttemptWorkspaceBinding
+    TaskAttempt "1" o-- "0..*" ReviewIntegrityHold
     TaskAttempt "1" o-- "1" WorkerClaim
-    TaskAttempt "1" o-- "1" Evidence
+    TaskAttempt "1" o-- "0..1" TaskVerificationLease
+    TaskAttempt "1" o-- "0..1" EvidenceSet
+    EvidenceSet "1" *-- "0..*" ReviewArtifact
+    EvidenceSet "1" o-- "0..1" ReviewBundle
     TaskAttempt "1" o-- "0..1" ReviewBundle
     TaskAttempt "1" o-- "0..1" ReviewDecision
     Task "1" o-- "0..*" Blocker
@@ -298,3 +381,568 @@ Schema v4 bổ sung restore_authorizations (one-shot authorization gắn operati
 ## 4. Execution budget v5 được duyệt ở cấp thiết kế
 
 `attempt_execution_budgets` có một row bất biến cho exact attempt/dispatch: `origin_at=dispatch_operations.confirmed_at`, `deadline_at`, positive `duration_ns`, `policy_ref`, `bound_at`, `binding_basis` `SEND_CONFIRMATION_ATOMIC` hoặc `LEGACY_OPERATOR_VERIFIED`, nullable `authorized_principal`/`evidence_ref` chỉ cho legacy. V5 thêm nullable `stop_operations.initiating_failure_reason='TIMEOUT'` và unique index live stop/attempt; DDL, FK/CHECK/trigger tại [addendum execution budget](adr/ADR-016-ADDENDUM-send-confirmation-execution-budget.md) §3. `EXECUTION_BUDGET_LEGACY_BOUND` là audit event cho verified historical policy binding, không là proof/clearance; `TIMEOUT` là stop cause/failure reason, không là recovery disposition. Tx R giữ `STOP_REQUESTED/IN_FLIGHT` và double quarantine nếu effect chưa được chứng minh; không có `RelinquishTimeoutEffect` hoặc token mới cho caller bỏ quyền. Legacy `DISPATCHED` không được ép `RUNNING` để manual stop. Contract Revision 3 đã RELEASED; schema v5 đã được migrate và kiểm thử hồi quy; implementation 3D EXTERNAL_AUDIT_APPROVED và code đã MERGED tại `35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea`. Handoff dependencies (`HOST_QUIESCENCE_INTEGRATION=OPEN`, verified host principal chưa có bằng chứng runtime, `DESIGN_BLOCKER_3D_STARTUP_WIRING=PRESERVED`, `AUTOMATIC_RESTORE=DISABLED`) tiếp tục được bảo toàn.
+
+---
+
+# 5. Schema v6 and Schema v9 Persistence Model (ADR-018)
+
+> **Authority**: Formally defined in [ADR-018](adr/ADR-018-evidence-review-and-verification-isolation.md), [PROPOSAL-P04-001](proposals/PROPOSAL-P04-001-evidence-review-engine-boundaries.md) Revision 22, and [PROPOSAL-P04-002](proposals/PROPOSAL-P04-002-review-bundle-latency-semantics.md) Revision 9.
+
+## 5.1 Subtask P04A Persistence Ownership (Schema Migration v6)
+
+Subtask P04A owns Schema Migration v6, establishing worktree binding authority, worker report ingestion persistence, and diagnostic integrity holds:
+
+```sql
+-- Schema v6: attempt_workspace_bindings (Owned by Subtask P04A)
+CREATE TABLE attempt_workspace_bindings (
+    attempt_id TEXT PRIMARY KEY REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
+    contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
+    pair_id TEXT NOT NULL REFERENCES pairs(pair_id) ON DELETE RESTRICT,
+    session_id TEXT NOT NULL,
+    terminal_generation TEXT NOT NULL,
+    binding_state TEXT NOT NULL CHECK (binding_state IN ('ACTIVE', 'INVALIDATED', 'RELEASED')),
+    volume_serial_number INTEGER NOT NULL CHECK (typeof(volume_serial_number) = 'integer' AND volume_serial_number >= 0),
+    file_index_high TEXT NOT NULL CHECK (LENGTH(file_index_high) > 0),
+    file_index_low TEXT NOT NULL CHECK (LENGTH(file_index_low) > 0),
+    canonical_worktree_path TEXT NOT NULL CHECK (
+        LENGTH(canonical_worktree_path) > 0 AND
+        canonical_worktree_path NOT GLOB '*..*' AND
+        canonical_worktree_path NOT GLOB '*//*'
+    ),
+    bound_at_epoch_ms INTEGER NOT NULL CHECK (typeof(bound_at_epoch_ms) = 'integer' AND bound_at_epoch_ms > 0),
+    released_at_epoch_ms INTEGER NULL CHECK (
+        released_at_epoch_ms IS NULL OR
+        (typeof(released_at_epoch_ms) = 'integer' AND released_at_epoch_ms >= bound_at_epoch_ms)
+    ),
+    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT
+);
+
+CREATE TRIGGER trg_attempt_workspace_bindings_lineage_guard
+BEFORE INSERT ON attempt_workspace_bindings
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'lineage mismatch: attempt_id does not match task_id or contract_id in task_attempts')
+    WHERE NOT EXISTS (
+        SELECT 1 FROM task_attempts a
+        WHERE a.attempt_id = NEW.attempt_id
+          AND a.task_id = NEW.task_id
+          AND a.contract_id = NEW.contract_id
+          AND a.session_id = NEW.session_id
+          AND a.terminal_generation = NEW.terminal_generation
+    );
+
+    SELECT RAISE(ABORT, 'dispatch operation stage mismatch: dispatch_operations must exist in stage DISPATCH_BOUND')
+    WHERE NOT EXISTS (
+        SELECT 1 FROM dispatch_operations d
+        WHERE d.attempt_id = NEW.attempt_id
+          AND d.task_id = NEW.task_id
+          AND d.session_id = NEW.session_id
+          AND d.terminal_generation = NEW.terminal_generation
+          AND d.stage = 'DISPATCH_BOUND'
+    );
+END;
+
+CREATE TRIGGER trg_attempt_workspace_bindings_no_delete
+BEFORE DELETE ON attempt_workspace_bindings
+BEGIN
+    SELECT RAISE(ABORT, 'attempt_workspace_bindings is immutable');
+END;
+
+-- Schema v6: worker_claims (Owned by Subtask P04A)
+CREATE TABLE worker_claims (
+    claim_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
+    attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+    contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
+    reported_head_sha TEXT NOT NULL CHECK (
+        LENGTH(reported_head_sha) BETWEEN 7 AND 40
+        AND NOT (reported_head_sha GLOB '*[^0-9a-f]*')
+    ),
+    claimed_files_changed_json TEXT NOT NULL CHECK (
+        json_valid(claimed_files_changed_json) = 1 AND
+        json_type(claimed_files_changed_json) = 'array'
+    ),
+    test_results_json TEXT NOT NULL CHECK (
+        json_valid(test_results_json) = 1 AND
+        json_type(test_results_json) = 'array'
+    ),
+    build_status TEXT NOT NULL CHECK (build_status IN ('PASSED', 'FAILED', 'SKIPPED')),
+    claims_json TEXT NOT NULL CHECK (
+        json_valid(claims_json) = 1 AND
+        json_type(claims_json) = 'array'
+    ),
+    raw_report_sha256 TEXT NOT NULL CHECK (
+        LENGTH(raw_report_sha256) = 64 AND NOT (raw_report_sha256 GLOB '*[^0-9a-f]*')
+    ),
+    created_at TEXT NOT NULL CHECK (LENGTH(created_at) > 0),
+    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT
+);
+
+CREATE TRIGGER trg_worker_claims_lineage_guard
+BEFORE INSERT ON worker_claims
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'lineage mismatch: attempt_id does not match task_id or contract_id in task_attempts')
+    WHERE NOT EXISTS (
+        SELECT 1 FROM task_attempts a
+        WHERE a.attempt_id = NEW.attempt_id
+          AND a.task_id = NEW.task_id
+          AND a.contract_id = NEW.contract_id
+    );
+END;
+
+CREATE TRIGGER trg_worker_claims_no_update
+BEFORE UPDATE ON worker_claims
+BEGIN
+    SELECT RAISE(ABORT, 'worker_claims is immutable');
+END;
+
+CREATE TRIGGER trg_worker_claims_no_delete
+BEFORE DELETE ON worker_claims
+BEGIN
+    SELECT RAISE(ABORT, 'worker_claims is immutable');
+END;
+
+-- Schema v6: review_integrity_holds (Owned by Subtask P04A)
+CREATE TABLE review_integrity_holds (
+    hold_id TEXT PRIMARY KEY,
+    pair_id TEXT NOT NULL REFERENCES pairs(pair_id) ON DELETE RESTRICT,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
+    contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
+    attempt_id TEXT NOT NULL REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+    hold_reason TEXT NOT NULL CHECK (
+        hold_reason IN ('DIRTY_WORKTREE_DETECTED', 'INVARIANT_MISMATCH', 'LINEAGE_TAMPERING', 'CONCURRENT_MUTATION', 'UNEXPECTED_SESSION_MUTATION')
+    ),
+    hold_state TEXT NOT NULL CHECK (hold_state IN ('ACTIVE', 'RESOLVED')),
+    diagnostic_fingerprint TEXT NOT NULL CHECK (
+        LENGTH(diagnostic_fingerprint) = 64 AND NOT (diagnostic_fingerprint GLOB '*[^0-9a-f]*')
+    ),
+    occurrence_number INTEGER NOT NULL CHECK (
+        typeof(occurrence_number) = 'integer' AND occurrence_number >= 1
+    ),
+    created_at_epoch_ms INTEGER NOT NULL CHECK (
+        typeof(created_at_epoch_ms) = 'integer' AND created_at_epoch_ms > 0
+    ),
+    resolved_at_epoch_ms INTEGER NULL CHECK (
+        resolved_at_epoch_ms IS NULL OR
+        (typeof(resolved_at_epoch_ms) = 'integer' AND resolved_at_epoch_ms >= created_at_epoch_ms)
+    ),
+    resolved_by_principal TEXT NULL CHECK (
+        resolved_by_principal IS NULL OR LENGTH(TRIM(resolved_by_principal)) > 0
+    ),
+    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT,
+    CHECK (
+        (hold_state = 'ACTIVE' AND resolved_at_epoch_ms IS NULL AND resolved_by_principal IS NULL) OR
+        (hold_state = 'RESOLVED' AND resolved_at_epoch_ms IS NOT NULL AND resolved_by_principal IS NOT NULL)
+    )
+);
+
+CREATE UNIQUE INDEX idx_review_integrity_holds_active_dedup
+ON review_integrity_holds(attempt_id, hold_reason, diagnostic_fingerprint)
+WHERE hold_state = 'ACTIVE';
+
+CREATE TRIGGER trg_review_integrity_holds_lineage_guard
+BEFORE INSERT ON review_integrity_holds
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'lineage mismatch: attempt_id does not match task_id or contract_id in task_attempts')
+    WHERE NOT EXISTS (
+        SELECT 1 FROM task_attempts a
+        WHERE a.attempt_id = NEW.attempt_id
+          AND a.task_id = NEW.task_id
+          AND a.contract_id = NEW.contract_id
+    );
+END;
+
+CREATE TRIGGER trg_review_integrity_holds_cas_guard
+BEFORE UPDATE ON review_integrity_holds
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'invalid hold transition: only ACTIVE -> RESOLVED transition permitted')
+    WHERE OLD.hold_state <> 'ACTIVE' OR NEW.hold_state <> 'RESOLVED';
+END;
+
+CREATE TRIGGER trg_review_integrity_holds_no_delete
+BEFORE DELETE ON review_integrity_holds
+BEGIN
+    SELECT RAISE(ABORT, 'review_integrity_holds is immutable');
+END;
+```
+
+---
+
+## 5.2 Subtask P04D Persistence Ownership (Schema Migration v9)
+
+Subtask P04D owns Schema Migration v9, introducing verification leases, durable evidence sets, review artifacts, and ReviewBundle CAS records:
+
+```sql
+-- Schema v9: task_verification_leases (Owned by Subtask P04D)
+CREATE TABLE task_verification_leases (
+    lease_id TEXT PRIMARY KEY,
+    pair_id TEXT NOT NULL REFERENCES pairs(pair_id) ON DELETE RESTRICT,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
+    contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
+    attempt_id TEXT NOT NULL REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+    fencing_token INTEGER NOT NULL CHECK (
+        typeof(fencing_token) = 'integer' AND fencing_token >= 1 AND fencing_token <= 9223372036854775807
+    ),
+    lease_state TEXT NOT NULL CHECK (lease_state IN ('ACTIVE', 'EXPIRED', 'RELEASED')),
+    acquired_at_epoch_ms INTEGER NOT NULL CHECK (
+        typeof(acquired_at_epoch_ms) = 'integer' AND acquired_at_epoch_ms > 0
+    ),
+    expires_at_epoch_ms INTEGER NOT NULL CHECK (
+        typeof(expires_at_epoch_ms) = 'integer' AND expires_at_epoch_ms > acquired_at_epoch_ms
+    ),
+    released_at_epoch_ms INTEGER NULL CHECK (
+        released_at_epoch_ms IS NULL OR
+        (typeof(released_at_epoch_ms) = 'integer' AND released_at_epoch_ms >= acquired_at_epoch_ms)
+    ),
+    predecessor_lease_id TEXT NULL REFERENCES task_verification_leases(lease_id) ON DELETE RESTRICT,
+    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT,
+    CHECK (
+        (lease_state = 'ACTIVE' AND released_at_epoch_ms IS NULL) OR
+        (lease_state IN ('EXPIRED', 'RELEASED') AND released_at_epoch_ms IS NOT NULL)
+    )
+);
+
+CREATE UNIQUE INDEX idx_task_verification_leases_active_exclusive
+ON task_verification_leases(attempt_id)
+WHERE lease_state = 'ACTIVE';
+
+CREATE UNIQUE INDEX idx_task_verification_leases_attempt_fencing
+ON task_verification_leases(attempt_id, fencing_token);
+
+CREATE TRIGGER trg_task_verification_leases_lineage_guard
+BEFORE INSERT ON task_verification_leases
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'lineage mismatch: attempt_id does not match task_id or contract_id in task_attempts')
+    WHERE NOT EXISTS (
+        SELECT 1 FROM task_attempts a
+        WHERE a.attempt_id = NEW.attempt_id
+          AND a.task_id = NEW.task_id
+          AND a.contract_id = NEW.contract_id
+    );
+
+    SELECT RAISE(ABORT, 'linear lease chain violation: predecessor_lease_id must match prior lease on same attempt')
+    WHERE NEW.predecessor_lease_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM task_verification_leases l
+        WHERE l.lease_id = NEW.predecessor_lease_id
+          AND l.attempt_id = NEW.attempt_id
+          AND l.task_id = NEW.task_id
+          AND l.contract_id = NEW.contract_id
+          AND l.fencing_token < NEW.fencing_token
+    );
+END;
+
+CREATE TRIGGER trg_task_verification_leases_cas_guard
+BEFORE UPDATE ON task_verification_leases
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'invalid lease transition: only ACTIVE -> EXPIRED or ACTIVE -> RELEASED permitted')
+    WHERE OLD.lease_state <> 'ACTIVE' OR NEW.lease_state NOT IN ('EXPIRED', 'RELEASED');
+END;
+
+CREATE TRIGGER trg_task_verification_leases_no_delete
+BEFORE DELETE ON task_verification_leases
+BEGIN
+    SELECT RAISE(ABORT, 'task_verification_leases is immutable');
+END;
+
+-- Schema v9: evidence_sets (Owned by Subtask P04D)
+CREATE TABLE evidence_sets (
+    evidence_set_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
+    attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+    contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
+    fencing_token INTEGER NOT NULL CHECK (
+        typeof(fencing_token) = 'integer' AND fencing_token >= 1 AND fencing_token <= 9223372036854775807
+    ),
+    git_evidence_json TEXT NOT NULL CHECK (
+        json_valid(git_evidence_json) = 1 AND
+        json_type(git_evidence_json, '$.actual_changed_files') = 'array'
+    ),
+    test_evidence_json TEXT NOT NULL CHECK (
+        json_valid(test_evidence_json) = 1 AND
+        json_type(test_evidence_json, '$.executed_commands') = 'array'
+    ),
+    policy_findings_json TEXT NOT NULL CHECK (json_valid(policy_findings_json) = 1),
+    unverified_claims_json TEXT NOT NULL CHECK (json_valid(unverified_claims_json) = 1),
+    evidence_finalized_at_epoch_ms INTEGER NOT NULL CHECK (
+        typeof(evidence_finalized_at_epoch_ms) = 'integer' AND evidence_finalized_at_epoch_ms > 0
+    ),
+    collected_at TEXT NOT NULL CHECK (LENGTH(collected_at) > 0),
+    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT
+);
+
+CREATE TRIGGER trg_evidence_sets_lineage_guard
+BEFORE INSERT ON evidence_sets
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'lineage mismatch: attempt_id does not match task_id or contract_id in task_attempts')
+    WHERE NOT EXISTS (
+        SELECT 1 FROM task_attempts a
+        WHERE a.attempt_id = NEW.attempt_id
+          AND a.task_id = NEW.task_id
+          AND a.contract_id = NEW.contract_id
+    );
+END;
+
+CREATE TRIGGER trg_evidence_sets_no_update
+BEFORE UPDATE ON evidence_sets
+BEGIN
+    SELECT RAISE(ABORT, 'evidence_sets is immutable');
+END;
+
+CREATE TRIGGER trg_evidence_sets_no_delete
+BEFORE DELETE ON evidence_sets
+BEGIN
+    SELECT RAISE(ABORT, 'evidence_sets is immutable');
+END;
+
+-- Schema v9: review_artifacts (Owned by Subtask P04D)
+CREATE TABLE review_artifacts (
+    artifact_id TEXT PRIMARY KEY,
+    evidence_set_id TEXT NOT NULL REFERENCES evidence_sets(evidence_set_id) ON DELETE RESTRICT,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
+    attempt_id TEXT NOT NULL REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+    contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
+    artifact_type TEXT NOT NULL CHECK (
+        artifact_type IN ('VERIFICATION_LOG', 'GIT_DIFF', 'TEST_REPORT', 'WORKER_STDOUT', 'WORKER_STDERR')
+    ),
+    media_type TEXT NOT NULL CHECK (LENGTH(media_type) > 0),
+    encoding TEXT NOT NULL CHECK (encoding IN ('identity', 'gzip')),
+    canonical_relative_path TEXT NOT NULL,
+    captured_sha256 TEXT NOT NULL CHECK (
+        LENGTH(captured_sha256) = 64 AND NOT (captured_sha256 GLOB '*[^0-9a-f]*')
+    ),
+    full_stream_sha256 TEXT NULL CHECK (
+        full_stream_sha256 IS NULL OR (
+            LENGTH(full_stream_sha256) = 64 AND NOT (full_stream_sha256 GLOB '*[^0-9a-f]*')
+        )
+    ),
+    capture_limit_bytes INTEGER NOT NULL CHECK (
+        typeof(capture_limit_bytes) = 'integer' AND capture_limit_bytes > 0
+    ),
+    hard_safety_limit_bytes INTEGER NOT NULL CHECK (
+        typeof(hard_safety_limit_bytes) = 'integer'
+        AND hard_safety_limit_bytes > capture_limit_bytes
+        AND hard_safety_limit_bytes <= 9223372036854775806
+    ),
+    captured_bytes INTEGER NOT NULL CHECK (
+        typeof(captured_bytes) = 'integer'
+        AND captured_bytes >= 0
+        AND captured_bytes <= capture_limit_bytes
+    ),
+    total_observed_bytes INTEGER NOT NULL CHECK (
+        typeof(total_observed_bytes) = 'integer'
+        AND total_observed_bytes >= captured_bytes
+        AND total_observed_bytes <= 9223372036854775807
+    ),
+    is_truncated INTEGER NOT NULL CHECK (is_truncated IN (0, 1)),
+    stream_state TEXT NOT NULL CHECK (
+        stream_state IN ('COMPLETE_EOF', 'TRUNCATED_AT_CAPTURE_LIMIT', 'HARD_LIMIT_TERMINATED', 'TIMEOUT_ABORTED')
+    ),
+    created_at_epoch_ms INTEGER NOT NULL CHECK (
+        typeof(created_at_epoch_ms) = 'integer' AND created_at_epoch_ms > 0
+    ),
+    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT,
+    CHECK (
+        canonical_relative_path = 'artifacts/' || substr(captured_sha256, 1, 2) || '/' || captured_sha256 AND
+        canonical_relative_path NOT GLOB '*:*' AND
+        canonical_relative_path NOT GLOB '*\*' AND
+        canonical_relative_path NOT GLOB '*..*' AND
+        canonical_relative_path NOT GLOB '*//*'
+    ),
+    CHECK (
+        (stream_state = 'COMPLETE_EOF' AND is_truncated = 0 AND full_stream_sha256 IS NOT NULL AND full_stream_sha256 = captured_sha256 AND captured_bytes = total_observed_bytes AND total_observed_bytes <= capture_limit_bytes)
+        OR (stream_state = 'TRUNCATED_AT_CAPTURE_LIMIT' AND is_truncated = 1 AND full_stream_sha256 IS NOT NULL AND captured_bytes = capture_limit_bytes AND total_observed_bytes > capture_limit_bytes AND total_observed_bytes <= hard_safety_limit_bytes)
+        OR (stream_state = 'HARD_LIMIT_TERMINATED' AND is_truncated = 1 AND full_stream_sha256 IS NULL AND captured_bytes = capture_limit_bytes AND total_observed_bytes = hard_safety_limit_bytes + 1)
+        OR (stream_state = 'TIMEOUT_ABORTED' AND is_truncated = 1 AND full_stream_sha256 IS NULL AND total_observed_bytes <= hard_safety_limit_bytes AND (
+            (total_observed_bytes <= capture_limit_bytes AND captured_bytes = total_observed_bytes) OR
+            (total_observed_bytes > capture_limit_bytes AND captured_bytes = capture_limit_bytes)
+        ))
+    )
+);
+
+CREATE TRIGGER trg_review_artifacts_lineage_guard
+BEFORE INSERT ON review_artifacts
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'lineage mismatch: evidence_set_id does not match task_id, attempt_id, contract_id in evidence_sets')
+    WHERE NOT EXISTS (
+        SELECT 1 FROM evidence_sets e
+        WHERE e.evidence_set_id = NEW.evidence_set_id
+          AND e.task_id = NEW.task_id
+          AND e.attempt_id = NEW.attempt_id
+          AND e.contract_id = NEW.contract_id
+    );
+END;
+
+CREATE TRIGGER trg_review_artifacts_no_update
+BEFORE UPDATE ON review_artifacts
+BEGIN
+    SELECT RAISE(ABORT, 'review_artifacts is immutable');
+END;
+
+CREATE TRIGGER trg_review_artifacts_no_delete
+BEFORE DELETE ON review_artifacts
+BEGIN
+    SELECT RAISE(ABORT, 'review_artifacts is immutable');
+END;
+
+-- Schema v9: review_bundles (Owned by Subtask P04D)
+CREATE TABLE review_bundles (
+    bundle_id TEXT PRIMARY KEY,
+    evidence_set_id TEXT NOT NULL UNIQUE REFERENCES evidence_sets(evidence_set_id) ON DELETE RESTRICT,
+    task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE RESTRICT,
+    attempt_id TEXT NOT NULL UNIQUE REFERENCES task_attempts(attempt_id) ON DELETE RESTRICT,
+    contract_id TEXT NOT NULL REFERENCES task_contracts(contract_id) ON DELETE RESTRICT,
+    bundle_payload_json TEXT NOT NULL CHECK (
+        json_valid(bundle_payload_json) = 1 AND
+        json_type(bundle_payload_json, '$.worker_claims') = 'object' AND
+        json_type(bundle_payload_json, '$.actual_git_evidence') = 'object'
+    ),
+    bundle_hash TEXT NOT NULL CHECK (
+        LENGTH(bundle_hash) = 64 AND NOT (bundle_hash GLOB '*[^0-9a-f]*')
+    ),
+    evidence_finalized_at_epoch_ms INTEGER NOT NULL CHECK (
+        typeof(evidence_finalized_at_epoch_ms) = 'integer' AND evidence_finalized_at_epoch_ms > 0
+    ),
+    bundle_assembled_at_epoch_ms INTEGER NOT NULL CHECK (
+        typeof(bundle_assembled_at_epoch_ms) = 'integer' AND bundle_assembled_at_epoch_ms >= evidence_finalized_at_epoch_ms
+    ),
+    compilation_latency_ms INTEGER NOT NULL CHECK (
+        typeof(compilation_latency_ms) = 'integer' AND
+        compilation_latency_ms >= 0 AND
+        compilation_latency_ms = (bundle_assembled_at_epoch_ms - evidence_finalized_at_epoch_ms)
+    ),
+    latency_measurement_status TEXT NOT NULL CHECK (
+        latency_measurement_status IN ('MEASURED_IN_PROCESS', 'RECOVERED_AFTER_RESTART')
+    ),
+    nfr008_compliance_status TEXT NOT NULL CHECK (
+        nfr008_compliance_status = 'UNVERIFIED'
+    ),
+    generated_at TEXT NOT NULL CHECK (LENGTH(generated_at) > 0),
+    FOREIGN KEY(contract_id, task_id) REFERENCES task_contracts(contract_id, task_id) ON DELETE RESTRICT
+);
+
+CREATE TRIGGER trg_review_bundles_lineage_guard
+BEFORE INSERT ON review_bundles
+FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, 'lineage mismatch: evidence_set_id does not match task_id, attempt_id, contract_id in evidence_sets')
+    WHERE NOT EXISTS (
+        SELECT 1 FROM evidence_sets e
+        WHERE e.evidence_set_id = NEW.evidence_set_id
+          AND e.task_id = NEW.task_id
+          AND e.attempt_id = NEW.attempt_id
+          AND e.contract_id = NEW.contract_id
+          AND e.evidence_finalized_at_epoch_ms = NEW.evidence_finalized_at_epoch_ms
+    );
+END;
+
+CREATE TRIGGER trg_review_bundles_no_update
+BEFORE UPDATE ON review_bundles
+BEGIN
+    SELECT RAISE(ABORT, 'review_bundles is immutable');
+END;
+
+CREATE TRIGGER trg_review_bundles_no_delete
+BEFORE DELETE ON review_bundles
+BEGIN
+    SELECT RAISE(ABORT, 'review_bundles is immutable');
+END;
+```
+
+---
+
+## 5.3 Audit Event Derivation Descriptors & Variant Discrimination
+
+### 5.3.1 Descriptors A, B, and C
+To eliminate circular self-references and ambiguous keys, three canonical descriptors govern integrity hold creation and resolution:
+
+1. **Descriptor A (`hold_identity_descriptor`)** (for `hold_id`):
+   ```json
+   {
+     "attempt_id": "<attempt_id>",
+     "contract_id": "<contract_id>",
+     "diagnostic_fingerprint": "<64_hex_hash>",
+     "hold_reason": "<hold_reason>",
+     "kind": "review_integrity_hold",
+     "occurrence_number": 1,
+     "pair_id": "<pair_id>",
+     "task_id": "<task_id>",
+     "version": 1
+   }
+   ```
+   $$\text{hold\_id} = \text{"hold-"} + \text{SHA256}(\text{RFC8785\_JCS}(\text{hold\_identity\_descriptor}))$$
+
+2. **Descriptor B (`rejection_event_identity_descriptor`)** (for rejection `event_id`):
+   Descriptor B incorporates standard discriminator `conflict_source` and exact variant fields:
+
+   *Variant A (`AUDIT_EVENT_ID_COLLISION`)*:
+   ```json
+   {
+     "attempt_id": "<attempt_id>",
+     "attempted_event_type": "<attempted_event_type>",
+     "colliding_event_id": "<colliding_event_id>",
+     "conflict_source": "AUDIT_EVENT_ID_COLLISION",
+     "conflict_type": "<PAYLOAD_MISMATCH|LINEAGE_MISMATCH>",
+     "contract_id": "<contract_id>",
+     "diagnostic_fingerprint": "<64_hex_hash>",
+     "event_type": "REVIEW_INTEGRITY_CONFLICT",
+     "hold_id": "<hold_id_from_descriptor_a>",
+     "occurrence_number": 1,
+     "pair_id": "<pair_id>",
+     "sanitized_input_fingerprint": "<64_hex_hash>",
+     "task_id": "<task_id>",
+     "version": 2
+   }
+   ```
+
+   *Variant B (`WORKSPACE_BINDING_GUARD`)*:
+   ```json
+   {
+     "attempt_id": "<attempt_id>",
+     "attempted_reason": "<WORKSPACE_BINDING_MISSING|WORKSPACE_BINDING_LINEAGE_MISMATCH|WORKSPACE_BINDING_NOT_ACTIVE|WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH>",
+     "conflict_source": "WORKSPACE_BINDING_GUARD",
+     "conflict_type": "LINEAGE_MISMATCH",
+     "contract_id": "<contract_id>",
+     "diagnostic_fingerprint": "<64_hex_hash>",
+     "dispatch_operation_id": "<dispatch_operation_id>",
+     "event_type": "REVIEW_INTEGRITY_CONFLICT",
+     "hold_id": "<hold_id_from_descriptor_a>",
+     "occurrence_number": 1,
+     "pair_id": "<pair_id>",
+     "sanitized_input_fingerprint": "<64_hex_hash>",
+     "task_id": "<task_id>",
+     "version": 2
+   }
+   ```
+   *(Note: in Variant B, `colliding_event_id` is strictly ABSENT; no dummy sentinels are created).*
+   $$\text{rejection\_event\_id} = \text{SHA256}(\text{RFC8785\_JCS}(\text{rejection\_event\_identity\_descriptor}))$$
+
+3. **Descriptor C (`resolution_event_identity_descriptor`)** (for resolution `event_id`):
+   ```json
+   {
+     "attempt_id": "<attempt_id>",
+     "contract_id": "<contract_id>",
+     "event_type": "REVIEW_INTEGRITY_HOLD_RESOLVED",
+     "hold_id": "<hold_id>",
+     "kind": "review_integrity_resolution_event",
+     "occurrence_number": 1,
+     "pair_id": "<pair_id>",
+     "resolved_by_principal": "<verified_principal>",
+     "sanitized_resolution_rationale_fingerprint": "<64_hex_hash>",
+     "task_id": "<task_id>",
+     "version": 1
+   }
+   ```
+   $$\text{resolution\_event\_id} = \text{SHA256}(\text{RFC8785\_JCS}(\text{resolution\_event\_identity\_descriptor}))$$
+
+### 5.3.2 Variant Discrimination Rules
+- **Variant A (`AUDIT_EVENT_ID_COLLISION`)**: Emitted upon encountering a duplicate `event_id` with semantic field mismatch. Scope is restricted to appending the audit event and inserting the hold; strictly does NOT touch `attempt_workspace_bindings`.
+- **Variant B (`WORKSPACE_BINDING_GUARD`)**: Emitted when pre-send binding validation fails. Requires `dispatch_operation_id` and standardized `attempted_reason` literal; `colliding_event_id` is strictly absent. Diagnostic transaction conditionally invalidates `ACTIVE` binding (`released_at_epoch_ms = now`).
+- **Pipeline Isolation**: Subtask P04D review pipeline conflicts never CAS mutate workspace bindings.

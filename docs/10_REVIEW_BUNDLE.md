@@ -1,7 +1,8 @@
 # 10. REVIEW BUNDLE SPECIFICATION
 
 > **Focus**: High-Signal Audit Synthesis, Attempt-Scoped Evaluation & Evidence Correlation
-> **Status**: Approved Baseline (Updated Architecture V2.1 / Reaudit 001)
+> **Status**: Approved Baseline (Reconciled with accepted ADR-018 and PROPOSAL-P04-002 Revision 9)
+> **Authority**: [ADR-018](adr/ADR-018-evidence-review-and-verification-isolation.md) & [PROPOSAL-P04-002](proposals/PROPOSAL-P04-002-review-bundle-latency-semantics.md) Revision 9
 
 ---
 
@@ -19,8 +20,10 @@ The **Review Bundle** solves this by pre-correlating all evidence into a single 
 classDiagram
     class ReviewBundle {
         +string bundle_id
+        +string evidence_set_id
         +string task_id
         +string attempt_id
+        +string contract_id
         +TaskContract task_contract
         +WorkerClaim worker_claims
         +ActualGitEvidence actual_git_evidence
@@ -28,24 +31,35 @@ classDiagram
         +PolicyFinding[] policy_findings
         +string[] unverified_claims
         +string recommended_review_focus
+        +string bundle_hash
+        +int evidence_finalized_at_epoch_ms
+        +int bundle_assembled_at_epoch_ms
+        +int compilation_latency_ms
+        +string latency_measurement_status
+        +string nfr008_compliance_status
         +datetime generated_at
+    }
+
+    class WorkerClaim {
+        +string reported_head_sha
+        +string claimed_status
+        +string[] claims
     }
 
     class ActualGitEvidence {
         +string actual_base_sha
         +string actual_head_sha
         +string[] actual_changed_files
-        +DiffSummary diff_summary
-        +string full_diff_url
+        +string diff_stat
     }
 
     class PolicyFinding {
-        +string policy_name
-        +Severity severity
-        +string description
+        +string rule_id
         +boolean passed
+        +string details
     }
 
+    ReviewBundle *-- WorkerClaim
     ReviewBundle *-- ActualGitEvidence
     ReviewBundle *-- PolicyFinding
 ```
@@ -55,20 +69,51 @@ classDiagram
 # 3. Canonical Review Bundle Fields
 
 1. **`bundle_id`**: Unique identifier for the compiled review bundle.
-2. **`task_id`**: Identifier of the task being reviewed.
-3. **`attempt_id`**: Specific execution attempt identifier, binding the bundle strictly to a `TaskAttempt`.
-4. **`task_contract`**: The governing immutable contract revision (`contract_id`, `revision_number`, requirements, scope, acceptance criteria).
-5. **`worker_claims`**: Self-reported worker claims from the attempt's `WorkerReport`.
-6. **`actual_git_evidence`**:
+2. **`evidence_set_id`**: Unique reference to the durably committed `evidence_sets` row (Schema v9).
+3. **`task_id`**: Identifier of the task being reviewed.
+4. **`attempt_id`**: Specific execution attempt identifier, binding the bundle strictly to a `TaskAttempt`.
+5. **`contract_id`**: Immutable governing task contract identifier (`contract_id`).
+6. **`task_contract`**: The governing immutable contract revision payload (`contract_id`, `revision_number`, requirements, scope, acceptance criteria).
+7. **`worker_claims`**: Self-reported worker claims from the attempt's `WorkerReport`, strictly capturing `reported_head_sha` (`CHECK (LENGTH(reported_head_sha) BETWEEN 7 AND 40 AND NOT (reported_head_sha GLOB '*[^0-9a-f]*'))`).
+8. **`actual_git_evidence`**:
    - `actual_base_sha` vs `actual_head_sha` verified directly from Git.
+   - Dual head SHA validation: `actual_head_sha` is verified by the Supervisor and contrasted with `worker_claims.reported_head_sha`.
    - `actual_changed_files`: Whitelist diff comparison against `allowed_scope`.
    - `diff_stat`: Insertions, deletions, and structural summary.
-7. **`actual_test_evidence`**:
-   - Independent verification of test command exit codes (`all_passed`, `executed_commands`) captured via trusted verification runner.
-8. **`policy_findings`**:
-   - `rule_id`, `passed`, and `details` for all evaluated policy rules.
-9. **`unverified_claims`**:
-   - Claims made by the worker that could not be corroborated by Git or process logs.
-10. **`recommended_review_focus`**:
+9. **`actual_test_evidence`**:
+   - Independent verification of test command exit codes (`all_passed`, `executed_commands`) captured via trusted verification runner executing host-owned verification profiles within isolated Windows AppContainers.
+10. **`policy_findings`**:
+    - `rule_id`, `passed`, and `details` for all evaluated policy rules.
+11. **`unverified_claims`**:
+    - Claims made by the worker that could not be corroborated by Git or process logs.
+12. **`recommended_review_focus`**:
     - Automated hints directing ChatGPT's attention to critical changes, edge-case tests, or suspicious deviations.
-11. **`generated_at`**: ISO 8601 timestamp of bundle generation.
+13. **`generated_at`**: ISO 8601 timestamp of bundle generation.
+14. **`bundle_hash`**: RFC 8785 JSON Canonicalization Scheme (JCS) SHA-256 hash (64 hex characters) of the canonicalized ReviewBundle payload.
+15. **`evidence_finalized_at_epoch_ms`**: Epoch millisecond timestamp durably committed in Transaction B when verification evidence sets and artifacts are finalized.
+16. **`bundle_assembled_at_epoch_ms`**: Epoch millisecond timestamp captured when ReviewBundle JSON assembly, RFC 8785 JCS canonicalization, and schema validation succeed, immediately before initiating Transaction C commit.
+17. **`compilation_latency_ms`**: Deterministic assembly diagnostic difference:
+    $$\text{compilation\_latency\_ms} = \text{bundle\_assembled\_at\_epoch\_ms} - \text{evidence\_finalized\_at\_epoch\_ms}$$
+18. **`latency_measurement_status`**: Execution provenance discriminator (`'MEASURED_IN_PROCESS'` vs `'RECOVERED_AFTER_RESTART'`).
+19. **`nfr008_compliance_status`**: Held strictly as `'UNVERIFIED'` in Schema v9 (`CHECK (nfr008_compliance_status = 'UNVERIFIED')`).
+
+---
+
+# 4. ReviewBundle Latency Semantics & Content-Addressed Storage (ADR-018 / PROPOSAL-P04-002 Rev 9)
+
+### 4.1 2 × 2 Provenance × Threshold Matrix
+
+| Measurement Provenance | Measured Latency Threshold | `latency_measurement_status` | `nfr008_compliance_status` | Assembly Latency Diagnostic | Operational Semantics |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Continuous Execution (Normal P04D orchestration) | `compilation_latency_ms <= 3000` | `'MEASURED_IN_PROCESS'` | `'UNVERIFIED'` | None | Measured in continuous daemon process; meets empirical assembly target; no diagnostic emitted; Tx C commits cleanly. |
+| Continuous Execution (Normal P04D orchestration) | `compilation_latency_ms > 3000` | `'MEASURED_IN_PROCESS'` | `'UNVERIFIED'` | Latency-breach diagnostic emitted | Measured in continuous daemon process; exceeds empirical assembly target due to load/delay; provenance remains `MEASURED_IN_PROCESS`; diagnostic logged; Tx C commits cleanly without deadlock. |
+| Restart Recovery (P04D startup recovery path) | `compilation_latency_ms <= 3000` | `'RECOVERED_AFTER_RESTART'` | `'UNVERIFIED'` | None | Resumed attempt from prior daemon lifetime; recovery completed within 3,000 ms; provenance is `RECOVERED_AFTER_RESTART`; Tx C commits cleanly. |
+| Restart Recovery (P04D startup recovery path) | `compilation_latency_ms > 3000` | `'RECOVERED_AFTER_RESTART'` | `'UNVERIFIED'` | Latency-breach diagnostic emitted | Resumed attempt from prior daemon lifetime; elapsed wall-clock recovery latency exceeds 3,000 ms; provenance is `RECOVERED_AFTER_RESTART`; diagnostic logged; Tx C commits cleanly without deadlock. |
+
+### 4.2 Decoupled Commit Telemetry
+Upon return from SQLite `tx.Commit()` in Transaction C, the orchestrator computes commit duration using in-process monotonic measurement (`time.Since(commitStart)`) purely as best-effort telemetry. It is strictly excluded from `audit_events`, `review_bundles`, and the durable audit chain.
+
+### 4.3 Content-Addressed Storage Layout
+All raw review artifacts referenced by the bundle are stored in Content-Addressed Storage:
+- Path format: `artifacts/<first-two-hex>/<captured_sha256>`
+- Content integrity: Verified against `captured_sha256` with strict size limits (10 MB capture limit vs 50 MB hard safety limit).

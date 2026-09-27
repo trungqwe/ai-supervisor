@@ -8,6 +8,7 @@
     "contract_id": "CONTRACT-TASK-P01-001-01"
   },
   "worker_claims": {
+    "reported_head_sha": "b2c3d4e5f6789012345678901234567890abcdef",
     "claimed_status": "COMPLETED",
     "claims": [
       "AO daemon healthy"
@@ -36,5 +37,11 @@
   ],
   "unverified_claims": [],
   "recommended_review_focus": "Verify returned health JSON payload structure",
-  "generated_at": "2026-09-20T12:00:00Z"
+  "generated_at": "2026-09-20T12:00:00Z",
+  "bundle_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "evidence_finalized_at_epoch_ms": 1790000000000,
+  "bundle_assembled_at_epoch_ms": 1790000000500,
+  "compilation_latency_ms": 500,
+  "latency_measurement_status": "MEASURED_IN_PROCESS",
+  "nfr008_compliance_status": "UNVERIFIED"
 }
