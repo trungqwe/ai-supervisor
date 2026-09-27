@@ -146,16 +146,20 @@ This document establishes immutable operational directives for all AI coding age
    - P04A Contract Planning External Re-Audit 004 Record: `docs/audits/P04_TASK_001_CONTRACT_PLANNING_EXTERNAL_REAUDIT_004.md` (`READY_FOR_RELEASE_AUDIT`, baseline commit `8582e339d417c184122421701e3c86b4115d5a7d`).
    - P04A Findings Status: `P04A-C1-001 = CLOSED`, `P04A-C1-002 = CLOSED`, `P04A-C1-003 = CLOSED`, `P04A-C1-004 = CLOSED`, `P04A-C1-005 = CLOSED`; `P04A-R1-001 = CLOSED`, `P04A-R1-002 = CLOSED`, `P04A-R1-003 = CLOSED_AT_CONTRACT_PLANNING_LEVEL`, `P04A-R2-002 = CLOSED_AT_CONTRACT_LEVEL`, `P04A-R2-003 = CLOSED_AT_CONTRACT_PLANNING_LEVEL`, `P04A-R3-001 = CLOSED_AT_CONTRACT_PLANNING_LEVEL`, `P04A-R2-001 = CLOSED_AT_CONTRACT_LEVEL`, `P04A-R4-001 = CLOSED_AT_CONTRACT_LEVEL`.
    - P04A Release Audit Record: `docs/audits/P04_TASK_001_CONTRACT_RELEASE_AUDIT.md` (`EXTERNAL_APPROVED_AND_RELEASED`).
+   - P04A Release Audit Erratum 001 Record: `docs/audits/P04_TASK_001_CONTRACT_RELEASE_AUDIT_ERRATUM_001.md` (`APPROVED`).
+   - P04A External Audit 001 Record: `docs/audits/P04_TASK_001_EXTERNAL_AUDIT_001.md` (`REVISION_REQUIRED`, audited commit `ffde8c6ff903cfa49b8dab2db18dc70216752b5d`).
+   - P04A Findings Status: `P04A-I1-001 = OPEN_ERRATUM_RECORDED`, `P04A-I1-002 = OPEN`, `P04A-I1-003 = OPEN`, `P04A-I1-004 = OPEN`, `P04A-I1-005 = OPEN`, `P04A-I1-006 = OPEN`, `P04A-I1-007 = OPEN`.
    - Released Contract: `docs/tasks/TASK_CONTRACT_P04_001.md` (`RELEASED`).
    - `TASK_P04A_TASK_CONTRACT = RELEASED`.
    - `CONTRACT_TASK_P04_001_01 = RELEASED`.
-   - `P04_CODE = AUTHORIZED_P04A_ONLY`.
-   - `ACTIVE_GATE = TASK_P04A_IMPLEMENTATION`.
+   - `TASK_P04A_IMPLEMENTATION = REVISION_REQUIRED`.
+   - `P04_CODE = AUTHORIZED_P04A_REMEDIATION_ONLY`.
+   - `ACTIVE_GATE = TASK_P04A_IMPLEMENTATION_REMEDIATION`.
    - `TASK_P04B_TASK_CONTRACT = NOT_RELEASED`.
    - `TASK_P04C_TASK_CONTRACT = NOT_RELEASED`.
    - `TASK_P04D_TASK_CONTRACT = NOT_RELEASED`.
    - `P05_CODE = NOT_AUTHORIZED`.
-   - Next Approved Action: Implementation of Subtask P04A on isolated branch `codex/p04-001` starting from base SHA `db6b654f03a7ce3c8e6ae2cd180f2cb7236bf7c2` strictly within `allowed_scope` (39 files).
+   - Next Approved Action: Remediation of Subtask P04A on isolated branch `codex/p04-001` starting from base SHA `db6b654f03a7ce3c8e6ae2cd180f2cb7236bf7c2` addressing findings P04A-I1-002 through P04A-I1-007 strictly within `allowed_scope` (39 files).
    - Maintain strict fail-closed dependencies: `AUTOMATIC_RESTORE = DISABLED`; operator restore and linked stop remain disabled until verified operator principal reaches trusted boundary (`VERIFIED_OPERATOR_PRINCIPAL = OPEN_FAIL_CLOSED_DEPENDENCY`).
    - Stage B runtime catalog is deferred: `STAGE_B_RUNTIME_CATALOG = DEFERRED_TO_P04_RUNTIME_INTEGRATION`.
    - Candidate WIP artifact preserved externally in `D:\TU_CODE\ai-supervisor-user-wip-recovery\P03-EXIT-R2-001`; never restore, overwrite, or touch.
