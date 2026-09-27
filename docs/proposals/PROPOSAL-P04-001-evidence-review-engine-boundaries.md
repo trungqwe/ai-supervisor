@@ -1,19 +1,19 @@
 # PROPOSAL-P04-001: Evidence & Review Engine Architecture, Execution Boundaries, and Verification Isolation
 
 > **Proposal ID**: `PROPOSAL-P04-001`
-> **Revision**: 21
+> **Revision**: 22
 > **Title**: Evidence & Review Engine Architecture, Execution Isolation, and Verification Governance
 > **Author**: AI Engineering Supervisor Team
-> **Status**: `PENDING_EXTERNAL_REVIEW (REVISION 21)`
+> **Status**: `PENDING_EXTERNAL_REVIEW (REVISION 22)`
 > **Date**: 2026-09-27
-> **Audited Baseline**: `9dff1f001cf34598ed141dc257142a14f91390f7`
+> **Audited Baseline**: `64ff30a9d228303cd3da92e006cbe3e8a7e216b4`
 > **Preservation Baseline Commit**: `6e1993da150031a9465901a7019c71257de44312` (Revision 11)
-> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_20`
+> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_21`
 > **Deciders**: AI Engineering Supervisor Architecture Council, External Supervisor
 > **Related Architecture**: `docs/04_ARCHITECTURE.md` (Section 7), `docs/05_DOMAIN_MODEL.md`, `docs/10_REVIEW_BUNDLE.md`
 > **Related Requirements**: `docs/02_REQUIREMENTS.md` (FR-008, NFR-008 via PROPOSAL-P04-002 Revision 9)
-> **Supersedes**: `PROPOSAL-P04-001` Revision 20
-> **External Audit Tracking**: Remediates Findings `P04-ARCH-R20-001` and `P04-ARCH-R20-002` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_019.md`).
+> **Supersedes**: `PROPOSAL-P04-001` Revision 21
+> **External Audit Tracking**: Remediates Findings `P04-ARCH-R21-001`, `P04-ARCH-R21-002`, and `P04-ARCH-R21-003` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_020.md`), building upon partially closed `P04-ARCH-R20-001` and `P04-ARCH-R20-002`.
 
 ## 1. Context and Problem Statement
 
@@ -39,27 +39,44 @@ External Re-Audit 018 (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDI
 
 Revision 20 resolved `P04-ARCH-R19-001` by unifying bound dispatch allocation and workspace binding into a single atomic transaction: **Bound Dispatch + Workspace Binding Transaction**, owning the controlled extension of the `PrepareBoundDispatch` seam under Subtask P04A.
 
-External Re-Audit 019 (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_019.md`) evaluated Round 20 remediation at commit `9dff1f001cf34598ed141dc257142a14f91390f7`, recording verdict `REVISION_21_REQUIRED`. It verified finding `P04-ARCH-R19-001` as `CLOSED_AT_DESIGN_LEVEL` and reaffirmed `PROPOSAL-P04-002 Revision 9` as `APPROVED_AS_DESIGN_BASELINE`. However, it recorded two critical architectural findings requiring formal remediation:
-1. `P04-ARCH-R20-001`: Trusted workspace identity capability and handle lifetime undefined. The documentation required `RecordSendRequested` to revalidate physical identity against "managed, held OS handles", but did not define which component owns/opens handles, how Store receives identity proof, how long handles live, how path rename/replacement is blocked between revalidation and AO `/send`, how handles are reacquired after daemon restart, or strict boundaries ensuring Store never covertly calls Win32.
-2. `P04-ARCH-R20-002`: Pre-send failure semantics and lifecycle predicates insufficiently implementable. Generic terms such as "stronger lifecycle hold", "emit diagnostic under approved authority", "Fail-Closed Hold", and "Integrity Conflict" lacked concrete predicate enumeration, audit event schemas, atomic diagnostic transactions, TaskState rules, and terminal resolution semantics.
+External Re-Audit 019 (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_019.md`) evaluated Round 20 remediation at commit `9dff1f001cf34598ed141dc257142a14f91390f7`, recording verdict `REVISION_21_REQUIRED`. It verified finding `P04-ARCH-R19-001` as `CLOSED_AT_DESIGN_LEVEL`, reaffirmed `PROPOSAL-P04-002 Revision 9` as `APPROVED_AS_DESIGN_BASELINE`, and recorded findings `P04-ARCH-R20-001` (trusted workspace identity capability and handle lifetime) and `P04-ARCH-R20-002` (pre-send failure semantics and lifecycle predicates).
 
-Revision 21 establishes complete design-level resolution of findings `P04-ARCH-R20-001` and `P04-ARCH-R20-002`:
-1. **Trusted Workspace Identity Interface (`WorkspaceBindingAuthority`)**: Defines host-boundary interface `WorkspaceBindingAuthority.Acquire(ctx, candidate) -> WorkspaceBindingLease` returning an immutable `WorkspaceBindingSnapshot` (canonical worktree path, volume serial number, 128-bit `FileIdInfo`, linked gitdir path & identity), providing `Revalidate() error` and idempotent `Close() error`. Valid strictly during process lifetime; zero persistent authority tokens.
-2. **Windows Handle Semantics & Anti-Rename Guarantees**: Worktree root and linked gitdir are opened via `CreateFileW` with `FILE_READ_ATTRIBUTES` and `FILE_FLAG_BACKUP_SEMANTICS`, sharing `FILE_SHARE_READ | FILE_SHARE_WRITE`, strictly omitting `FILE_SHARE_DELETE` to block directory rename, deletion, or root replacement by any process during the effect window. Queries canonical path and 128-bit `FILE_ID_INFO` directly from the handle; fails closed if filesystem/API does not provide reliable identity.
-3. **Handle Lifetime & Daemon Restart Recovery**: Lease is acquired prior to the Bound Dispatch transaction, held across commit, revalidated immediately prior to `RecordSendRequested`, held across `SEND_REQUESTED` commit until AO `/send` returns a status response or enters containment, and closed in `defer`. Handles are never preserved across daemon restarts. After restart, the recovery scanner reopens worktree root and linked gitdir from durable canonical paths and verifies exact equality of `VolumeSerialNumber` and `FileIdInfo` against `attempt_workspace_bindings` before resuming pre-send recovery. Persisted database rows or prior dead handle tokens are never accepted as physical proof.
-4. **Architectural Layering**: Host/coordinator owns `WorkspaceBindingLease` and Win32 system calls. `Store.PrepareBoundDispatch` receives an immutable `WorkspaceBindingSnapshot`. `Store.RecordSendRequested` receives the verified snapshot and performs only database lineage/CAS comparisons. Store never directly opens paths or Win32 handles. No boolean `trusted=true` or caller-provided path is accepted as authority.
-5. **Full Enumeration of 14 `RecordSendRequested` Guards**: Enforces 14 explicit guards preserving all P03 preconditions and integrating P04 binding verification, lease revalidation, and zero active integrity holds.
-6. **Standardized Attempted Reason Literals**: Defines four literals: `WORKSPACE_BINDING_MISSING`, `WORKSPACE_BINDING_LINEAGE_MISMATCH`, `WORKSPACE_BINDING_NOT_ACTIVE`, `WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH`.
-7. **Atomic Diagnostic Transaction on Binding Failure**: When binding guard fails, `/send` is strictly forbidden, Task remains `DISPATCHED`, operation remains `DISPATCH_BOUND`, attempt remains open. A separate atomic diagnostic transaction appends `REVIEW_INTEGRITY_CONFLICT` (`conflict_type = 'LINEAGE_MISMATCH'`, `attempted_reason = '<literal>'`), inserts `ACTIVE` hold into `review_integrity_holds` (`hold_reason = 'INVARIANT_MISMATCH'`), and CAS invalidates `attempt_workspace_bindings` (`binding_state = 'INVALIDATED'`, `released_at_epoch_ms = now`) if active. Diagnostic failure maintains fail-closed send rejection; zero fallback to dispatch.
-8. **Governed Terminal Resolution & Retry Rules**: Recreating or backfilling bindings for existing `DISPATCH_BOUND` attempts is forbidden. Hold resolution does not restore send permission. A verified human operator must first terminalize the exact attempt via `DISPATCHED -> FAILED` with `recovery_disposition = 'WORKSPACE_BINDING_INTEGRITY_FAILURE'`; only then may the integrity hold be resolved. Retrying requires a fresh `TaskAttempt` and a new workspace binding. Fails closed without `VERIFIED_OPERATOR_PRINCIPAL`.
-9. **Deterministic Replay & Comprehensive Crash Matrix**: Uses Descriptors A/B and deterministic fingerprints for idempotent replay; covers all crash, contention, and failure branches.
+Revision 21 established initial host-boundary capability definitions and 14 pre-send verification guards.
+
+External Re-Audit 020 (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_020.md`) evaluated Round 21 remediation at commit `64ff30a9d228303cd3da92e006cbe3e8a7e216b4`, recording verdict `REVISION_22_REQUIRED`. It partially closed `P04-ARCH-R20-001` and `P04-ARCH-R20-002`, and recorded three critical follow-up findings:
+1. `P04-ARCH-R21-001`: Live lease binding to effect authority & coordinator effect gate. Differentiating immutable data snapshot (`WorkspaceBindingSnapshot`) from live capability lease (`WorkspaceBindingLease`). Store layer only checks database rows/lineage and never claims to prove live lease. A single coordinator/effect gate owning AO `DispatchTaskContract` (`Coordinator.Dispatch` in `internal/dispatch/coordinator.go`) holds the live lease in its call frame across the entire pre-send sequence. Eradication of invalid "directory hardlink swap" citations (unsupported by NTFS).
+2. `P04-ARCH-R21-002`: Variant discrimination for `REVIEW_INTEGRITY_CONFLICT`. Standard discriminator `conflict_source` distinguishing `AUDIT_EVENT_ID_COLLISION` (requires `colliding_event_id`, semantic mismatch fields; zero binding mutation) from `WORKSPACE_BINDING_GUARD` (requires `dispatch_operation_id`, standardized `attempted_reason` literals; `colliding_event_id` strictly absent; CAS invalidates binding). Replay determinism via Descriptor B. Prohibiting P04D pipeline conflicts from mutating workspace bindings.
+3. `P04-ARCH-R21-003`: Canonical P03 schema alignment for restore and provisioning predicates. Updating guard 9 to `NOT EXISTS (SELECT 1 FROM pair_restore_operations WHERE pair_id = ? AND resolution_state <> 'RESTORE_RESOLVED')` and guard 10 to `NOT EXISTS (SELECT 1 FROM pair_provisioning_operations WHERE pair_id = ? AND stage IN ('PROVISION_REQUESTED','PROVISION_FAILED'))`, eradicating all non-existent `status` column and `PENDING`/`IN_FLIGHT` descriptions.
+
+Revision 22 establishes complete design-level resolution of findings `P04-ARCH-R21-001`, `P04-ARCH-R21-002`, and `P04-ARCH-R21-003`:
+1. **Strict Capability vs Data Separation (`P04-ARCH-R21-001`)**:
+   - `WorkspaceBindingSnapshot`: Immutable data structure used strictly for database lineage, trigger verification, and CAS comparisons. Store receives only this snapshot and evaluates database constraints. Store NEVER claims to prove or hold a live OS handle lease.
+   - `WorkspaceBindingLease`: Ephemeral OS-level capability holding open Win32 directory handles (`CreateFileW` with `FILE_READ_ATTRIBUTES | FILE_FLAG_BACKUP_SEMANTICS`, omitting `FILE_SHARE_DELETE`).
+2. **Single Coordinator Effect Gate (`P04-ARCH-R21-001`)**:
+   - Formalizes a single coordinator effect gate (`Coordinator.Dispatch` in `internal/dispatch/coordinator.go`) that exclusively owns the AO `DispatchTaskContract(ctx, sessionID, message)` boundary.
+   - The effect gate receives the candidate, acquires `WorkspaceBindingLease`, retains the SAME lease instance in its call frame, and executes the exact 9-step sequence: Acquire lease -> extract snapshot -> commit `PrepareBoundDispatch` with snapshot -> observe fresh `GetWorkerStatus` -> revalidate live lease (`lease.Revalidate()`) against durable binding -> commit `RecordSendRequested` via pure DB guards -> call AO `/send` while lease remains open -> commit confirmed/containment -> close lease in `defer`.
+   - Zero public API paths accepting only a snapshot can invoke `/send`. Recovery must acquire a fresh lease via `WorkspaceBindingAuthority.Acquire`.
+   - Replaced invalid "directory hardlink swap" with valid NTFS directory substitution probes (junctions, symlinks, `subst`, rename, path-alias).
+3. **Variant Discrimination for `REVIEW_INTEGRITY_CONFLICT` (`P04-ARCH-R21-002`)**:
+   - Standard discriminator `conflict_source`: `'AUDIT_EVENT_ID_COLLISION'` vs `'WORKSPACE_BINDING_GUARD'`.
+   - Variant A (`AUDIT_EVENT_ID_COLLISION`): requires `colliding_event_id`, `attempted_event_type`, semantic mismatch fields; transaction scope: audit + hold; strictly does NOT touch `attempt_workspace_bindings`.
+   - Variant B (`WORKSPACE_BINDING_GUARD`): requires `dispatch_operation_id`, standardized `attempted_reason` (one of the 4 literals: `WORKSPACE_BINDING_MISSING`, `WORKSPACE_BINDING_LINEAGE_MISMATCH`, `WORKSPACE_BINDING_NOT_ACTIVE`, `WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH`), lineage/fingerprint fields; `colliding_event_id` is strictly ABSENT (no dummy sentinel); transaction scope: audit + hold + conditional `ACTIVE -> INVALIDATED` binding CAS (`released_at_epoch_ms = now`).
+   - Descriptor B and `diagnostic_fingerprint` include `conflict_source` and exact variant fields for deterministic replay. P04D pipeline conflicts never CAS workspace binding.
+4. **Canonical P03 Schema Alignment for Restore and Provisioning Guards (`P04-ARCH-R21-003`)**:
+   - Guard 9: `NOT EXISTS (SELECT 1 FROM pair_restore_operations WHERE pair_id = ? AND resolution_state <> 'RESTORE_RESOLVED')`.
+   - Guard 10: `NOT EXISTS (SELECT 1 FROM pair_provisioning_operations WHERE pair_id = ? AND stage IN ('PROVISION_REQUESTED','PROVISION_FAILED'))`.
+   - Eradicated all references to `status` column and `PENDING`/`IN_FLIGHT` literals for these two tables.
+5. **Governed Terminal Resolution & Retry Invariants**:
+   - Preserves atomic D12 terminal transition (`tasks`: `DISPATCHED -> FAILED`, `task_attempts`: `ended_at = now`, `recovery_disposition = 'WORKSPACE_BINDING_INTEGRITY_FAILURE'`, appending `TASK_STATE_TRANSITION` audit in same transaction).
+   - Hold resolution is a separate transaction after terminalization.
+   - `LENGTH(TRIM(principal))` is only data validation; fails closed without `VERIFIED_OPERATOR_PRINCIPAL`.
 
 ---
 
 ## 2. Summary of Architectural Resolutions & Preservation Matrix
 
-### 2.1. Architectural Resolutions in Revision 17 to Revision 21
-| Finding ID | Core Architectural Resolution in Revision 17-21 | Target Section |
+### 2.1. Architectural Resolutions in Revision 17 to Revision 22
+| Finding ID | Core Architectural Resolution in Revision 17-22 | Target Section |
 | :--- | :--- | :--- |
 | `P04-ARCH-R13-001` | Elimination of erroneous TaskState transitions to `BLOCKED`: preserve current TaskState on invariant mismatch; rollback active Tx; insert ACTIVE hold in separate diagnostic Tx; close admission and approval; require authenticated human reconciliation. | Section 4.1, Section 7.2, Section 7.4 |
 | `P04-ARCH-R13-002` | Foreign key audit references and principal constraints on `review_integrity_holds`: `rejection_audit_event_id UNIQUE REFERENCES audit_events(event_id) ON DELETE RESTRICT`, `resolution_audit_event_id UNIQUE REFERENCES audit_events(event_id) ON DELETE RESTRICT`, `LENGTH(TRIM(resolved_by_principal)) > 0`, atomic creation/resolution transactions, fail-closed runtime constraint on `VERIFIED_OPERATOR_PRINCIPAL`. | Section 3.2, Section 7.2, Section 8 |
@@ -78,34 +95,37 @@ Revision 21 establishes complete design-level resolution of findings `P04-ARCH-R
 | `P04-ARCH-R19-001` | Unified Bound Dispatch + Workspace Binding Transaction: eliminates independent binding creation; P04A owns controlled `PrepareBoundDispatch` seam extension; pre-transaction OS handle & Win32 FileIdInfo capture; strict execution order; complete rollback atomicity (zero orphans, task READY); trigger lineage requires `stage = 'DISPATCH_BOUND'`; RecordSendRequested fail-closed guard; crash/replay matrix. | Section 1, Section 3.1, Section 3.2, Section 6.2, Section 7.1, Section 8, Section 9.1 |
 | `P04-ARCH-R20-001` | Trusted Workspace Identity Capability & Handle Lifetime: `WorkspaceBindingAuthority.Acquire` at host boundary returning `WorkspaceBindingLease` (`Snapshot()`, `Revalidate()`, `Close()`); `CreateFileW` with `FILE_READ_ATTRIBUTES` and `FILE_FLAG_BACKUP_SEMANTICS`, omitting `FILE_SHARE_DELETE` to block directory rename/delete; canonical path and Win32 128-bit `FILE_ID_INFO` extracted from handle; process-lifetime capability; handle lifetime across tx commit, pre-send revalidation, and AO `/send` boundary; restart recovery via durable path reopening and exact volume serial / file ID match; strict host/store layering (Store never calls Win32). | Section 1, Section 3.1, Section 6.2, Section 7.1, Section 9.1 |
 | `P04-ARCH-R20-002` | Pre-Send Failure Semantics & Lifecycle Predicates: 14 mandatory guards in `RecordSendRequested`; four standardized literals (`WORKSPACE_BINDING_MISSING`, `WORKSPACE_BINDING_LINEAGE_MISMATCH`, `WORKSPACE_BINDING_NOT_ACTIVE`, `WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH`); atomic diagnostic transaction appends `REVIEW_INTEGRITY_CONFLICT`, inserts `ACTIVE` hold (`INVARIANT_MISMATCH`), and CAS invalidates binding to `INVALIDATED` while preserving Task `DISPATCHED`, operation `DISPATCH_BOUND`, attempt open; deterministic replay via Descriptors A/B; governed terminal resolution requires operator to terminalize attempt via `DISPATCHED -> FAILED` (`recovery_disposition = 'WORKSPACE_BINDING_INTEGRITY_FAILURE'`) before hold resolution; retry creates new attempt & binding; crash/replay matrix updated. | Section 1, Section 3.1, Section 6.2, Section 7.1, Section 8, Section 9.1 |
+| `P04-ARCH-R21-001` | Live Lease Binding to Effect Authority & Coordinator Effect Gate: Strict separation of immutable data snapshot (`WorkspaceBindingSnapshot`) from live OS capability lease (`WorkspaceBindingLease`); Store checks DB rows only and never claims to prove live lease; single coordinator effect gate (`Coordinator.Dispatch` in `internal/dispatch/coordinator.go`) holds live lease across 9-step dispatch sequence; zero public paths invoke `/send` with snapshot only; recovery acquires fresh lease; replaces directory hardlink citations with valid NTFS substitution probes. | Section 1, Section 3.1, Section 6.2, Section 7.1, Section 9.1 |
+| `P04-ARCH-R21-002` | Variant Discrimination for `REVIEW_INTEGRITY_CONFLICT`: Standard discriminator `conflict_source` distinguishing `AUDIT_EVENT_ID_COLLISION` (requires `colliding_event_id`, semantic mismatch fields; zero binding mutation) from `WORKSPACE_BINDING_GUARD` (requires `dispatch_operation_id`, standardized `attempted_reason` literals; `colliding_event_id` strictly absent; CAS invalidates binding); Descriptor B includes `conflict_source` and variant fields; P04D pipeline conflicts never CAS workspace binding. | Section 1, Section 3.1, Section 6.2, Section 7.1, Section 8, Section 9.1 |
+| `P04-ARCH-R21-003` | Canonical P03 Schema Alignment for Restore and Provisioning Predicates: Guard 9 uses exact SQL `NOT EXISTS (SELECT 1 FROM pair_restore_operations WHERE pair_id = ? AND resolution_state <> 'RESTORE_RESOLVED')`; Guard 10 uses exact SQL `NOT EXISTS (SELECT 1 FROM pair_provisioning_operations WHERE pair_id = ? AND stage IN ('PROVISION_REQUESTED','PROVISION_FAILED'))`; eradicated all non-existent `status` column and `PENDING`/`IN_FLIGHT` descriptions. | Section 1, Section 3.1, Section 9.1 |
 
-### 2.2. Revision 11 to Revision 21 Preservation Matrix
-| Revision 11 Section | Revision 21 Section & Location | Status & Surgical Changes |
+### 2.2. Revision 11 to Revision 22 Preservation Matrix
+| Revision 11 Section | Revision 22 Section & Location | Status & Surgical Changes |
 | :--- | :--- | :--- |
-| Section 1: Context & Problem Statement | Section 1: Context & Problem Statement | Preserved; updated with Re-Audit 019 findings, R20-001 and R20-002 resolutions, and baseline tracking. |
-| Section 2: Summary of Architectural Resolutions | Section 2: Summary & Preservation Matrix | Preserved and updated with R20-001 and R20-002 resolutions and preservation matrix. |
-| Section 3.1: Two-Transaction Workspace Lifecycle | Section 3.1: Workspace Lifecycle, Trusted Binding Authority & Dispatch Atomicity | Expanded with `WorkspaceBindingAuthority`, Windows handle anti-rename semantics (`FILE_SHARE_DELETE` omitted), handle lifetime, restart recovery, 14 pre-send guards, 4 attempted_reason literals, atomic diagnostic transaction, and governed terminal resolution (`P04-ARCH-R20-001`, `P04-ARCH-R20-002`). |
+| Section 1: Context & Problem Statement | Section 1: Context & Problem Statement | Preserved; updated with Re-Audit 020 findings, R21-001, R21-002, and R21-003 resolutions, and baseline tracking. |
+| Section 2: Summary of Architectural Resolutions | Section 2: Summary & Preservation Matrix | Preserved and updated with R21-001, R21-002, and R21-003 resolutions and preservation matrix. |
+| Section 3.1: Two-Transaction Workspace Lifecycle | Section 3.1: Workspace Lifecycle, Trusted Binding Authority & Dispatch Atomicity | Expanded with `WorkspaceBindingAuthority`, capability vs data separation, single coordinator effect gate (`Coordinator.Dispatch`, 9-step sequence), Windows handle anti-rename semantics (`FILE_SHARE_DELETE` omitted), handle lifetime, restart recovery, 14 canonical pre-send guards (exact P03 SQL predicates for restore/provisioning), 4 attempted_reason literals, atomic diagnostic transaction with variant discrimination, and governed terminal resolution (`P04-ARCH-R20-001`, `P04-ARCH-R20-002`, `P04-ARCH-R21-001`, `P04-ARCH-R21-002`, `P04-ARCH-R21-003`). |
 | Section 3.2: Schema v6 DDL | Section 3.2: Schema v6 DDL | Preserved full Schema v6 (`terminal_generation TEXT`, canonical worktree, hex checks, triggers, integer typing, canonical WorkerClaim array checks); includes `review_integrity_holds` DDL, active index, and triggers owned by Subtask P04A (`P04-ARCH-R16-001`). |
 | Section 4.1: Clean Worktree & Index Verification Policy | Section 4.1: Clean Worktree Policy | Preserved; updated with two-step non-self-referencing descriptor derivation (`P04-ARCH-R15-001`). |
 | Section 4.2: Hardened Git Invocation Allowlist | Section 4.2: Hardened Git Invocation Allowlist | Preserved 10-command allowlist table verbatim. |
 | Section 5.1: Windows AppContainer & Sandbox DACL | Section 5.1: Windows AppContainer Isolation | Preserved explicit handle list, Job Object assignment, DACL denial, process-death proof requirement. |
 | Section 6.1: Immutable Snapshot Extraction Protocol | Section 6.1: Snapshot Extraction Protocol | Preserved `git ls-tree -rz --full-tree` and `git cat-file --batch` protocol verbatim. |
-| Section 6.2: TOCTOU & Crash Matrix | Section 6.2: TOCTOU & Crash Matrix | Preserved matrix; expanded with pre-send guard rejection, diagnostic transaction rollback, lost response, concurrent caller races, binding invalidation CAS, and operator terminalization scenarios (`P04-ARCH-R20-002`). |
-| Section 7.1: Model 1 Persistence Ownership Discipline | Section 7.1: Model 1 Persistence Ownership | Preserved; updated P04A scope to include Store dispatch seam extension, pre-send revalidation comparison, and diagnostic transaction with binding invalidation; planned falsification tests (`P04-ARCH-R20-001`, `P04-ARCH-R20-002`). |
+| Section 6.2: TOCTOU & Crash Matrix | Section 6.2: TOCTOU & Crash Matrix | Preserved matrix; expanded with pre-send guard rejection, diagnostic transaction rollback, lost response, concurrent caller races, variant discrimination, binding invalidation CAS, and operator terminalization scenarios (`P04-ARCH-R20-002`, `P04-ARCH-R21-001`, `P04-ARCH-R21-002`). |
+| Section 7.1: Model 1 Persistence Ownership Discipline | Section 7.1: Model 1 Persistence Ownership | Preserved; updated P04A scope to include Store dispatch seam extension, pre-send revalidation comparison, coordinator effect gate, and diagnostic transaction with binding invalidation; planned falsification tests (`P04-ARCH-R20-001`, `P04-ARCH-R20-002`, `P04-ARCH-R21-001`, `P04-ARCH-R21-002`). |
 | Section 7.2: Lease Admission, Cross-Process Reclaim & Bounded TTL | Section 7.2: Lease Admission, Reclaim & Bounded TTL | Preserved linear lease chain; updated durable holds with non-self-referencing `hold_id` (`P04-ARCH-R15-001`) and race-safe resolution algorithm (`P04-ARCH-R15-002`); removed duplicate `review_integrity_holds` DDL (`P04-ARCH-R16-001`). |
 | Section 7.3: Schema v9 DDL: Artifact Streaming & Review Schema | Section 7.3: Schema v9 DDL | Preserved artifact streaming and ReviewBundle DDL; Schema v9 upgrades from Schema v6 without recreating `review_integrity_holds` (`P04-ARCH-R16-001`). |
 | Section 7.4: ReviewBundle Replay & Conflict State Matrix | Section 7.4: ReviewBundle Replay Matrix | Preserved matrix (TaskState preserved, zero BLOCKED transitions). |
-| Section 8: Audit Event Registration & Failure Semantics | Section 8: Audit Event Registration | Defined all 3 descriptors (hold, rejection, resolution) via RFC 8785 JCS; resolution race rules; updated audit event producer table with explicit transaction owners (`P04-ARCH-R16-001`); registered `REVIEW_INTEGRITY_CONFLICT` with `conflict_type = 'LINEAGE_MISMATCH'` and four `attempted_reason` literals (`P04-ARCH-R20-002`). |
-| Section 9: Conclusion & Next Steps | Section 9: Conclusion & Next Steps | Updated governance status and active gate (`P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_20`). |
+| Section 8: Audit Event Registration & Failure Semantics | Section 8: Audit Event Registration | Defined all 3 descriptors (hold, rejection, resolution) via RFC 8785 JCS; resolution race rules; updated audit event producer table with explicit transaction owners (`P04-ARCH-R16-001`); registered `REVIEW_INTEGRITY_CONFLICT` variants (`AUDIT_EVENT_ID_COLLISION` vs `WORKSPACE_BINDING_GUARD`) with variant-specific schemas and Descriptor B derivations (`P04-ARCH-R20-002`, `P04-ARCH-R21-002`). |
+| Section 9: Conclusion & Next Steps | Section 9: Conclusion & Next Steps | Updated governance status and active gate (`P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_21`). |
 | Section 9.1: Final Architecture Readiness Matrix | Section 9.1: Final Architecture Readiness Matrix | Updated readiness matrix for all six tracked design blockers (`READY_FOR_EXTERNAL_APPROVAL`). |
 
 ## 3. Worktree Authority, Immutable Bindings & Seam Integration
 
-### 3.1. Workspace Lifecycle, Trusted Binding Authority & Dispatch Atomicity (P04-ARCH-R19-001, P04-ARCH-R20-001, P04-ARCH-R20-002)
+### 3.1. Workspace Lifecycle, Trusted Binding Authority & Dispatch Atomicity (P04-ARCH-R19-001, P04-ARCH-R20-001, P04-ARCH-R20-002, P04-ARCH-R21-001, P04-ARCH-R21-002, P04-ARCH-R21-003)
 
 To eliminate race windows, foreign key violations, and trigger ordering conflicts, Subtask P04A owns the controlled extension of the `PrepareBoundDispatch` store seam. The independent binding creation transaction is replaced by a single unified atomic transaction governed by trusted OS capability acquisition and strict lifecycle predicates:
 
-#### 1. Trusted Workspace Identity Interface at Host Boundary (P04-ARCH-R20-001)
+#### 1. Trusted Workspace Identity Interface at Host Boundary (P04-ARCH-R20-001, P04-ARCH-R21-001)
 At the supervisor host boundary, workspace binding capability acquisition is formalized through the `WorkspaceBindingAuthority` interface:
 
 ```go
@@ -135,6 +155,9 @@ type WorkspaceBindingSnapshot struct {
 }
 ```
 
+- **Strict Capability vs Data Separation**:
+  * `WorkspaceBindingSnapshot`: An immutable pure data struct containing path and identity strings used strictly for database lineage, trigger verification, and CAS comparisons. The Store layer receives only this snapshot and executes pure SQL lineage/CAS checks. The Store layer NEVER claims to prove or hold a live OS handle lease.
+  * `WorkspaceBindingLease`: An active, ephemeral OS-level capability holding open Win32 directory handles (`CreateFileW` with `FILE_READ_ATTRIBUTES | FILE_FLAG_BACKUP_SEMANTICS`, omitting `FILE_SHARE_DELETE`). Valid strictly during active process lifetime; zero persistent authority tokens.
 - **Process-Lifetime Scope**: The capability granted by `WorkspaceBindingLease` is strictly ephemeral and valid only within the active process lifetime. Zero persistent authority tokens are stored in the database or written to disk.
 - **Idempotent Cleanup**: `Close()` is fully idempotent and safe to invoke multiple times, ensuring reliable execution via Go `defer` blocks during both normal execution and panic unwinding.
 
@@ -143,7 +166,7 @@ To prevent workers or concurrent host processes from moving, renaming, deleting,
 - **`CreateFileW` Parameters**:
   * Desired Access: `FILE_READ_ATTRIBUTES` (permits querying filesystem metadata and file identifiers without requiring file read/write rights).
   * Share Mode: `FILE_SHARE_READ | FILE_SHARE_WRITE`.
-  * **Omitted Share Mode**: `FILE_SHARE_DELETE` is **STRICTLY OMITTED**. On Windows, omitting `FILE_SHARE_DELETE` instructs the Windows NT I/O manager and filesystem driver (NTFS/ReFS) to reject any attempt by another process (including worker subprocesses) to rename the directory, delete the directory, or swap directory junctions with `ERROR_SHARING_VIOLATION` (0x20) or `ACCESS_DENIED` (0x5) for the entire duration the handle remains held.
+  * **Omitted Share Mode**: `FILE_SHARE_DELETE` is **STRICTLY OMITTED**. On Windows, omitting `FILE_SHARE_DELETE` instructs the Windows NT I/O manager and filesystem driver (NTFS/ReFS) to reject any attempt by another process (including worker subprocesses) to rename the directory, delete the directory, or swap directory junctions with `ERROR_SHARING_VIOLATION` (0x20) or `ACCESS_DENIED` (0x5) for the entire duration the handle remains held. (Note: NTFS does not support hardlinks for directory objects; directory substitution attacks are mitigated via handle locking against renames, deletions, and junction/symlink retargeting).
   * Creation Disposition: `OPEN_EXISTING`.
   * Flags and Attributes: `FILE_FLAG_BACKUP_SEMANTICS` (mandatory Win32 flag required to open a handle to a directory rather than a file).
 - **Physical Identity Extraction**:
@@ -151,7 +174,7 @@ To prevent workers or concurrent host processes from moving, renaming, deleting,
   * Unique 128-bit file identifier and volume serial number are queried directly from the open handle via `GetFileInformationByHandleEx(handle, FileIdInfo, &fileIdInfo, sizeof(fileIdInfo))`. The result is formatted into 16-hex `volume_serial_hex` and 32-hex `file_id_hex`.
   * **Fail-Closed on Unreliable Filesystems**: If the underlying volume does not support 128-bit `FileIdInfo` (e.g. FAT32) or if the API call fails, `Acquire` fails closed immediately without creating any attempt.
 
-#### 3. Mandatory Handle Lifetime & Daemon Restart Recovery (P04-ARCH-R20-001)
+#### 3. Mandatory Handle Lifetime & Daemon Restart Recovery (P04-ARCH-R20-001, P04-ARCH-R21-001)
 The lifecycle of `WorkspaceBindingLease` is bound to the dispatch effect window:
 - **Pre-Transaction Acquisition**: Host/coordinator calls `WorkspaceBindingAuthority.Acquire` before opening the SQLite transaction for bound dispatch.
 - **Commit Hold**: The lease handles are held open continuously across the SQLite commit of `PrepareBoundDispatch`.
@@ -161,17 +184,33 @@ The lifecycle of `WorkspaceBindingLease` is bound to the dispatch effect window:
 - **Zero Cross-Restart Handle Preservation**: OS handles cannot be preserved across process restarts.
 - **Daemon Restart Recovery**:
   * Upon daemon restart, in-memory leases are cleared.
-  * To recover an attempt in `DISPATCH_BOUND` stage prior to `SEND_REQUESTED`, the recovery scanner reopens the worktree root and linked gitdir from the durable `canonical_worktree_path` and `linked_gitdir_path` recorded in `attempt_workspace_bindings`.
+  * To recover an attempt in `DISPATCH_BOUND` stage prior to `SEND_REQUESTED`, the recovery scanner reopens the worktree root and linked gitdir from the durable `canonical_worktree_path` and `linked_gitdir_path` recorded in `attempt_workspace_bindings` by acquiring a NEW lease via `WorkspaceBindingAuthority.Acquire`.
   * It queries `VolumeSerialNumber` and 128-bit `FileIdInfo` from the newly opened handles and compares them for exact byte equality against `attempt_workspace_bindings.volume_serial_hex` and `file_id_hex`.
   * Pre-send recovery proceeds only if reacquisition and revalidation pass completely.
   * A persisted database row, path string, or prior dead handle token is NEVER accepted as physical proof after restart.
 
-#### 4. Architectural Layering & Separation of Concerns (P04-ARCH-R20-001)
-- Host/coordinator owns `WorkspaceBindingAuthority`, `WorkspaceBindingLease`, Win32 system calls, and handle lifetimes.
-- `Store.PrepareBoundDispatch` receives an immutable `WorkspaceBindingSnapshot` passed by the coordinator.
-- `Store.RecordSendRequested` receives the verified `WorkspaceBindingSnapshot` and executes pure SQL lineage, state, and CAS checks against the database.
-- The Store layer never directly invokes Win32 APIs, never opens file handles, and never inspects filesystem paths.
-- No caller-provided boolean `trusted=true` or unverified path string is accepted as authority.
+#### 4. Architectural Layering & Single Coordinator Effect Gate (P04-ARCH-R20-001, P04-ARCH-R21-001)
+To ensure that only a proven, live workspace capability can trigger side-effects against the external worker:
+- **Single Coordinator Effect Gate**:
+  * Aligns directly with `Coordinator.Dispatch` in `internal/dispatch/coordinator.go`.
+  * The coordinator effect gate exclusively owns the AO `DispatchTaskContract(ctx, sessionID, message)` call boundary.
+  * The effect gate receives the candidate, acquires `WorkspaceBindingLease`, retains the SAME lease instance in its call frame across the entire dispatch flow, and executes the exact 9-step sequence:
+    1. Acquire live lease via `WorkspaceBindingAuthority.Acquire(ctx, candidate)`.
+    2. Extract immutable snapshot via `lease.Snapshot()`.
+    3. Commit `PrepareBoundDispatch` with snapshot (atomic bound dispatch + workspace binding transaction).
+    4. Observe fresh `GetWorkerStatus` from AO (must be `idle` or `waiting_input`, not terminated).
+    5. Revalidate live lease via `lease.Revalidate()`, checking held handles against durable binding read back from DB.
+    6. Commit `RecordSendRequested` using pure DB guards (Store checks DB row, lineage, CAS, snapshot equality, zero active holds).
+    7. Call AO `/send` (`AO.DispatchTaskContract(ctx, sessionID, message)`) within the same guarded scope while lease is still held open.
+    8. Commit confirmed / containment (`RecordSendConfirmed` or `containAmbiguousSend`).
+    9. Close lease in `defer` after effect boundary.
+- **Strict Store Separation**:
+  * `Store.PrepareBoundDispatch` receives an immutable `WorkspaceBindingSnapshot` passed by the coordinator.
+  * `Store.RecordSendRequested` receives the verified `WorkspaceBindingSnapshot` and executes pure SQL lineage, state, and CAS checks against the database.
+  * The Store layer never directly invokes Win32 APIs, never opens file handles, and never inspects filesystem paths. Store checks DB rows only; the guard of the live lease belongs exclusively to the coordinator effect gate.
+- **Zero Alternative Public Send Path**:
+  * Zero public API paths accepting only a snapshot can invoke `/send`.
+  * Persisted database rows or prior dead handle tokens never grant effect authority.
 
 #### 5. Bound Dispatch + Workspace Binding Transaction (Subtask P04A / Seam Extension)
 In the same SQLite transaction, executed inside `Store.PrepareBoundDispatch`, perform the following operations in exact sequence:
@@ -192,7 +231,7 @@ Any error occurring prior to commit (handle failure, constraint violation, trigg
 - Zero orphaned audit events.
 - Task remains in `READY` state.
 
-#### 6. Comprehensive Pre-Send Verification Guards in `RecordSendRequested` (P04-ARCH-R20-002)
+#### 6. Comprehensive Pre-Send Verification Guards in `RecordSendRequested` (P04-ARCH-R20-002, P04-ARCH-R21-003)
 Before transitioning dispatch operation to `SEND_REQUESTED` or issuing `/send`:
 `RecordSendRequested` must fail closed unless ALL 14 mandatory guards are satisfied simultaneously:
 1. `dispatch_operations.stage = 'DISPATCH_BOUND'`
@@ -203,14 +242,14 @@ Before transitioning dispatch operation to `SEND_REQUESTED` or issuing `/send`:
 6. Exact task/contract/Pair/session/generation lineage match across `tasks`, `task_attempts`, and `dispatch_operations`
 7. Current `WorkerSession` identity matches and `quarantine_state = 'CLEAN'`
 8. Current `TaskAttempt` `quarantine_state = 'CLEAN'`
-9. Zero unresolved `pair_restore_operations` (`status IN ('PENDING', 'IN_FLIGHT')`)
-10. Zero unresolved `pair_provisioning_operations` (`status IN ('PENDING', 'IN_FLIGHT')`)
+9. Zero unresolved `pair_restore_operations` (`NOT EXISTS (SELECT 1 FROM pair_restore_operations WHERE pair_id = ? AND resolution_state <> 'RESTORE_RESOLVED')`)
+10. Zero unresolved `pair_provisioning_operations` (`NOT EXISTS (SELECT 1 FROM pair_provisioning_operations WHERE pair_id = ? AND stage IN ('PROVISION_REQUESTED','PROVISION_FAILED'))`)
 11. Fresh AO observation is `idle` or `waiting_input`, not terminated
 12. Exactly one `attempt_workspace_bindings` row exists for the attempt with `binding_state = 'ACTIVE'`
 13. Live `WorkspaceBindingLease.Revalidate()` passes and matches database row
 14. Zero `ACTIVE` `review_integrity_holds` for the attempt (`NOT EXISTS (SELECT 1 FROM review_integrity_holds WHERE attempt_id = ? AND hold_state = 'ACTIVE')`)
 
-#### 7. Pre-Send Failure Semantics & Atomic Diagnostic Transaction (P04-ARCH-R20-002)
+#### 7. Pre-Send Failure Semantics & Atomic Diagnostic Transaction (P04-ARCH-R20-002, P04-ARCH-R21-002)
 If any workspace binding guard fails (guards 12-14 or binding lineage/identity mismatch):
 - **Send Strictly Forbidden**: Never transition dispatch operation to `SEND_REQUESTED`; never invoke `/send`.
 - **Task & Attempt Preservation**: Task remains in `DISPATCHED` state; dispatch operation remains in `DISPATCH_BOUND`; the attempt remains open pending governed resolution.
@@ -219,16 +258,27 @@ If any workspace binding guard fails (guards 12-14 or binding lineage/identity m
   * `WORKSPACE_BINDING_LINEAGE_MISMATCH`: Binding row exists but `contract_id`, `task_id`, `session_id`, or `terminal_generation` does not match the attempt lineage.
   * `WORKSPACE_BINDING_NOT_ACTIVE`: Binding row exists but `binding_state` is `RETAINED_FOR_VERIFICATION`, `RELEASED`, or `INVALIDATED`.
   * `WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH`: Revalidation failed; held handle's `VolumeSerialNumber` or `FileIdInfo` differs from the durable database binding.
-- **Atomic Diagnostic Transaction**:
+- **Atomic Diagnostic Transaction (Variant B: `WORKSPACE_BINDING_GUARD`)**:
   In a separate diagnostic transaction executed immediately:
-  1. Append rejection audit event `REVIEW_INTEGRITY_CONFLICT` to `audit_events` (`actor = 'ai-supervisor-daemon'`, `details_json.actor_role = 'SUPERVISOR'`, `details_json.conflict_type = 'LINEAGE_MISMATCH'`, `details_json.attempted_reason = '<literal>'`).
+  1. Append rejection audit event `REVIEW_INTEGRITY_CONFLICT` to `audit_events` with Variant B fields:
+     * `actor = 'ai-supervisor-daemon'`
+     * `details_json.actor_role = 'SUPERVISOR'`
+     * `details_json.conflict_source = 'WORKSPACE_BINDING_GUARD'`
+     * `details_json.dispatch_operation_id = '<dispatch_operation_id>'`
+     * `details_json.conflict_type = 'LINEAGE_MISMATCH'`
+     * `details_json.attempted_reason = '<literal>'`
+     * `details_json.sanitized_input_fingerprint = '<64_hex_hash>'`
+     * `details_json.diagnostic_fingerprint = '<64_hex_hash>'`
+     * `details_json.colliding_event_id` is **STRICTLY ABSENT** (no dummy sentinels).
   2. Insert `ACTIVE` hold row into `review_integrity_holds` with `hold_reason = 'INVARIANT_MISMATCH'`, `diagnostic_fingerprint = SHA256(...)`, and `occurrence_number = COALESCE(MAX(occurrence_number), 0) + 1`.
   3. If an `ACTIVE` binding exists for the attempt but physical identity or lineage is invalid, CAS update `attempt_workspace_bindings`: set `binding_state = 'INVALIDATED'`, `released_at_epoch_ms = now` where `attempt_id = ? AND binding_state = 'ACTIVE'`.
   4. Commit diagnostic transaction atomically.
+- **Distinction from Variant A (`AUDIT_EVENT_ID_COLLISION`)**:
+  Audit event ID collisions use `conflict_source = 'AUDIT_EVENT_ID_COLLISION'`, require `colliding_event_id` and `attempted_event_type`, and strictly do NOT touch `attempt_workspace_bindings`. P04D pipeline conflicts must never CAS mutate workspace bindings.
 - **Fail-Closed on Diagnostic Error**: If the diagnostic transaction itself encounters an error or rolls back, `/send` remains strictly forbidden. The coordinator logs the diagnostic failure and retries diagnostic recording on the next cycle; there is zero fallback to dispatch.
 
-#### 8. Deterministic Replay & Idempotency (P04-ARCH-R20-002)
-- Replay uses existing Descriptors A and B with deterministic `diagnostic_fingerprint`.
+#### 8. Deterministic Replay & Idempotency (P04-ARCH-R20-002, P04-ARCH-R21-002)
+- Replay uses existing Descriptors A and B incorporating `conflict_source` and deterministic `diagnostic_fingerprint`.
 - On lost response, caller re-reads `review_integrity_holds` and `audit_events`.
 - Exact duplicate returns idempotent success without inserting duplicate holds or events.
 - Semantic mismatch fails closed.
@@ -237,17 +287,22 @@ If any workspace binding guard fails (guards 12-14 or binding lineage/identity m
 #### 9. Governed Terminal Resolution & Retry Rules (P04-ARCH-R20-002)
 - Recreating or backfilling workspace bindings for an existing `DISPATCH_BOUND` attempt is strictly prohibited.
 - Resolving the integrity hold does NOT restore send permission for the same attempt.
-- A verified human operator (`LENGTH(TRIM(resolved_by_principal)) > 0`) must first terminalize the exact attempt via transition `tasks`: `DISPATCHED -> FAILED` with `task_attempts.recovery_disposition = 'WORKSPACE_BINDING_INTEGRITY_FAILURE'`.
-- Only after the attempt is terminalized may the operator resolve the integrity hold (`review_integrity_holds.hold_state: ACTIVE -> RESOLVED`).
+- A verified human operator (`LENGTH(TRIM(resolved_by_principal)) > 0`) must first terminalize the exact attempt via D12 atomic terminal transition:
+  * Update `tasks`: CAS `state = 'FAILED'` where `task_id = ? AND state = 'DISPATCHED'`.
+  * Update `task_attempts`: `ended_at = now`, `recovery_disposition = 'WORKSPACE_BINDING_INTEGRITY_FAILURE'` where `attempt_id = ? AND ended_at IS NULL`.
+  * Append `TASK_STATE_TRANSITION` audit event in the same transaction.
+- Only after the attempt is terminalized may the operator resolve the integrity hold in a separate follow-up transaction (`review_integrity_holds.hold_state: ACTIVE -> RESOLVED`, appending `REVIEW_INTEGRITY_HOLD_RESOLVED`). A crash between the two transactions leaves the task `FAILED` and hold `ACTIVE`, which is completely safe and resumable.
 - Subsequent task execution requires a fresh retry creating a new `TaskAttempt` and a new `attempt_workspace_bindings` row.
-- If `VERIFIED_OPERATOR_PRINCIPAL` is absent, the system remains fail-closed; fake principals cannot resolve holds.
+- If `VERIFIED_OPERATOR_PRINCIPAL` is absent, the system remains fail-closed; fake principals cannot resolve holds. `LENGTH(TRIM(principal))` is only data validation, not proof of authentication.
 
-#### 10. Planned Falsification Tests (P04-ARCH-R20-001)
+#### 10. Planned Falsification Tests (P04-ARCH-R20-001, P04-ARCH-R21-001)
 - Rename worktree root between validation and `SEND_REQUESTED` rejected by OS (`ERROR_SHARING_VIOLATION` or `ACCESS_DENIED` due to held handle without `FILE_SHARE_DELETE`) or guard fails.
-- Junction/hardlink/path alias does not change physical identity (`FileIdInfo` remains identical).
+- Directory substitution probes (junction points, directory symlinks, `subst` virtual drives, directory renames, path-alias redirections): verified that physical identity (`FileIdInfo`) cannot be forged across directory swaps. (Note: directory hardlinks are unsupported by NTFS).
 - Daemon restart invalidates old capability (in-memory capability wiped; prior handle invalid).
 - Reacquire same identity PASS; different VolumeSerialNumber/FileIdInfo FAIL.
-- Fake snapshot without live lease grants no `/send` right.
+- Fake snapshot without live lease grants no `/send` right: Store can use snapshot in unit tests for data lineage, but effect gate strictly rejects dispatch and call count to AO remains zero.
+- Lease `Close()` or `Revalidate()` failure forbids `SEND_REQUESTED` and `/send`.
+- All callers and recovery paths must go through the same coordinator effect gate.
 - Lease always closed on success, failure, cancellation, and panic-safe cleanup.
 
 #### 11. Report Intake Transaction A (Subtask P04A)
@@ -552,8 +607,9 @@ The verification runner never executes directly inside the worker's mutable work
 | Verification process attempts file modification | Read-only ACLs on snapshot directory | OS rejects write with `ACCESS_DENIED` | `REPORT_READY` (Process fails) |
 | Worker touches worktree during verification | Verification runs in isolated snapshot dir | Worker mutations have zero effect on verification | Independent verification proceeds |
 | Crash before commit of Bound Dispatch Tx | SQLite transaction atomicity | Entire transaction rolls back; zero orphan attempt, operation, binding, or audit event | `READY` (Preserved) |
-| Crash after commit of Bound Dispatch Tx | Recovery scanner / Replay validation | `DISPATCH_BOUND` operation and `ACTIVE` binding coexist; recovery reopens canonical paths and revalidates exact `VolumeSerialNumber` and `FileIdInfo` before proceeding | `DISPATCHED` (Recoverable) |
-| Binding guard failure / missing / mismatched / `INVALIDATED` / physical identity mismatch | `RecordSendRequested` 14-guard evaluation fails | Strictly forbids `SEND_REQUESTED` and `/send`; task remains `DISPATCHED`, operation `DISPATCH_BOUND`, attempt open; separate atomic diagnostic transaction appends `REVIEW_INTEGRITY_CONFLICT` (with exact attempted reason literal), inserts `ACTIVE` hold (`INVARIANT_MISMATCH`), and CAS invalidates binding to `INVALIDATED` | `DISPATCHED` (Fail-Closed Hold; attempt open) |
+| Crash after commit of Bound Dispatch Tx | Recovery scanner / Replay validation | `DISPATCH_BOUND` operation and `ACTIVE` binding coexist; recovery reopens canonical paths and revalidates exact `VolumeSerialNumber` and `FileIdInfo` by acquiring fresh lease before proceeding | `DISPATCHED` (Recoverable) |
+| Binding guard failure / missing / mismatched / `INVALIDATED` / physical identity mismatch (Variant B) | `RecordSendRequested` 14-guard evaluation fails | Strictly forbids `SEND_REQUESTED` and `/send`; task remains `DISPATCHED`, operation `DISPATCH_BOUND`, attempt open; separate atomic diagnostic transaction appends `REVIEW_INTEGRITY_CONFLICT` (`conflict_source = 'WORKSPACE_BINDING_GUARD'`, `dispatch_operation_id`, exact attempted reason literal, `colliding_event_id` absent), inserts `ACTIVE` hold (`INVARIANT_MISMATCH`), and CAS invalidates binding to `INVALIDATED` | `DISPATCHED` (Fail-Closed Hold; attempt open; binding `INVALIDATED`) |
+| Audit event ID semantic collision (Variant A) | `AppendAuditEvent` duplicate key collision semantic mismatch | Append `REVIEW_INTEGRITY_CONFLICT` (`conflict_source = 'AUDIT_EVENT_ID_COLLISION'`, `colliding_event_id`, `attempted_event_type`, semantic mismatch fields) and insert `ACTIVE` hold (`INVARIANT_MISMATCH`); strictly does NOT mutate workspace bindings | Current State Preserved (Fail-Closed Hold; zero binding mutation) |
 | Guard rejection before diagnostic commit | In-memory guard check | In-memory guard halts execution; `/send` forbidden; task remains `DISPATCHED`, operation `DISPATCH_BOUND`; diagnostic transaction initiated | `DISPATCHED` (Diagnostic Pending) |
 | Diagnostic transaction rollback | SQLite transaction rollback | `/send` remains strictly forbidden (fail-closed); task remains `DISPATCHED`, operation `DISPATCH_BOUND`; coordinator retries diagnostic on next scan | `DISPATCHED` (Fail-Closed Hold) |
 | Lost diagnostic response | Idempotent readback comparison | Replay with identical fingerprint reads back persisted `review_integrity_holds` and `audit_events`; returns idempotent success without duplicate rows | `DISPATCHED` (Fail-Closed Hold Preserved) |
@@ -568,9 +624,9 @@ The verification runner never executes directly inside the worker's mutable work
 
 ## 7. Pipeline Transactions, Fencing & Content-Addressed Store
 
-### 7.1. Model 1 Persistence Ownership Discipline (P04-ARCH-R16-001, P04-ARCH-R20-001, P04-ARCH-R20-002)
+### 7.1. Model 1 Persistence Ownership Discipline (P04-ARCH-R16-001, P04-ARCH-R20-001, P04-ARCH-R20-002, P04-ARCH-R21-001, P04-ARCH-R21-002, P04-ARCH-R21-003)
 To preserve architectural boundaries and prevent concurrency bugs:
-- **Subtask P04A**: Sole persistence owner of Schema Migration v6 (`attempt_workspace_bindings`, `worker_claims`, `review_integrity_holds`), the controlled extension of the `PrepareBoundDispatch` store seam (combining bound dispatch allocation with workspace binding creation from immutable `WorkspaceBindingSnapshot` into a single atomic transaction), pre-send revalidation comparison in `RecordSendRequested`, pre-send atomic diagnostic transactions (`REVIEW_INTEGRITY_CONFLICT` with four attempted_reason literals + active hold insert + binding invalidation CAS), Transaction A (report intake), and intake failure diagnostic transactions (`EVIDENCE_COLLECTION_FAILED` + active hold insert). Owns shared hold creation primitives and Descriptors A and B. Implements behavior tests for dirty intake, replay, occurrence increment, rollback atomicity across transaction fault points, pre-send rejection guards, and planned falsification tests (worktree rename rejection via OS sharing violation, junction identity invariance, restart capability invalidation, reacquire verification, fake snapshot rejection, panic-safe cleanup). Completing P04A does NOT open runtime admission for Phase P04; the chain P04A -> P04B -> P04C -> P04D is strictly preserved.
+- **Subtask P04A**: Sole persistence owner of Schema Migration v6 (`attempt_workspace_bindings`, `worker_claims`, `review_integrity_holds`), the controlled extension of the `PrepareBoundDispatch` store seam (combining bound dispatch allocation with workspace binding creation from immutable `WorkspaceBindingSnapshot` into a single atomic transaction), pre-send revalidation comparison in `RecordSendRequested`, single coordinator effect gate alignment (`Coordinator.Dispatch` in `internal/dispatch/coordinator.go` holding live lease across the 9-step sequence), pre-send atomic diagnostic transactions (`REVIEW_INTEGRITY_CONFLICT` Variant B with four attempted_reason literals + active hold insert + binding invalidation CAS), Transaction A (report intake), and intake failure diagnostic transactions (`EVIDENCE_COLLECTION_FAILED` + active hold insert). Owns shared hold creation primitives and Descriptors A and B (with `conflict_source`). Implements behavior tests for dirty intake, replay, occurrence increment, rollback atomicity across transaction fault points, pre-send rejection guards, and planned falsification tests (worktree rename rejection via OS sharing violation, directory substitution probes via junctions/symlinks/subst/rename, restart capability invalidation, reacquire verification, fake snapshot rejection, panic-safe cleanup). Completing P04A does NOT open runtime admission for Phase P04; the chain P04A -> P04B -> P04C -> P04D is strictly preserved.
 - **Subtask P04B**: Pure in-memory Git evidence collection; returns `GitEvidenceResult` in memory; ZERO SQLite writes, ZERO audit event appends, ZERO hold mutations.
 - **Subtask P04C**: Pure in-memory verification runner; returns `TestEvidenceResult` and artifact streams in memory; ZERO SQLite writes, ZERO audit event appends, ZERO hold mutations.
 - **Subtask P04D**: Sole persistence owner of Schema Migration v9 (`task_verification_leases`, `evidence_sets`, `review_artifacts`, `review_bundles`), Content-Addressed Store, lease lifecycle, Transaction B, Transaction C, and ReviewBundle synthesis. Owns diagnostic hold creation arising from Tx B/Tx C failures (`REVIEW_INTEGRITY_CONFLICT`), hold resolution orchestration (`REVIEW_INTEGRITY_HOLD_RESOLVED`, Descriptor C), and startup recovery scanning for active holds before opening runtime admission. Reuses the identical `review_integrity_holds` schema and store API created by P04A without duplicate DDL.
@@ -1044,21 +1100,48 @@ Because the canonical `audit_events` schema lacks a dedicated `idempotency_key` 
        ```
        `hold_id = "hold-" + SHA256(RFC8785_JCS(hold_identity_descriptor))`
      * **Descriptor B: `rejection_event_identity_descriptor`** (for rejection `event_id`):
+       Descriptor B deterministically incorporates the standard discriminator `conflict_source` and the exact variant fields:
+
+       *Variant A (`AUDIT_EVENT_ID_COLLISION`)*:
        ```json
        {
          "attempt_id": "<attempt_id>",
+         "attempted_event_type": "<attempted_event_type>",
+         "colliding_event_id": "<colliding_event_id>",
+         "conflict_source": "AUDIT_EVENT_ID_COLLISION",
+         "conflict_type": "<PAYLOAD_MISMATCH|LINEAGE_MISMATCH>",
          "contract_id": "<contract_id>",
          "diagnostic_fingerprint": "<64_hex_hash>",
-         "event_type": "<event_type>",
+         "event_type": "REVIEW_INTEGRITY_CONFLICT",
          "hold_id": "<hold_id_from_descriptor_a>",
          "occurrence_number": 1,
          "pair_id": "<pair_id>",
-         "reason": "<reason>",
          "sanitized_input_fingerprint": "<64_hex_hash>",
          "task_id": "<task_id>",
-         "version": 1
+         "version": 2
        }
        ```
+
+       *Variant B (`WORKSPACE_BINDING_GUARD`)*:
+       ```json
+       {
+         "attempt_id": "<attempt_id>",
+         "attempted_reason": "<WORKSPACE_BINDING_MISSING|WORKSPACE_BINDING_LINEAGE_MISMATCH|WORKSPACE_BINDING_NOT_ACTIVE|WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH>",
+         "conflict_source": "WORKSPACE_BINDING_GUARD",
+         "conflict_type": "LINEAGE_MISMATCH",
+         "contract_id": "<contract_id>",
+         "diagnostic_fingerprint": "<64_hex_hash>",
+         "dispatch_operation_id": "<dispatch_operation_id>",
+         "event_type": "REVIEW_INTEGRITY_CONFLICT",
+         "hold_id": "<hold_id_from_descriptor_a>",
+         "occurrence_number": 1,
+         "pair_id": "<pair_id>",
+         "sanitized_input_fingerprint": "<64_hex_hash>",
+         "task_id": "<task_id>",
+         "version": 2
+       }
+       ```
+       *(Note: in Variant B, `colliding_event_id` is strictly ABSENT; no dummy sentinels are created).*
        `rejection_event_id = SHA256(RFC8785_JCS(rejection_event_identity_descriptor))`
      * **Descriptor C: `resolution_event_identity_descriptor`** (for resolution `event_id`):
        ```json
@@ -1098,18 +1181,37 @@ Because the canonical `audit_events` schema lacks a dedicated `idempotency_key` 
        7. Canonical `details_json` payload.
      * **Ignored Volatile / Chain Fields**: Explicitly ignore only `sequence`, `timestamp`, `prev_hash`, and `event_hash`.
      * **Exact Match -> Idempotent Success**: If all 7 semantic fields match, return existing audit record without inserting a duplicate.
-     * **Mismatch -> Audit Integrity Conflict**: If any semantic field or lineage differs (e.g. `pair_id` mismatch or modified payload), fail closed! Do NOT overwrite or reuse the colliding `event_id`. Initiate an atomic diagnostic transaction:
-       a. Derive a NEW distinct `hold_id` and `event_id` via Descriptor A and B using `event_type = 'REVIEW_INTEGRITY_CONFLICT'`, referencing the colliding event ID and mismatch details in `sanitized_input_fingerprint`.
-       b. Append `REVIEW_INTEGRITY_CONFLICT` to `audit_events` (`actor = 'ai-supervisor-daemon'`, `details_json.actor_role = 'SUPERVISOR'`).
-       c. Insert an `ACTIVE` hold into `review_integrity_holds` with `hold_reason = 'INVARIANT_MISMATCH'`.
+     * **Mismatch -> Audit Integrity Conflict (Variant A: `AUDIT_EVENT_ID_COLLISION`)**: If any semantic field or lineage differs (e.g. `pair_id` mismatch or modified payload), fail closed! Do NOT overwrite or reuse the colliding `event_id`. Initiate an atomic diagnostic transaction:
+       a. Derive a NEW distinct `hold_id` and `event_id` via Descriptor A and B using `conflict_source = 'AUDIT_EVENT_ID_COLLISION'`, referencing the colliding event ID and mismatch details in `sanitized_input_fingerprint`.
+       b. Append `REVIEW_INTEGRITY_CONFLICT` to `audit_events` (`actor = 'ai-supervisor-daemon'`, `details_json.actor_role = 'SUPERVISOR'`, `details_json.conflict_source = 'AUDIT_EVENT_ID_COLLISION'`, `details_json.colliding_event_id = '<colliding_event_id>'`, `details_json.attempted_event_type = '<attempted_type>'`).
+       c. Insert an `ACTIVE` hold into `review_integrity_holds` with `hold_reason = 'INVARIANT_MISMATCH'`. Strictly do NOT mutate `attempt_workspace_bindings`.
        d. Close admission and automated review approval for the attempt.
-4. **Formal Audit Event Registrations**:
+4. **Formal Audit Event Registrations (P04-ARCH-R21-002)**:
    - **`REVIEW_INTEGRITY_CONFLICT`**:
-     - *Producer*: Subtask P04A (Pre-Send / Report Intake) / Subtask P04D (Pipeline CAS Orchestrator).
+     - *Producer*: Subtask P04A (Pre-Send Workspace Binding Guard) / Subtask P04D (Pipeline CAS Orchestrator & Audit Collision).
      - *Actor Authority*: System supervisor daemon (`actor = 'ai-supervisor-daemon'`, `details_json.actor_role = 'SUPERVISOR'`).
      - *Lineage*: `pair_id`, `task_id`, `contract_id`, `attempt_id`.
-     - *Details Schema*: `colliding_event_id` (string), `attempted_event_type` (string), `attempted_reason` (string, using one of `WORKSPACE_BINDING_MISSING`, `WORKSPACE_BINDING_LINEAGE_MISMATCH`, `WORKSPACE_BINDING_NOT_ACTIVE`, `WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH`, or invariant details), `conflict_type` (`'PAYLOAD_MISMATCH'` | `'LINEAGE_MISMATCH'`), `sanitized_input_fingerprint` (64 hex), `diagnostic_fingerprint` (64 hex), `actor_role` (`'SUPERVISOR'`).
-     - *Transaction Boundary*: Atomic diagnostic transaction (distinct new `event_id` and `hold_id`, appends audit event first, then inserts ACTIVE hold into `review_integrity_holds`, and CAS invalidates active binding).
+     - *Discriminator*: `details_json.conflict_source` (`'AUDIT_EVENT_ID_COLLISION'` vs `'WORKSPACE_BINDING_GUARD'`).
+     - *Details Schema (Variant A: `AUDIT_EVENT_ID_COLLISION`)*:
+       * `conflict_source`: `'AUDIT_EVENT_ID_COLLISION'`
+       * `colliding_event_id`: string (the pre-existing colliding event ID)
+       * `attempted_event_type`: string (the event type attempted to be appended)
+       * `conflict_type`: `'PAYLOAD_MISMATCH'` | `'LINEAGE_MISMATCH'`
+       * `sanitized_input_fingerprint`: 64-character lowercase hex string
+       * `diagnostic_fingerprint`: 64-character lowercase hex string
+       * `actor_role`: `'SUPERVISOR'`
+       * *Transaction Boundary*: Atomic diagnostic transaction appending audit event and inserting `ACTIVE` hold into `review_integrity_holds`. Strictly does NOT touch `attempt_workspace_bindings`.
+     - *Details Schema (Variant B: `WORKSPACE_BINDING_GUARD`)*:
+       * `conflict_source`: `'WORKSPACE_BINDING_GUARD'`
+       * `dispatch_operation_id`: string
+       * `attempted_reason`: one of `WORKSPACE_BINDING_MISSING`, `WORKSPACE_BINDING_LINEAGE_MISMATCH`, `WORKSPACE_BINDING_NOT_ACTIVE`, `WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH`
+       * `conflict_type`: `'LINEAGE_MISMATCH'`
+       * `sanitized_input_fingerprint`: 64-character lowercase hex string
+       * `diagnostic_fingerprint`: 64-character lowercase hex string
+       * `actor_role`: `'SUPERVISOR'`
+       * `colliding_event_id`: **STRICTLY ABSENT** (omitted from JSON; zero dummy sentinels)
+       * *Transaction Boundary*: Atomic diagnostic transaction appending audit event, inserting `ACTIVE` hold into `review_integrity_holds`, and conditionally CAS invalidating `attempt_workspace_bindings` (`binding_state = 'INVALIDATED'`, `released_at_epoch_ms = now`) if an active row exists.
+     - *Pipeline Isolation Invariant*: P04D pipeline conflicts (such as review bundle synthesis or audit collisions) must NEVER CAS workspace binding just because they share the event type `REVIEW_INTEGRITY_CONFLICT`.
    - **`REVIEW_INTEGRITY_HOLD_RESOLVED`**:
      - *Producer*: Operator Reconciliation Tool.
      - *Actor Authority*: Authenticated Human Operator Principal (`actor = verified resolved_by_principal`, `details_json.actor_role = 'OPERATOR'`). While `VERIFIED_OPERATOR_PRINCIPAL = OPEN_FAIL_CLOSED_DEPENDENCY`, runtime resolution fails closed; test/fake principals cannot resolve holds.
@@ -1121,18 +1223,31 @@ Because the canonical `audit_events` schema lacks a dedicated `idempotency_key` 
 
 ## 9. Conclusion & Next Steps
 
-PROPOSAL-P04-001 Revision 21 fully resolves findings `P04-ARCH-R20-001` and `P04-ARCH-R20-002`:
-1. **Trusted Workspace Identity Capability (`WorkspaceBindingAuthority`)**: Formalizes host-boundary lease acquisition (`WorkspaceBindingAuthority.Acquire -> WorkspaceBindingLease`), providing `Snapshot()`, `Revalidate()`, and idempotent `Close()`. Enforces Windows handle anti-rename semantics (`CreateFileW` with `FILE_READ_ATTRIBUTES` and `FILE_FLAG_BACKUP_SEMANTICS`, omitting `FILE_SHARE_DELETE` to block directory rename/delete by any process), queries canonical path and 128-bit `FILE_ID_INFO` directly from handle, enforces handle lifetime across the effect window, defines restart recovery via durable path reopening and exact volume serial / file ID match, and establishes strict host/store layering (Store never calls Win32).
-2. **Comprehensive Pre-Send Guards & Failure Semantics**: Fully enumerates all 14 mandatory guards in `RecordSendRequested`, establishes four standardized literals (`WORKSPACE_BINDING_MISSING`, `WORKSPACE_BINDING_LINEAGE_MISMATCH`, `WORKSPACE_BINDING_NOT_ACTIVE`, `WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH`), and specifies an atomic diagnostic transaction (appending `REVIEW_INTEGRITY_CONFLICT`, inserting `ACTIVE` hold into `review_integrity_holds`, and CAS invalidating `attempt_workspace_bindings` to `INVALIDATED` while preserving Task `DISPATCHED`, operation `DISPATCH_BOUND`, attempt open).
-3. **Governed Terminal Resolution & Retry Rules**: Prohibits recreating/backfilling bindings for existing attempts. Requires a verified operator to terminalize the attempt via `DISPATCHED -> FAILED` (`recovery_disposition = 'WORKSPACE_BINDING_INTEGRITY_FAILURE'`) before resolving the integrity hold. Subsequent retry creates a new `TaskAttempt` and a new binding.
-4. **Deterministic Replay & Expanded Crash Matrix**: Documents complete failure recovery semantics across all lifecycle stages.
-5. **Preserves Model 1 Persistence & Phasing Invariants**: P04A owns Schema v6 and Store dispatch seam extension; P04B/C remain pure in-memory; P04D owns Schema v9 and review synthesis; sequence P04A -> P04B -> P04C -> P04D strictly preserved.
+PROPOSAL-P04-001 Revision 22 fully resolves findings `P04-ARCH-R21-001`, `P04-ARCH-R21-002`, and `P04-ARCH-R21-003`:
+1. **Live Lease Binding to Effect Authority & Coordinator Effect Gate (`P04-ARCH-R21-001`)**:
+   - Differentiates immutable data snapshot (`WorkspaceBindingSnapshot`) used strictly by Store for SQL lineage/CAS from the active OS capability (`WorkspaceBindingLease`) holding open Win32 handles (`CreateFileW` with `FILE_READ_ATTRIBUTES | FILE_FLAG_BACKUP_SEMANTICS`, omitting `FILE_SHARE_DELETE`).
+   - Defines a single coordinator effect gate (`Coordinator.Dispatch` in `internal/dispatch/coordinator.go`) that exclusively owns the AO `DispatchTaskContract(ctx, sessionID, message)` boundary.
+   - Enforces the 9-step sequence in the same call frame: acquire live lease -> extract snapshot -> commit `PrepareBoundDispatch` with snapshot -> observe fresh `GetWorkerStatus` -> revalidate live lease (`lease.Revalidate()`) against durable binding -> commit `RecordSendRequested` via pure DB guards -> call AO `/send` while lease remains open -> commit confirmed/containment -> close lease in `defer`.
+   - Prohibits invoking `/send` with snapshot only; recovery acquires a fresh lease; replaces directory hardlink citations with valid NTFS substitution probes.
+2. **Variant Discrimination for `REVIEW_INTEGRITY_CONFLICT` (`P04-ARCH-R21-002`)**:
+   - Introduces standard discriminator `conflict_source`: `'AUDIT_EVENT_ID_COLLISION'` vs `'WORKSPACE_BINDING_GUARD'`.
+   - Variant A (`AUDIT_EVENT_ID_COLLISION`): requires `colliding_event_id`, `attempted_event_type`, semantic mismatch fields; zero binding mutation.
+   - Variant B (`WORKSPACE_BINDING_GUARD`): requires `dispatch_operation_id`, standardized `attempted_reason` (4 literals); `colliding_event_id` is strictly ABSENT; CAS invalidates binding to `INVALIDATED`.
+   - Formulates Descriptor B for deterministic replay; guarantees P04D pipeline conflicts never mutate workspace bindings.
+3. **Canonical P03 Schema Alignment for Restore and Provisioning Guards (`P04-ARCH-R21-003`)**:
+   - Guard 9: `NOT EXISTS (SELECT 1 FROM pair_restore_operations WHERE pair_id = ? AND resolution_state <> 'RESTORE_RESOLVED')`.
+   - Guard 10: `NOT EXISTS (SELECT 1 FROM pair_provisioning_operations WHERE pair_id = ? AND stage IN ('PROVISION_REQUESTED','PROVISION_FAILED'))`.
+   - Completely eradicates non-existent `status` column and `PENDING`/`IN_FLIGHT` descriptions.
+4. **Governed Terminal Resolution & Retry Rules**:
+   - Preserves atomic D12 terminal transition (`tasks`: `DISPATCHED -> FAILED`, `task_attempts`: `ended_at = now`, `recovery_disposition = 'WORKSPACE_BINDING_INTEGRITY_FAILURE'`, appending `TASK_STATE_TRANSITION` audit in same transaction).
+   - Hold resolution is a separate transaction after terminalization.
+   - `LENGTH(TRIM(principal))` is only data validation; fails closed without `VERIFIED_OPERATOR_PRINCIPAL`.
 
 Following External Supervisor review:
-1. `DRAFT-ADR-018` is aligned to Revision 21.
+1. `DRAFT-ADR-018` is aligned to Revision 22.
 2. `PROPOSAL-P04-002` remains approved as design baseline at Revision 9.
-3. `PLAN-P04-EVIDENCE-REVIEW` is updated to Revision 21.
-4. Active gate transitions to `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_20` pending External Supervisor decision audit.
+3. `PLAN-P04-EVIDENCE-REVIEW` is updated to Revision 22.
+4. Active gate transitions to `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_21` pending External Supervisor decision audit.
 
 ---
 
@@ -1142,9 +1257,9 @@ The following matrix documents the architectural resolution, concrete mechanism,
 
 | Design Blocker ID | Normative Section | Concrete Architectural Mechanism | Falsification Test | Remaining External Dependency | Proposed Audit Disposition |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `DESIGN_BLOCKER_P04_WORKTREE_BINDING` | `PROPOSAL-P04-001` §3.1, §3.2; `DRAFT-ADR-018` Decision 1 | `WorkspaceBindingAuthority.Acquire` at host boundary returning `WorkspaceBindingLease` (`Snapshot()`, `Revalidate()`, `Close()`); `CreateFileW` with `FILE_READ_ATTRIBUTES` and `FILE_FLAG_BACKUP_SEMANTICS`, omitting `FILE_SHARE_DELETE` to block rename/delete; Win32 128-bit `FILE_ID_INFO` queried from handle; Bound Dispatch + Workspace Binding Transaction (unified atomic `PrepareBoundDispatch` seam extension and `attempt_workspace_bindings` in Schema v6 owned by P04A); 14 mandatory pre-send guards in `RecordSendRequested`; four `attempted_reason` literals; atomic diagnostic transaction (`REVIEW_INTEGRITY_CONFLICT`, `ACTIVE` hold, binding `INVALIDATED`); governed operator terminalization before hold resolution; immutable CAS state transitions (`ACTIVE` -> `RETAINED_FOR_VERIFICATION` -> `RELEASED`/`INVALIDATED`). | `SQL_MODEL_PROBE_VERIFIED: PASS` (SQLite triggers abort unauthorized modification of binding identity via `trg_attempt_workspace_bindings_cas_guard`; combined transaction and rollback atomicity verified). `PLANNED_CONTRACT_ACCEPTANCE_TEST (UNEXECUTED_PENDING_IMPLEMENTATION)`: Worktree directory rename rejection probe via Win32 sharing violation; junction/hardlink swap probe; restart capability invalidation and reacquire verification probe. | Win32 API filesystem handle support at runtime daemon integration. | `READY_FOR_EXTERNAL_APPROVAL` |
+| `DESIGN_BLOCKER_P04_WORKTREE_BINDING` | `PROPOSAL-P04-001` §3.1, §3.2; `DRAFT-ADR-018` Decision 1 | `WorkspaceBindingAuthority.Acquire` at host boundary returning `WorkspaceBindingLease` (`Snapshot()`, `Revalidate()`, `Close()`); `CreateFileW` with `FILE_READ_ATTRIBUTES` and `FILE_FLAG_BACKUP_SEMANTICS`, omitting `FILE_SHARE_DELETE` to block rename/delete; Win32 128-bit `FILE_ID_INFO` queried from handle; Bound Dispatch + Workspace Binding Transaction (unified atomic `PrepareBoundDispatch` seam extension and `attempt_workspace_bindings` in Schema v6 owned by P04A); single coordinator effect gate (`Coordinator.Dispatch`, 9-step sequence); 14 mandatory pre-send guards in `RecordSendRequested` (exact P03 SQL predicates for restore and provisioning); four `attempted_reason` literals; atomic diagnostic transaction (`REVIEW_INTEGRITY_CONFLICT` Variant B, `ACTIVE` hold, binding `INVALIDATED`); governed operator terminalization before hold resolution; immutable CAS state transitions (`ACTIVE` -> `RETAINED_FOR_VERIFICATION` -> `RELEASED`/`INVALIDATED`). | `SQL_MODEL_PROBE_VERIFIED: PASS` (SQLite triggers abort unauthorized modification of binding identity via `trg_attempt_workspace_bindings_cas_guard`; combined transaction and rollback atomicity verified). `PLANNED_CONTRACT_ACCEPTANCE_TEST (UNEXECUTED_PENDING_IMPLEMENTATION)`: Worktree directory rename rejection probe via Win32 sharing violation; directory substitution probes via junctions/symlinks/subst/rename; restart capability invalidation and reacquire verification probe; fake snapshot without live lease effect gate rejection probe. | Win32 API filesystem handle support at runtime daemon integration. | `READY_FOR_EXTERNAL_APPROVAL` |
 | `DESIGN_BLOCKER_P04_GIT_EVIDENCE_AUTHORITY` | `PROPOSAL-P04-001` §4.1, §4.2; `DRAFT-ADR-018` Decision 2 | Hardened in-memory Git collector (Subtask P04B, zero SQLite writes); strict clean worktree/index verification; 10-command allowlist with `-z` null-byte parsing; dirty worktree triggers atomic diagnostic transaction recording `EVIDENCE_COLLECTION_FAILED` and inserting `review_integrity_holds` without transitioning `TaskState` to `BLOCKED`. | `DESIGN_CONSISTENCY_VERIFIED`. `PLANNED_CONTRACT_ACCEPTANCE_TEST (UNEXECUTED_PENDING_IMPLEMENTATION)`: Dirty worktree injection test (staged, unstaged, untracked changes); command injection via shell metacharacters probe (disallowed by argv slice execution). | Subtask P04B implementation against Git binary CLI on host. | `READY_FOR_EXTERNAL_APPROVAL` |
 | `DESIGN_BLOCKER_P04_VERIFICATION_ISOLATION` | `PROPOSAL-P04-001` §5.1, §5.2; `DRAFT-ADR-018` Decision 3 | Windows AppContainer sandboxing (`CreateProcessW` with `STARTUPINFOEXW`, explicit `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` for stdio only, `PROC_THREAD_ATTRIBUTE_JOB_LIST` for atomic Job Object assignment without `BREAKAWAY_OK`, `KILL_ON_JOB_CLOSE`, and network restriction SID). | `DESIGN_CONSISTENCY_VERIFIED`. `PLANNED_CONTRACT_ACCEPTANCE_TEST (UNEXECUTED_PENDING_IMPLEMENTATION)`: Subprocess breakaway attempt test; network socket bind probe (fails with access denied); parent daemon kill test (child terminates authoritatively via Job Object). | Windows 10/11 / Server OS runtime host capability. | `READY_FOR_EXTERNAL_APPROVAL` |
 | `DESIGN_BLOCKER_P04_REVIEW_SCHEMA_RECONCILIATION` | `PROPOSAL-P04-001` §3.2, §7.3, §7.4; `DRAFT-ADR-018` Decision 1 & 6 | Schema v6 (`attempt_workspace_bindings`, `worker_claims`, `review_integrity_holds`) owned by Subtask P04A; Schema v9 (`task_verification_leases`, `evidence_sets`, `review_artifacts`, `review_bundles`) owned by Subtask P04D; composite foreign keys enforcing task, attempt, and contract lineage; RFC 8785 JCS canonicalization. | `SQL_MODEL_PROBE_VERIFIED: PASS` (Foreign key violation probes with `foreign_keys = ON`; schema migration compilation tests `v0 -> v6 -> v9` and `v6 -> v9`). `PLANNED_CONTRACT_ACCEPTANCE_TEST (UNEXECUTED_PENDING_IMPLEMENTATION)`: JSON schema validation test against `review-bundle.schema.json`. | Task Contract release for Subtasks P04A and P04D. | `READY_FOR_EXTERNAL_APPROVAL` |
-| `DESIGN_BLOCKER_P04_EVIDENCE_ATOMICITY` | `PROPOSAL-P04-001` §7.1, §7.2, §8; `DRAFT-ADR-018` Decision 5 & 6 | Strict Model 1 persistence ownership; P04A owns Schema v6, bound dispatch seam extension, Tx A, and intake diagnostic tx; P04D owns Schema v9, leases, Tx B (evidence commit), Tx C (bundle CAS compilation), and hold resolution; P04B/C are pure in-memory (zero SQLite writes); two-step descriptor hold derivation (`P04-ARCH-R15-001`); atomic CAS resolution with zero orphan audit events (`P04-ARCH-R15-002`); single transaction owner per audit event. | `SQL_MODEL_PROBE_VERIFIED: PASS` (Schema v6/v9 DDL, partial unique index, CAS triggers, single-owner transaction isolation). `PLANNED_CONTRACT_ACCEPTANCE_TEST (UNEXECUTED_PENDING_IMPLEMENTATION)`: SQLite rollback probe on simulated disk/lease failure; concurrent operator resolution race probe; zero orphan audit events probe on lost CAS races. | Subtask P04D SQLite CAS store implementation. | `READY_FOR_EXTERNAL_APPROVAL` |
+| `DESIGN_BLOCKER_P04_EVIDENCE_ATOMICITY` | `PROPOSAL-P04-001` §7.1, §7.2, §8; `DRAFT-ADR-018` Decision 5 & 6 | Strict Model 1 persistence ownership; P04A owns Schema v6, bound dispatch seam extension, Tx A, and intake diagnostic tx; P04D owns Schema v9, leases, Tx B (evidence commit), Tx C (bundle CAS compilation), and hold resolution; P04B/C are pure in-memory (zero SQLite writes); two-step descriptor hold derivation (`P04-ARCH-R15-001`); variant discrimination for `REVIEW_INTEGRITY_CONFLICT` (`P04-ARCH-R21-002`); atomic CAS resolution with zero orphan audit events (`P04-ARCH-R15-002`); single transaction owner per audit event. | `SQL_MODEL_PROBE_VERIFIED: PASS` (Schema v6/v9 DDL, partial unique index, CAS triggers, single-owner transaction isolation). `PLANNED_CONTRACT_ACCEPTANCE_TEST (UNEXECUTED_PENDING_IMPLEMENTATION)`: SQLite rollback probe on simulated disk/lease failure; concurrent operator resolution race probe; zero orphan audit events probe on lost CAS races. | Subtask P04D SQLite CAS store implementation. | `READY_FOR_EXTERNAL_APPROVAL` |
 | `DESIGN_BLOCKER_P04_INERT_AO_HARNESS` | `PROPOSAL-P04-001` §6.1, §6.2; `DRAFT-ADR-018` Decision 4 | Inert fake AO adapter harness for verification pipeline testing; synthetic session endpoints returning deterministic JSON fixtures without spawning live processes; live AO integration held in unverified evidence track; `AUTOMATIC_RESTORE = DISABLED`. | `DESIGN_CONSISTENCY_VERIFIED`. `PLANNED_CONTRACT_ACCEPTANCE_TEST (UNEXECUTED_PENDING_IMPLEMENTATION)`: Integration test suite runs in fully disconnected / offline environment with zero network calls and zero live AO processes spawned. | Subtask P04D test harness execution. | `READY_FOR_EXTERNAL_APPROVAL` |
