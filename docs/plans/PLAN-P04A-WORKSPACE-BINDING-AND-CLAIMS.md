@@ -31,7 +31,7 @@ Subtask P04A constitutes the foundational bridge between dispatch lifecycle coor
 3. **Controlled Extension of PrepareBoundDispatch**: Combines bound dispatch allocation, workspace binding creation, and audit recording into a single, indivisible SQLite ACID transaction with guaranteed zero-orphan rollback semantics.
 4. **Single Coordinator Effect Gate Across Dispatch**: Coordinates `Coordinator.Dispatch` to acquire a live `WorkspaceBindingLease`, maintain the open handles across fresh AO status revalidation, execute pure DB pre-send checks across all 14 guards, and issue `/send` while the lease remains actively held.
 5. **Pre-Send Diagnostic Variant B Transaction**: On binding guard or lease failure, isolates the failure without modifying task state (`DISPATCHED`) or dispatch stage (`DISPATCH_BOUND`), atomically recording `REVIEW_INTEGRITY_CONFLICT` (Variant B: `conflict_source = 'WORKSPACE_BINDING_GUARD'`, `colliding_event_id` strictly absent) and an `ACTIVE` hold (`INVARIANT_MISMATCH`).
-6. **Report Intake & Cleanliness Ingestion (Transaction A)**: Defines the typed `GitEvidenceResult` interface seam for report intake. Ingests verbatim worker reports into `worker_claims`, advances task state to `REPORT_READY`, and, upon receiving a dirty worktree result, rolls back Transaction A, preserves `RUNNING`, appends `EVIDENCE_COLLECTION_FAILED`, and inserts an `ACTIVE` hold (`DIRTY_WORKTREE_DETECTED`) using canonical Descriptors A and B.
+6. **Report Intake & Cleanliness Ingestion (Transaction A)**: Defines the typed `GitEvidenceResult` interface seam for report intake. Canonicalizes and maps `WorkerReport` fields into `worker_claims` (`payload_json`) with verbatim `reported_head_sha`, advances task state to `REPORT_READY`, and, upon receiving a dirty worktree result, rolls back Transaction A, preserves `RUNNING`, appends `EVIDENCE_COLLECTION_FAILED`, and inserts an `ACTIVE` hold (`DIRTY_WORKTREE_DETECTED`) using canonical Descriptors A and B.
 
 ### 1.1. Strict Architectural Boundaries
 
@@ -436,13 +436,12 @@ If any workspace binding guard fails:
 
 ### 3.5. Report Intake, Typed Seam & Hold Lifecycle (`internal/store/report_intake_transactions.go`)
 
-#### 3.5.1. Typed Interface Seam (Finding P04A-C1-002)
+#### 3.5.1. Typed Interface Seam (Findings P04A-C1-002, P04A-R1-001)
 - Subtask P04A defines only the data structures and interface for `GitEvidenceResult`:
   ```go
   type GitEvidenceResult struct {
       IsClean            bool
       UncommittedFiles   []string
-      ReportedHeadSHA    string
       ActualHeadSHA      string
       ActualBaseSHA      string
       ChangedFiles       []string
@@ -450,16 +449,28 @@ If any workspace binding guard fails:
       DiagnosticError    string
   }
   ```
+- **Zero-Trust Separation of Claim and Evidence**:
+  * `ReportedHeadSHA` is strictly removed from `GitEvidenceResult`.
+  * `WorkerReport.head_sha` is the SOLE authoritative source for `worker_claims.reported_head_sha` and is preserved verbatim.
+  * `GitEvidenceResult` strictly conveys independent evidence collected by Subtask P04B (`ActualHeadSHA`, `ActualBaseSHA`, cleanliness, and diff details).
+  * Subtask P04A strictly does NOT write `ActualHeadSHA` into `worker_claims`.
+  * Behavior tests explicitly exercise cases where `reported_head_sha != actual_head_sha` to prove the two sources remain independent without mutual overwrite.
 - Subtask P04A does NOT run Git commands directly. In P04A behavior tests, clean and dirty results are supplied via test fakes (`test/fakes/git_evidence_fake.go`). Real Git execution (`git status -z`, `git diff-index HEAD`, allowlist enforcement) is deferred to Subtask P04B.
 
 #### 3.5.2. Transaction A (Successful Intake)
 Executed atomically when `GitEvidenceResult.IsClean` is true:
-1. Validates worker report structure against `worker-report.schema.json`.
-2. Normalizes JSON payload via RFC 8785 JSON Canonicalization Scheme (JCS).
-3. Inserts verbatim `worker_claims` row (`reported_head_sha` validated to 7..40 hex characters, `payload_json` validated with JSON shape checks, `created_at_epoch_ms`).
-4. CAS updates `attempt_workspace_bindings`: `ACTIVE` -> `RETAINED_FOR_VERIFICATION`.
-5. CAS updates `tasks.state`: `RUNNING` -> `REPORT_READY`.
-6. Commits transaction. (Note: zero unapproved audit literals; `WORKER_REPORT_INGESTED` is strictly forbidden per Finding `P04A-C1-005`).
+1. Validates worker report structure against `docs/schemas/worker-report.schema.json`.
+2. Executes canonical field mapping from `WorkerReport` into `worker_claims`:
+   - `WorkerReport.head_sha` -> `reported_head_sha` (validated 7..40 lowercase hex, stored verbatim).
+   - `WorkerReport.files_changed` -> `payload_json.claimed_files_changed` (array).
+   - `WorkerReport.tests` -> `payload_json.tests` (array).
+   - `WorkerReport.worker_claims` -> `payload_json.textual_claims` (array).
+   - `WorkerReport.build_status` -> `payload_json.build_status` (string).
+3. Normalizes and canonicalizes `payload_json` via RFC 8785 JSON Canonicalization Scheme (JCS).
+4. Inserts `worker_claims` row (`claim_id`, `task_id`, `attempt_id`, `contract_id`, `reported_head_sha`, `payload_json`, `created_at_epoch_ms`).
+5. CAS updates `attempt_workspace_bindings`: `ACTIVE` -> `RETAINED_FOR_VERIFICATION`.
+6. CAS updates `tasks.state`: `RUNNING` -> `REPORT_READY`.
+7. Commits transaction. (Note: zero unapproved audit event literals; all audit event literals must exist in accepted ADRs).
 
 #### 3.5.3. Dirty Intake Diagnostic Transaction & Hold Replay (Finding P04A-C1-003)
 If `GitEvidenceResult.IsClean` is false:
@@ -507,7 +518,71 @@ If `GitEvidenceResult.IsClean` is false:
 
 ---
 
-## 4. Verification Policy & Host Catalog Specification (Finding P04A-C1-004)
+### 3.6. Caller Impact Matrix, Scope Closure & Daemon Restart Recovery (Finding P04A-R1-003)
+
+#### 3.6.1. Caller Impact Matrix
+To guarantee that no API pathway or caller can allocate an attempt or issue `/send` without an active, verified workspace binding, all callers of `PrepareBoundDispatch`, `RecordSendRequested`, and `dispatch.Coordinator` are cataloged and reconciled:
+
+| Function / Seam | Affected File | Caller Role / Impact | Remediation & Scope Allocation |
+|---|---|---|---|
+| `PrepareBoundDispatch` | `internal/store/dispatch.go` | Seam Definition | Extends transaction to accept `WorkspaceBindingSnapshot` and insert `attempt_workspace_bindings` (ACTIVE) atomically. (In `allowed_scope`). |
+| `PrepareBoundDispatch` | `internal/dispatch/coordinator.go` | Coordinator Effect Gate | Calls `PrepareBoundDispatch` with live lease snapshot during 9-step dispatch sequence. (In `allowed_scope`). |
+| `PrepareBoundDispatch` | `internal/dispatch/coordinator_test.go` | Dispatch Tests | Exercises atomic dispatch + workspace binding creation and rollback pathways. (In `allowed_scope`). |
+| `PrepareBoundDispatch` | `internal/store/session_lifecycle_test.go` | Store Lifecycle Tests | Updated to pass valid test workspace binding snapshot. (In `allowed_scope`). |
+| `PrepareBoundDispatch` | `internal/store/session_lifecycle_remediation_test.go` | Remediation Tests | Updated to pass valid test workspace binding snapshot. (In `allowed_scope`). |
+| `PrepareBoundDispatch` | `internal/store/atomic_transitions_test.go` | Atomic Tests | Updated to pass valid test workspace binding snapshot. (In `allowed_scope`). |
+| `PrepareBoundDispatch` | `internal/store/dispatch_test.go` | Dispatch Seam Tests | Updated to pass valid test workspace binding snapshot. (In `allowed_scope`). |
+| `PrepareBoundDispatch` | `internal/recovery/scanner_test.go` | Recovery Test Helper | `seedBoundExecution` helper updated to supply valid test workspace binding snapshot, cascading to all recovery tests. (In `allowed_scope`). |
+| `RecordSendRequested` | `internal/store/dispatch_transactions.go` | Seam Definition | Enforces 14 pre-send guards including Guard 12 (active binding) and Guard 14 (zero active holds). (In `allowed_scope`). |
+| `RecordSendRequested` | `internal/dispatch/coordinator.go` | Coordinator Pre-Send | Commits send intent only after live lease revalidation passes. (In `allowed_scope`). |
+| `RecordSendRequested` | `internal/store/dispatch_transactions_test.go` | Transaction Tests | Exercises Guard 12 and Guard 14 validation and rejection. (In `allowed_scope`). |
+| `RecordSendRequested` | `internal/store/stop_transactions_test.go` | Stop Invariant Tests | Indirectly satisfied via bound dispatch fixtures with active binding. (In `allowed_scope`). |
+| `RecordSendRequested` | `internal/store/restore_transactions_test.go` | Restore Tests | Indirectly satisfied via bound dispatch fixtures with active binding. (In `allowed_scope`). |
+| `RecordSendRequested` | `internal/store/recovery_transactions_test.go` | Recovery Store Tests | Indirectly satisfied via bound dispatch fixtures with active binding. (In `allowed_scope`). |
+| `RecordSendRequested` | `internal/recovery/scanner.go` | Recovery Scanner | Evaluates in-flight recovery executions; fail-closed without reacquired binding. (In `allowed_scope`). |
+| `RecordSendRequested` | `internal/recovery/timeout_monitor_test.go` | Monitor Tests | Seeds executions via `seedBoundExecution` (in `allowed_scope` via `scanner_test.go`). |
+| `RecordSendRequested` | `internal/recovery/poller_test.go` | Poller Tests | Seeds executions via `seedBoundExecution` (in `allowed_scope` via `scanner_test.go`). |
+| `RecordSendRequested` | `internal/recovery/integration_test.go` | Integration Tests | Seeds executions via `seedBoundExecution` (in `allowed_scope` via `scanner_test.go`). |
+| `Coordinator` Construction | `internal/dispatch/coordinator.go` | Struct Definition | Injects `WorkspaceBindingAuthority` domain interface. (In `allowed_scope`). |
+| `Coordinator` Construction | `internal/dispatch/coordinator_test.go` | Unit Tests | Injects mock/fake `WorkspaceBindingAuthority`. (In `allowed_scope`). |
+| `Coordinator` Construction | `test/integration/ao_harness_test.go` | Full Harness Test | Injects test `WorkspaceBindingAuthority`. (In `allowed_scope`). |
+
+#### 3.6.2. Elimination of Unprotected Dispatch Pathways
+- All legacy and unbound dispatch entrypoints (`PrepareDispatch`, unbound `CreateDispatchOperation`) are strictly disabled.
+- Zero public APIs permit allocating a `TaskAttempt` or transitioning a task to `DISPATCHED` without committing an `ACTIVE` `attempt_workspace_bindings` row.
+- Any attempt to invoke `RecordSendRequested` without an existing active binding is rejected by pure DB Guard 12 (`ErrQuarantinedExecution`).
+
+#### 3.6.3. Daemon Restart Recovery (`internal/recovery/scanner.go`)
+- **Capability Invalidation**: Daemon restart invalidates all in-memory capability leases; all previous OS handles are closed by the operating system.
+- **Reacquire Authority**: When the daemon startup scanner sweeps in-flight dispatches, neither a prior handle token nor a standalone database row grants effect authority.
+- **Physical Identity Matching**: The recovery scanner must call `authority.Reacquire(ctx, snapshot)` to open fresh directory handles for both the worktree root and linked gitdir.
+- The scanner compares the newly acquired physical identity (`VolumeSerialNumber` and `FileIdInfo`) with the durable identity recorded in `attempt_workspace_bindings`:
+  * **Identical Identity**: `Reacquire` passes; the dispatch evaluation may safely continue.
+  * **Identity Mismatch or Failure**: If directory substitution occurred (e.g. junction swap, rename, directory deleted, missing, or volume serial mismatch), the scanner strictly fails closed. Zero `/send` calls are permitted. The binding is CAS-transitioned to `INVALIDATED`, a diagnostic hold `INVARIANT_MISMATCH` is inserted, and the attempt is escalated to human required/operator failure.
+- **Behavior Tests in `internal/recovery/scanner_test.go`**:
+  * Test daemon restart capability invalidation.
+  * Test exact reacquire PASS when physical directory is unchanged.
+  * Test directory substitution / identity mismatch FAIL resulting in fail-closed zero effect.
+
+#### 3.6.4. Narrow Domain Authority Interface
+To prevent circular package dependencies (`internal/host` -> `internal/recovery` -> `internal/host`), the authority contract is defined in `internal/domain/workspace_binding.go`:
+```go
+type WorkspaceBindingAuthority interface {
+    Acquire(ctx context.Context, config WorkspaceConfig) (WorkspaceBindingLease, error)
+    Reacquire(ctx context.Context, snapshot WorkspaceBindingSnapshot) (WorkspaceBindingLease, error)
+}
+
+type WorkspaceBindingLease interface {
+    Snapshot() WorkspaceBindingSnapshot
+    Revalidate() error
+    Close() error
+}
+```
+Both `internal/dispatch` and `internal/recovery` consume this narrow interface from `internal/domain`, while `internal/host` implements it.
+
+---
+
+## 4. Verification Policy & Host Catalog Specification (Findings P04A-C1-004, P04A-R1-002)
 
 `worker_profile: "antigravity-standard"` is restricted strictly to worker harness execution.
 All verification requests must declare `profile_id: "go-test-p04-001"`.
@@ -527,10 +602,12 @@ Outside the immutable JSON contract, the Supervisor host environment defines the
       "package": {
         "type": "string",
         "enum": [
+          "./...",
           "./internal/domain/...",
           "./internal/host/...",
           "./internal/store/...",
-          "./internal/dispatch/..."
+          "./internal/dispatch/...",
+          "./internal/recovery/..."
         ]
       },
       "flags": {
@@ -556,9 +633,9 @@ The implementation must pass validation through `TaskContractValidator.ValidateR
 
 ---
 
-## 5. Scope Boundaries & File Allocations
+## 5. Scope Boundaries & File Allocations (Finding P04A-R1-003)
 
-### 5.1. Explicit Allowed Scope (25 Files)
+### 5.1. Explicit Allowed Scope (32 Files)
 - `internal/domain/workspace_binding.go`
 - `internal/domain/workspace_binding_test.go`
 - `internal/domain/worker_claim.go`
@@ -581,14 +658,25 @@ The implementation must pass validation through `TaskContractValidator.ValidateR
 - `internal/store/workspace_binding_test.go`
 - `internal/store/report_intake_transactions.go`
 - `internal/store/report_intake_test.go`
+- `internal/store/session_lifecycle_test.go`
+- `internal/store/session_lifecycle_remediation_test.go`
+- `internal/store/atomic_transitions_test.go`
+- `internal/store/dispatch_test.go`
 - `internal/dispatch/coordinator.go`
 - `internal/dispatch/coordinator_test.go`
+- `internal/recovery/scanner.go`
+- `internal/recovery/scanner_test.go`
 - `test/fakes/git_evidence_fake.go`
+- `test/integration/ao_harness_test.go`
 
-### 5.2. Explicit Forbidden Scope
+### 5.2. Explicit Forbidden Scope (No Blanket Wildcards, Zero Overlap)
 - `cmd/supervisor/**` (Host daemon bootstrap & entrypoint admission control deferred)
 - `internal/ao/**` (Live AO client communication)
-- `internal/recovery/**` (Session lifecycle recovery core)
+- `internal/recovery/poller.go` (Poller lifecycle is isolated from P04A)
+- `internal/recovery/poller_test.go` (Poller tests isolated from P04A)
+- `internal/recovery/timeout_monitor.go` (Timeout monitor lifecycle is isolated from P04A)
+- `internal/recovery/timeout_monitor_test.go` (Timeout monitor tests isolated from P04A)
+- `internal/recovery/integration_test.go` (Recovery integration tests isolated from P04A)
 - `internal/stop/**` (Quiescence stop coordinator)
 - `docs/adr/**` (Accepted ADRs are immutable)
 - `docs/audits/**` (Audit records are immutable)

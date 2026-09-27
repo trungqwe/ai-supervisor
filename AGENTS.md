@@ -140,10 +140,11 @@ This document establishes immutable operational directives for all AI coding age
      * Re-Audit 021 Record: `docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_021.md` (`EXTERNAL_AUDIT_APPROVED`)
    - Merge Integration Audit Record: `docs/audits/P04_CANONICAL_RECONCILIATION_MERGE_INTEGRATION_AUDIT.md` (`PASS`, commit `db6b654f03a7ce3c8e6ae2cd180f2cb7236bf7c2`).
    - P04A Contract Planning External Audit 001 Record: `docs/audits/P04_TASK_001_CONTRACT_PLANNING_EXTERNAL_AUDIT_001.md` (`REVISION_REQUIRED`, audited commit `80b997c89d57280286c63599c1c539161b31b5eb`).
-   - P04A Draft Findings: `P04A-C1-001`, `P04A-C1-002`, `P04A-C1-003`, `P04A-C1-004`, and `P04A-C1-005` = `OPEN_PENDING_EXTERNAL_REAUDIT`.
+   - P04A Contract Planning External Re-Audit 001 Record: `docs/audits/P04_TASK_001_CONTRACT_PLANNING_EXTERNAL_REAUDIT_001.md` (`REVISION_REQUIRED`, baseline commit `351164dc063394b6ca3dfa4e430d7c9697c68eff`).
+   - P04A Findings Status: `P04A-C1-001 = CLOSED`, `P04A-C1-002 = CLOSED`, `P04A-C1-003 = CLOSED`, `P04A-C1-004 = CLOSED`, `P04A-C1-005 = CLOSED`; `P04A-R1-001 = OPEN_PENDING_EXTERNAL_REAUDIT`, `P04A-R1-002 = OPEN_PENDING_EXTERNAL_REAUDIT`, `P04A-R1-003 = OPEN_PENDING_EXTERNAL_REAUDIT`.
    - `DRAFT_P04A = REVISION_REQUIRED`.
    - `TASK_P04A_TASK_CONTRACT = NOT_RELEASED`.
-   - Next Approved Action: Remediation submitted for findings `P04A-C1-001..005` in `docs/plans/PLAN-P04A-WORKSPACE-BINDING-AND-CLAIMS.md` and `docs/tasks/DRAFT_TASK_CONTRACT_P04_001.md`; awaiting External Supervisor re-audit. Zero Go production code permitted.
+   - Next Approved Action: Remediation submitted for findings `P04A-C1-005` and `P04A-R1-001..003` in `docs/plans/PLAN-P04A-WORKSPACE-BINDING-AND-CLAIMS.md` and `docs/tasks/DRAFT_TASK_CONTRACT_P04_001.md`; awaiting External Supervisor re-audit. Zero Go production code permitted.
    - Maintain strict fail-closed dependencies: `AUTOMATIC_RESTORE = DISABLED`; operator restore and linked stop remain disabled until verified operator principal reaches trusted boundary (`VERIFIED_OPERATOR_PRINCIPAL = OPEN_FAIL_CLOSED_DEPENDENCY`).
    - Stage B runtime catalog is deferred: `STAGE_B_RUNTIME_CATALOG = DEFERRED_TO_P04_RUNTIME_INTEGRATION`.
    - Candidate WIP artifact preserved externally in `D:\TU_CODE\ai-supervisor-user-wip-recovery\P03-EXIT-R2-001`; never restore, overwrite, or touch.
