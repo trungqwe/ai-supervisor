@@ -1,18 +1,15 @@
-# ADR-018: Evidence & Review Engine Architecture, Execution Isolation, and Verification Governance (DRAFT HISTORY)
+# ADR-018: Evidence & Review Engine Architecture, Execution Isolation, and Verification Governance
 
-> **Status**: `SUPERSEDED_BY_ACCEPTED_ADR_018`
-> **Canonical Accepted ADR**: [`docs/adr/ADR-018-evidence-review-and-verification-isolation.md`](ADR-018-evidence-review-and-verification-isolation.md)
-> **Approved Commit**: `9c53ac3ee82a7035d458b1abe15f7a6bc315987d`
-> **Decision Record**: [`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_021.md`](../audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_021.md)
+> **Status**: `ACCEPTED` (Audited Commit: `9c53ac3ee82a7035d458b1abe15f7a6bc315987d`, Decision: [`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_021.md`](../audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_021.md))
+> **Authority**: `docs/24_CHANGE_GOVERNANCE.md` (Level 2 Approved ADR)
 > **Date**: 2026-09-27
-> **Historical Draft Revision**: 22
-> **Preservation Baseline Commit**: `6e1993da150031a9465901a7019c71257de44312` (Revision 11)
+> **Approved Baseline Commit**: `9c53ac3ee82a7035d458b1abe15f7a6bc315987d`
 > **Active Gate**: `P04_CANONICAL_RECONCILIATION_PLANNING`
 > **Deciders**: AI Engineering Supervisor Architecture Council, External Supervisor
 > **Related Architecture**: `docs/04_ARCHITECTURE.md` (Section 7), `docs/05_DOMAIN_MODEL.md`, `docs/10_REVIEW_BUNDLE.md`
 > **Related Requirements**: `docs/02_REQUIREMENTS.md` (FR-008, NFR-008 via PROPOSAL-P04-002 Revision 9)
-> **Superseded By**: `ADR-018-evidence-review-and-verification-isolation.md` (Accepted 2026-09-27)
-> **External Audit Tracking**: Remediates Findings `P04-ARCH-R21-001`, `P04-ARCH-R21-002`, and `P04-ARCH-R21-003` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_020.md`), approved in `docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_021.md`.
+> **Supersedes**: `docs/adr/DRAFT-ADR-018-evidence-review-and-verification-isolation.md` (Revisions 1–22)
+> **Approval Tracking**: Approved by External Supervisor in `docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_021.md` (`ADR_018 = EXTERNAL_APPROVED`, `ADR_018_ACCEPTANCE = GRANTED`).
 ---
 
 ## 1. Context and Problem Statement

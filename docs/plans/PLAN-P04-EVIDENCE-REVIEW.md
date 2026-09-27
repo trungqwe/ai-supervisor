@@ -2,15 +2,15 @@
 
 > **Plan ID**: `PLAN-P04-EVIDENCE-REVIEW`
 > **Revision**: 22
-> **Status**: `PLANNING_PENDING_EXTERNAL_AUDIT (REVISION 22)`
+> **Status**: `EXTERNAL_APPROVED_FOR_CANONICAL_RECONCILIATION`
 > **Date**: 2026-09-27
-> **Audited Baseline**: `64ff30a9d228303cd3da92e006cbe3e8a7e216b4`
-> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_21`
+> **Audited Baseline**: `9c53ac3ee82a7035d458b1abe15f7a6bc315987d`
+> **Active Gate**: `P04_CANONICAL_RECONCILIATION_PLANNING`
 > **Deciders**: AI Engineering Supervisor Architecture Council, External Supervisor
 > **Related Architecture**: `docs/04_ARCHITECTURE.md` (Section 7), `docs/05_DOMAIN_MODEL.md`, `docs/10_REVIEW_BUNDLE.md`
 > **Related Requirements**: `docs/02_REQUIREMENTS.md` (FR-008, NFR-008 via PROPOSAL-P04-002 Revision 9)
 > **Supersedes**: `PLAN-P04-EVIDENCE-REVIEW` Revision 21
-> **External Audit Tracking**: Remediates Findings `P04-ARCH-R21-001`, `P04-ARCH-R21-002`, and `P04-ARCH-R21-003` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_020.md`).
+> **Approval Tracking**: Approved by External Supervisor in [`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_021.md`](../audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_021.md) (`PLAN_P04_EVIDENCE_REVIEW = EXTERNAL_APPROVED`).
 
 ---
 
@@ -23,10 +23,10 @@ Phase P04 implements the **Evidence & Review Engine**, providing independent, ta
 ```mermaid
 flowchart TD
     subgraph PreExecution [Pre-Execution / Governance]
-        ADR18[DRAFT-ADR-018 Revision 22]
-        PROP1[PROPOSAL-P04-001 Revision 22]
-        PROP2[PROPOSAL-P04-002 Revision 9]
-        Audit020[External Re-Audit 020]
+        ADR18[ADR-018 Accepted]
+        PROP1[PROPOSAL-P04-001 Approved]
+        PROP2[PROPOSAL-P04-002 Revision 9 Baseline]
+        Audit021[External Re-Audit 021]
     end
 
     subgraph P04A [Subtask P04A: Seam, Clean Intake & Workspace Binding Authority]

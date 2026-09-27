@@ -4,16 +4,16 @@
 > **Revision**: 22
 > **Title**: Evidence & Review Engine Architecture, Execution Isolation, and Verification Governance
 > **Author**: AI Engineering Supervisor Team
-> **Status**: `PENDING_EXTERNAL_REVIEW (REVISION 22)`
+> **Status**: `EXTERNAL_APPROVED`
 > **Date**: 2026-09-27
-> **Audited Baseline**: `64ff30a9d228303cd3da92e006cbe3e8a7e216b4`
+> **Audited Baseline**: `9c53ac3ee82a7035d458b1abe15f7a6bc315987d`
 > **Preservation Baseline Commit**: `6e1993da150031a9465901a7019c71257de44312` (Revision 11)
-> **Active Gate**: `P04_PRECONTRACT_ARCHITECTURE_REMEDIATION_21`
+> **Active Gate**: `P04_CANONICAL_RECONCILIATION_PLANNING`
 > **Deciders**: AI Engineering Supervisor Architecture Council, External Supervisor
 > **Related Architecture**: `docs/04_ARCHITECTURE.md` (Section 7), `docs/05_DOMAIN_MODEL.md`, `docs/10_REVIEW_BUNDLE.md`
 > **Related Requirements**: `docs/02_REQUIREMENTS.md` (FR-008, NFR-008 via PROPOSAL-P04-002 Revision 9)
 > **Supersedes**: `PROPOSAL-P04-001` Revision 21
-> **External Audit Tracking**: Remediates Findings `P04-ARCH-R21-001`, `P04-ARCH-R21-002`, and `P04-ARCH-R21-003` (`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_020.md`), building upon partially closed `P04-ARCH-R20-001` and `P04-ARCH-R20-002`.
+> **Approval Tracking**: Approved by External Supervisor in [`docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_021.md`](../audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_021.md) (`PROPOSAL_P04_001 = EXTERNAL_APPROVED`).
 
 ## 1. Context and Problem Statement
 
