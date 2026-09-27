@@ -5,7 +5,7 @@
 > **Target Task Contract**: `CONTRACT-TASK-P04-001-02` (Revision 2 of `TASK_CONTRACT_P04_001.md`)
 > **Active Gate**: `TASK_P04A_IMPLEMENTATION_REMEDIATION`
 > **Authority**: `docs/24_CHANGE_GOVERNANCE.md` (Level 3 Canonical Architecture / Level 6 Task Contract Governance)
-> **Status**: `PROPOSED` (Revision 2, Awaiting External Supervisor Audit & Approval)
+> **Status**: `EXTERNAL_APPROVED_FOR_CANDIDATE_FORMULATION` (Design Re-Audit 001)
 > **Base SHA**: `db6b654f03a7ce3c8e6ae2cd180f2cb7236bf7c2`
 > **Affected Files**:
 > - `docs/tasks/DRAFT_TASK_CONTRACT_P04_001_REVISION_2.md`
@@ -121,7 +121,8 @@ Handling of `WorkspaceBindingLease.Close()` errors is strictly partitioned acros
     //go:embed worker_report_schema.json
     var workerReportSchemaBytes []byte
     ```
-  - Validation compiles and validates raw JSON against this embedded schema using the repository Draft-07 engine (`github.com/google/jsonschema-go` or `internal/contract.CompileSchema`).
+  - **Single Runtime Validation Seam**: Runtime validation must strictly use `internal/contract.CompileSchema` and `internal/contract.ParseAndValidateRaw`. Direct imports or usage of `github.com/google/jsonschema-go` within `internal/store` are prohibited. No disjunctive or parallel validator choices are permitted.
+  - Schema compilation may be cached using `sync.Once`; initialization or compilation failure must fail closed immediately.
   - Parallel hand-written validation functions operating as independent authority are strictly prohibited.
 - **Parity Verification Test**:
   - Test suite must include an automated parity test comparing `internal/store/worker_report_schema.json` with `docs/schemas/worker-report.schema.json`, asserting 100% byte-exact identity or SHA-256 hash match.

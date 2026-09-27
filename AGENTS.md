@@ -150,6 +150,7 @@ This document establishes immutable operational directives for all AI coding age
    - P04A External Audit 001 Record: `docs/audits/P04_TASK_001_EXTERNAL_AUDIT_001.md` (`REVISION_REQUIRED`, audited commit `ffde8c6ff903cfa49b8dab2db18dc70216752b5d`).
    - P04A External Re-Audit 001 Record: `docs/audits/P04_TASK_001_EXTERNAL_REAUDIT_001.md` (`REVISION_REQUIRED`, audited commit `b955fc40ef3cc66a5ea456dc4a7c13262c9229d6`).
    - P04A Revision 2 Design Audit 001 Record: `docs/audits/P04_TASK_001_REVISION_2_DESIGN_AUDIT_001.md` (`REVISION_REQUIRED`, audited commit `f066e501182ffb6a1d18d07512e41b85ae036502`).
+   - P04A Revision 2 Design Re-Audit 001 Record: `docs/audits/P04_TASK_001_REVISION_2_DESIGN_REAUDIT_001.md` (`EXTERNAL_APPROVED_FOR_CANDIDATE_FORMULATION`, audited commit `c74ea2927ab1638830017cce4bfdbf99eb499cd0`).
    - P04A Findings Status:
      * `P04A-I1-001 = CLOSED_WITH_APPEND_ONLY_ERRATUM_LIMITATION`
      * `P04A-I1-002 = CLOSED`
@@ -162,25 +163,29 @@ This document establishes immutable operational directives for all AI coding age
      * `P04A-I2-002 = HIGH (OPEN)` (WorkerReport schema admission bypass via exported struct API)
      * `P04A-I2-003 = HIGH (OPEN)` (AC-P04A-07 symlink probe unverified on unheld Windows privileges)
      * `REPORT-DISCREPANCY-001 = MEDIUM (OPEN)` (Inaccurate implementation report claims regarding BEL bytes and schema fields)
-     * `P04A-REV2-D1-001 = REMEDIATED_AT_DESIGN_LEVEL` (Embedded canonical schema mirror `internal/store/worker_report_schema.json` + byte parity test)
-     * `P04A-REV2-D1-002 = REMEDIATED_AT_DESIGN_LEVEL` (Symlink probe skip leaves criteria UNVERIFIED and forces BLOCKED / not ready for review)
-     * `P04A-REV2-D1-003 = REMEDIATED_AT_DESIGN_LEVEL` (Intake API signature reconciled to `taskID, contractID, attemptID`; private helper)
-     * `P04A-REV2-D1-004 = REMEDIATED_AT_DESIGN_LEVEL` (Differentiated lease close error semantics: scanner vs pre-effect vs post-effect)
-     * `P04A-REV2-D1-005 = REMEDIATED_AT_DESIGN_LEVEL` (Governance drift corrected to 7 forbidden entries/patterns; finding mapping aligned)
+     * `P04A-REV2-D1-001 = CLOSED_AT_DESIGN_LEVEL` (Embedded canonical schema mirror `internal/store/worker_report_schema.json`, locked runtime validation seam to `internal/contract.CompileSchema` and `ParseAndValidateRaw`, fail-closed compilation, byte parity test)
+     * `P04A-REV2-D1-002 = CLOSED_AT_DESIGN_LEVEL` (Symlink probe skip leaves criteria UNVERIFIED and forces BLOCKED / not ready for review)
+     * `P04A-REV2-D1-003 = CLOSED_AT_DESIGN_LEVEL` (Intake API signature reconciled to `taskID, contractID, attemptID`; private helper)
+     * `P04A-REV2-D1-004 = CLOSED_AT_DESIGN_LEVEL` (Differentiated lease close error semantics: scanner vs pre-effect vs post-effect)
+     * `P04A-REV2-D1-005 = CLOSED` (Governance drift corrected to 7 forbidden entries/patterns; finding mapping aligned)
    - Released Contract: `docs/tasks/TASK_CONTRACT_P04_001.md` (`CONTRACT-TASK-P04-001-01`, `RELEASED`, under remediation).
-   - Proposed Seam Remediation Proposal: `docs/proposals/PROPOSAL-P04-003-p04a-recovery-authority-seam-remediation.md` (`PROPOSED`, Revision 2).
-   - Proposed Task Contract Revision 2: `docs/tasks/DRAFT_TASK_CONTRACT_P04_001_REVISION_2.md` (`CONTRACT-TASK-P04-001-02`, status `NOT_RELEASED`, allowed_scope 41 files).
+   - Approved Seam Remediation Proposal: `docs/proposals/PROPOSAL-P04-003-p04a-recovery-authority-seam-remediation.md` (`EXTERNAL_APPROVED_FOR_CANDIDATE_FORMULATION`, Revision 2).
+   - Proposed Task Contract Revision 2: `docs/tasks/DRAFT_TASK_CONTRACT_P04_001_REVISION_2.md` (`CONTRACT-TASK-P04-001-02`, status `READY_FOR_RELEASE_AUDIT`, allowed_scope 41 files).
+   - Candidate Task Contract Revision 2: `docs/tasks/CANDIDATE_TASK_CONTRACT_P04_001_REVISION_2.md` (`CONTRACT-TASK-P04-001-02`, status `CANDIDATE_NOT_RELEASED`, allowed_scope 41 files).
+   - `PROPOSAL_P04_003 = EXTERNAL_APPROVED_FOR_CANDIDATE_FORMULATION`.
+   - `DRAFT_TASK_CONTRACT_P04_001_REVISION_2 = READY_FOR_RELEASE_AUDIT`.
+   - `CANDIDATE_TASK_CONTRACT_P04_001_REVISION_2 = CANDIDATE_NOT_RELEASED`.
    - `TASK_P04A_TASK_CONTRACT = RELEASED` (`CONTRACT-TASK-P04-001-01`).
    - `TASK_P04A_IMPLEMENTATION = REVISION_REQUIRED`.
-   - `TASK_P04A_REVISION_2 = DRAFT_PROPOSED` (`NOT_RELEASED`).
+   - `TASK_P04A_REVISION_2 = NOT_RELEASED`.
    - `P04_CODE = HELD_PENDING_P04A_CONTRACT_REVISION`.
-   - `ACTIVE_GATE = TASK_P04A_IMPLEMENTATION_REMEDIATION`.
+   - `ACTIVE_GATE = TASK_P04A_REVISION_2_RELEASE_AUDIT`.
    - `Merge Authority`: **WITHHELD** (Branch `codex/p04-001` must NOT be merged into `main`).
    - `TASK_P04B_TASK_CONTRACT = NOT_RELEASED`.
    - `TASK_P04C_TASK_CONTRACT = NOT_RELEASED`.
    - `TASK_P04D_TASK_CONTRACT = NOT_RELEASED`.
    - `P05_CODE = NOT_AUTHORIZED`.
-   - Next Approved Action: External Supervisor audit of `PROPOSAL-P04-003` (Revision 2) and `DRAFT_TASK_CONTRACT_P04_001_REVISION_2.md` (Revision 2, 41 files). Implementation remains strictly HELD (`P04_CODE = HELD_PENDING_P04A_CONTRACT_REVISION`). Zero Go production code permitted.
+   - Next Approved Action: External Supervisor candidate release audit of `docs/tasks/CANDIDATE_TASK_CONTRACT_P04_001_REVISION_2.md`. Implementation remains strictly HELD (`P04_CODE = HELD_PENDING_P04A_CONTRACT_REVISION`). Zero Go production code permitted.
    - Maintain strict fail-closed dependencies: `AUTOMATIC_RESTORE = DISABLED`; operator restore and linked stop remain disabled until verified operator principal reaches trusted boundary (`VERIFIED_OPERATOR_PRINCIPAL = OPEN_FAIL_CLOSED_DEPENDENCY`).
    - Stage B runtime catalog is deferred: `STAGE_B_RUNTIME_CATALOG = DEFERRED_TO_P04_RUNTIME_INTEGRATION`.
    - Candidate WIP artifact preserved externally in `D:\TU_CODE\ai-supervisor-user-wip-recovery\P03-EXIT-R2-001`; never restore, overwrite, or touch.
@@ -278,12 +283,16 @@ This document establishes immutable operational directives for all AI coding age
    - `P04A_EXTERNAL_AUDIT_001 = REVISION_REQUIRED` (`docs/audits/P04_TASK_001_EXTERNAL_AUDIT_001.md`)
    - `P04A_EXTERNAL_REAUDIT_001 = REVISION_REQUIRED` (`docs/audits/P04_TASK_001_EXTERNAL_REAUDIT_001.md`)
    - `P04A_REV2_DESIGN_AUDIT_001 = REVISION_REQUIRED` (`docs/audits/P04_TASK_001_REVISION_2_DESIGN_AUDIT_001.md`)
-   - `PROPOSAL_P04_003 = PROPOSED` (Revision 2, `docs/proposals/PROPOSAL-P04-003-p04a-recovery-authority-seam-remediation.md`)
-   - `DRAFT_TASK_CONTRACT_P04_001_REVISION_2 = DRAFT_PROPOSED` (Revision 2, allowed_scope 41 files, `docs/tasks/DRAFT_TASK_CONTRACT_P04_001_REVISION_2.md`)
-   - `TASK_P04A_REVISION_2 = DRAFT_PROPOSED` (`NOT_RELEASED`)
+   - `P04A_REV2_DESIGN_REAUDIT_001 = APPROVED_FOR_CANDIDATE_FORMULATION` (`docs/audits/P04_TASK_001_REVISION_2_DESIGN_REAUDIT_001.md`)
+   - `FINDINGS_P04A_REV2_D1_001_THROUGH_004 = CLOSED_AT_DESIGN_LEVEL`
+   - `FINDING_P04A_REV2_D1_005 = CLOSED`
+   - `PROPOSAL_P04_003 = EXTERNAL_APPROVED_FOR_CANDIDATE_FORMULATION` (Revision 2, `docs/proposals/PROPOSAL-P04-003-p04a-recovery-authority-seam-remediation.md`)
+   - `DRAFT_TASK_CONTRACT_P04_001_REVISION_2 = READY_FOR_RELEASE_AUDIT` (Revision 2, allowed_scope 41 files, `docs/tasks/DRAFT_TASK_CONTRACT_P04_001_REVISION_2.md`)
+   - `CANDIDATE_TASK_CONTRACT_P04_001_REVISION_2 = CANDIDATE_NOT_RELEASED` (Revision 2, allowed_scope 41 files, `docs/tasks/CANDIDATE_TASK_CONTRACT_P04_001_REVISION_2.md`)
+   - `TASK_P04A_REVISION_2 = NOT_RELEASED`
    - `TASK_P04A_IMPLEMENTATION = REVISION_REQUIRED`
    - `P04_CODE = HELD_PENDING_P04A_CONTRACT_REVISION`
-   - `ACTIVE_GATE = TASK_P04A_IMPLEMENTATION_REMEDIATION`
+   - `ACTIVE_GATE = TASK_P04A_REVISION_2_RELEASE_AUDIT`
    - `MERGE_AUTHORITY = WITHHELD`
    - `TASK_P04B_TASK_CONTRACT = NOT_RELEASED`
    - `TASK_P04C_TASK_CONTRACT = NOT_RELEASED`

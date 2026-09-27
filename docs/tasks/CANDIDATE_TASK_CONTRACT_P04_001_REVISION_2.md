@@ -1,4 +1,4 @@
-# DRAFT TASK CONTRACT: TASK-P04-001 (REVISION 2)
+# CANDIDATE TASK CONTRACT: TASK-P04-001 (REVISION 2)
 
 > **Contract ID**: CONTRACT-TASK-P04-001-02
 > **Task ID**: TASK-P04-001 (Workspace Binding Authority, Schema Migration v6, Seam Extension & Report Intake)
@@ -6,22 +6,21 @@
 > **Supersedes Contract ID**: CONTRACT-TASK-P04-001-01
 > **Phase ID**: P04
 > **Base SHA**: db6b654f03a7ce3c8e6ae2cd180f2cb7236bf7c2
-> **Status**: READY_FOR_RELEASE_AUDIT (Draft Revision 2, NOT_RELEASED)
-> **Authority**: Formulated pursuant to accepted [docs/adr/ADR-018-evidence-review-and-verification-isolation.md](../adr/ADR-018-evidence-review-and-verification-isolation.md), approved PROPOSAL-P04-001 (Revision 22), approved baseline PROPOSAL-P04-002 (Revision 9), approved PLAN-P04-EVIDENCE-REVIEW.md (Revision 22), approved subtask plan PLAN-P04A-WORKSPACE-BINDING-AND-CLAIMS.md, External Re-Audit 001 (docs/audits/P04_TASK_001_EXTERNAL_REAUDIT_001.md), Design Re-Audit 001 (docs/audits/P04_TASK_001_REVISION_2_DESIGN_REAUDIT_001.md), and approved [docs/proposals/PROPOSAL-P04-003-p04a-recovery-authority-seam-remediation.md](../proposals/PROPOSAL-P04-003-p04a-recovery-authority-seam-remediation.md) (Revision 2).
+> **Status**: CANDIDATE_NOT_RELEASED (Status invariant: NOT_RELEASED)
+> **Authority**: Formulated pursuant to accepted ADR-018 (ACCEPTED / Level 2 Canonical Specification), approved PROPOSAL-P04-001 (Revision 22), approved baseline PROPOSAL-P04-002 (Revision 9), approved PLAN-P04-EVIDENCE-REVIEW.md (Revision 22), approved subtask plan PLAN-P04A-WORKSPACE-BINDING-AND-CLAIMS.md, Design Re-Audit 001 (docs/audits/P04_TASK_001_REVISION_2_DESIGN_REAUDIT_001.md), and approved docs/proposals/PROPOSAL-P04-003-p04a-recovery-authority-seam-remediation.md (Revision 2).
+> **Governance Invariant**: Candidate contract submitted for External Supervisor release audit. Strictly NOT_RELEASED. Zero Go production code, zero migration scripts, and zero live AO calls authorized.
 > **Implementation Scope**: Authorized strictly within allowed_scope (41 files) on isolated implementation branch codex/p04-001 once formally released.
 > **Runtime Invariants**: AUTOMATIC_RESTORE = DISABLED; VERIFIED_OPERATOR_PRINCIPAL = OPEN_FAIL_CLOSED_DEPENDENCY; zero live AO calls; zero implementation of Subtasks P04B, P04C, or P04D; P04_CODE = HELD_PENDING_P04A_CONTRACT_REVISION; P05_CODE = NOT_AUTHORIZED.
 
 ---
 
-> [!IMPORTANT]
-> **GOVERNANCE STATUS: READY FOR RELEASE AUDIT (NOT RELEASED)**.
-> This document is the proposed Revision 2 Task Contract for TASK-P04-001 (Subtask P04A).
-> Implementation changes remain strictly **HELD** pending formal External Supervisor candidate release audit.
-> Base SHA remains pinned to `db6b654f03a7ce3c8e6ae2cd180f2cb7236bf7c2`.
-> Production code writing remains unauthorized until formal contract release (`P04_CODE = HELD_PENDING_P04A_CONTRACT_REVISION`).
-> Subtasks P04B, P04C, and P04D remain strictly **NOT_RELEASED**.
-> Phase P05 code remains strictly **NOT_AUTHORIZED**.
-> AUTOMATIC_RESTORE = DISABLED.
+> [!CRITICAL]
+> **GOVERNANCE STATUS: CANDIDATE ONLY / NOT_RELEASED**.
+> This document is a candidate task contract awaiting External Supervisor release audit.
+> It does **NOT** authorize production code execution or library implementation.
+> Production code writing remains strictly **HELD_PENDING_P04A_CONTRACT_REVISION**.
+> Status invariant remains strictly **NOT_RELEASED**.
+> Candidate contract does **NOT** self-claim Stage B runtime catalog or task release authorization.
 
 ## 1. Immutable TaskContract JSON
 
