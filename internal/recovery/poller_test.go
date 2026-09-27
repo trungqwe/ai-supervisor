@@ -110,7 +110,7 @@ func TestCompetingPollerObservationsProduceOneTransition(t *testing.T) {
 	ctx := context.Background()
 	s := newRecoveryStore(t)
 	session, generation, _ := seedBoundExecution(t, s, "pollrace")
-	if err := s.RecordSendRequested(ctx, "dispatch-pollrace", session, generation, "idle", false, "fixture", time.Now()); err != nil {
+	if err := s.RecordSendRequested(ctx, "dispatch-pollrace", session, generation, "idle", false, "fixture", time.Now(), testBindingSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordSendConfirmed(ctx, "dispatch-pollrace", "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
@@ -153,7 +153,7 @@ func TestPollerShutdownJoinsBlockedObservation(t *testing.T) {
 	ctx := context.Background()
 	s := newRecoveryStore(t)
 	session, generation, _ := seedBoundExecution(t, s, "shutdown")
-	if err := s.RecordSendRequested(ctx, "dispatch-shutdown", session, generation, "idle", false, "fixture", time.Now()); err != nil {
+	if err := s.RecordSendRequested(ctx, "dispatch-shutdown", session, generation, "idle", false, "fixture", time.Now(), testBindingSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordSendConfirmed(ctx, "dispatch-shutdown", "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
@@ -184,7 +184,7 @@ func TestDirectPollOnceOwnershipAndRepeatedRunBarrier(t *testing.T) {
 	ctx := context.Background()
 	s := newRecoveryStore(t)
 	session, generation, _ := seedBoundExecution(t, s, "direct-barrier")
-	if err := s.RecordSendRequested(ctx, "dispatch-direct-barrier", session, generation, "idle", false, "fixture", time.Now()); err != nil {
+	if err := s.RecordSendRequested(ctx, "dispatch-direct-barrier", session, generation, "idle", false, "fixture", time.Now(), testBindingSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordSendConfirmed(ctx, "dispatch-direct-barrier", "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
@@ -245,7 +245,7 @@ func TestPollerPreSendPendingAORecoveryWithoutRun(t *testing.T) {
 	s := newRecoveryStore(t)
 	session, generation, attempt := seedBoundExecution(t, s, "pre-poll")
 	o := &testObserver{err: errors.New("AO unavailable")}
-	r := &Runner{Store: s, AO: o, Host: &testHost{}, ActivityPollInterval: time.Second, ExecutionDeadline: time.Minute, Actor: "supervisor"}
+	r := &Runner{Store: s, AO: o, Host: &testHost{}, Authority: &fakeWorkspaceAuthority{}, ActivityPollInterval: time.Second, ExecutionDeadline: time.Minute, Actor: "supervisor"}
 	if report, err := r.Run(ctx); err != nil || !report.PendingAO {
 		t.Fatalf("startup pending: %+v %v", report, err)
 	}
@@ -344,7 +344,7 @@ func TestStopDrainsPublicTickAndCancellation(t *testing.T) {
 	ctx := context.Background()
 	s := newRecoveryStore(t)
 	session, generation, _ := seedBoundExecution(t, s, "public-stop")
-	if err := s.RecordSendRequested(ctx, "dispatch-public-stop", session, generation, "idle", false, "fixture", time.Now()); err != nil {
+	if err := s.RecordSendRequested(ctx, "dispatch-public-stop", session, generation, "idle", false, "fixture", time.Now(), testBindingSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordSendConfirmed(ctx, "dispatch-public-stop", "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {

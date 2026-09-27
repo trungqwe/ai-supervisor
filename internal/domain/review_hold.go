@@ -14,11 +14,11 @@ import (
 type HoldReason string
 
 const (
-	HoldReasonDirtyWorktreeDetected     HoldReason = "DIRTY_WORKTREE_DETECTED"
-	HoldReasonBundleHashConflict        HoldReason = "BUNDLE_HASH_CONFLICT"
-	HoldReasonInvariantMismatch         HoldReason = "INVARIANT_MISMATCH"
-	HoldReasonUnverifiedClaimDetected   HoldReason = "UNVERIFIED_CLAIM_DETECTED"
-	HoldReasonSecurityPolicyViolation   HoldReason = "SECURITY_POLICY_VIOLATION"
+	HoldReasonDirtyWorktreeDetected   HoldReason = "DIRTY_WORKTREE_DETECTED"
+	HoldReasonBundleHashConflict      HoldReason = "BUNDLE_HASH_CONFLICT"
+	HoldReasonInvariantMismatch       HoldReason = "INVARIANT_MISMATCH"
+	HoldReasonUnverifiedClaimDetected HoldReason = "UNVERIFIED_CLAIM_DETECTED"
+	HoldReasonSecurityPolicyViolation HoldReason = "SECURITY_POLICY_VIOLATION"
 )
 
 // HoldState represents whether a hold is currently active or has been resolved.
@@ -43,7 +43,7 @@ type ReviewIntegrityHold struct {
 	HoldState              HoldState  `json:"hold_state"`
 	DiagnosticFingerprint  string     `json:"diagnostic_fingerprint"`
 	OccurrenceNumber       int        `json:"occurrence_number"`
-	RejectionAuditEventID string     `json:"rejection_audit_event_id"`
+	RejectionAuditEventID  string     `json:"rejection_audit_event_id"`
 	ResolutionAuditEventID *string    `json:"resolution_audit_event_id,omitempty"`
 	ResolvedByPrincipal    *string    `json:"resolved_by_principal,omitempty"`
 	CreatedAtEpochMS       int64      `json:"created_at_epoch_ms"`
@@ -209,17 +209,17 @@ func DeriveRejectionEventIDVariantB(d RejectionEventDescriptorVariantB) (string,
 
 // ResolutionEventDescriptor defines Descriptor C for resolution audit events.
 type ResolutionEventDescriptor struct {
-	AttemptID                              string `json:"attempt_id"`
-	ContractID                             string `json:"contract_id"`
-	EventType                              string `json:"event_type"`
-	HoldID                                 string `json:"hold_id"`
-	Kind                                   string `json:"kind"`
-	OccurrenceNumber                       int    `json:"occurrence_number"`
-	PairID                                 string `json:"pair_id"`
-	ResolvedByPrincipal                    string `json:"resolved_by_principal"`
+	AttemptID                               string `json:"attempt_id"`
+	ContractID                              string `json:"contract_id"`
+	EventType                               string `json:"event_type"`
+	HoldID                                  string `json:"hold_id"`
+	Kind                                    string `json:"kind"`
+	OccurrenceNumber                        int    `json:"occurrence_number"`
+	PairID                                  string `json:"pair_id"`
+	ResolvedByPrincipal                     string `json:"resolved_by_principal"`
 	SanitizedResolutionRationaleFingerprint string `json:"sanitized_resolution_rationale_fingerprint"`
-	TaskID                                 string `json:"task_id"`
-	Version                                int    `json:"version"`
+	TaskID                                  string `json:"task_id"`
+	Version                                 int    `json:"version"`
 }
 
 // DeriveResolutionEventID derives a deterministic resolution event_id from Descriptor C.

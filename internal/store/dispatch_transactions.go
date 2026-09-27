@@ -174,7 +174,7 @@ func (s *Store) ResolvePreSendHold(ctx context.Context, operationID, attemptID, 
 // RecordSendRequested commits the durable send intent and audit before the AO
 // network call. It rejects stale binding, unresolved Pair state, active holds,
 // and physical workspace binding or snapshot mismatch.
-func (s *Store) RecordSendRequested(ctx context.Context, operationID, observedSessionID, observedGeneration, activity string, isTerminated bool, actor string, at time.Time, snapshots ...domain.WorkspaceBindingSnapshot) error {
+func (s *Store) RecordSendRequested(ctx context.Context, operationID, observedSessionID, observedGeneration, activity string, isTerminated bool, actor string, at time.Time, snapshot domain.WorkspaceBindingSnapshot) error {
 	if actor == "" || observedSessionID == "" || observedGeneration == "" || (activity != "idle" && activity != "waiting_input") || isTerminated {
 		return fmt.Errorf("store: send intent requires a positive exact idle/waiting pre-send observation")
 	}
@@ -250,21 +250,9 @@ WHERE attempt_id = ?
 	} else if b.TaskID != taskID || b.ContractID != contractID || b.SessionID != sessionID || b.TerminalGeneration != generation {
 		attemptedReason = "WORKSPACE_BINDING_LINEAGE_MISMATCH"
 	} else {
-		var snapshot domain.WorkspaceBindingSnapshot
-		if len(snapshots) > 0 {
-			snapshot = snapshots[0]
-		} else {
-			snapshot = domain.WorkspaceBindingSnapshot{
-				CanonicalWorktreePath:       b.CanonicalWorktreePath,
-				WorktreeVolumeSerialHex:     b.VolumeSerialHex,
-				WorktreeFileIDHex:           b.FileIDHex,
-				LinkedGitDirPath:            b.LinkedGitDirPath,
-				LinkedGitDirVolumeSerialHex: b.LinkedGitDirVolumeSerialHex,
-				LinkedGitDirFileIDHex:       b.LinkedGitDirFileIDHex,
-				PinnedAOCommit:              b.PinnedAOCommit,
-			}
-		}
-		if !snapshot.MatchesBinding(&b) {
+		if snapshot.IsZero() {
+			attemptedReason = "WORKSPACE_BINDING_MISSING"
+		} else if snapshot.Validate() != nil || !snapshot.MatchesBinding(&b) {
 			attemptedReason = "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH"
 		}
 	}

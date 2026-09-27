@@ -65,21 +65,200 @@ func (c *WorkerClaimRecord) Validate() error {
 	return nil
 }
 
-// WorkerReport represents the structured report submitted by a worker.
+// CommandRun represents a command executed by the worker with its outcome.
+type CommandRun struct {
+	Command       string `json:"command"`
+	ExitCode      int    `json:"exit_code"`
+	OutputSummary string `json:"output_summary,omitempty"`
+}
+
+// WorkerReportTest represents test execution claims reported by a worker matching schema.
+type WorkerReportTest struct {
+	TestSuite string `json:"test_suite"`
+	Passed    int    `json:"passed"`
+	Failed    int    `json:"failed"`
+}
+
+// WorkerReport represents the structured report submitted by a worker conforming to worker-report.schema.json.
 type WorkerReport struct {
-	HeadSHA      string              `json:"head_sha"`
-	FilesChanged []string            `json:"files_changed"`
-	Tests        []ClaimedTestResult `json:"tests,omitempty"`
-	WorkerClaims []string            `json:"worker_claims,omitempty"`
-	BuildStatus  string              `json:"build_status,omitempty"`
+	TaskID         string             `json:"task_id"`
+	AttemptID      string             `json:"attempt_id"`
+	Status         string             `json:"status"` // COMPLETED, BLOCKED, FAILED
+	Branch         string             `json:"branch"`
+	BaseSHA        string             `json:"base_sha"`
+	HeadSHA        string             `json:"head_sha"`
+	FilesChanged   []string           `json:"files_changed"`
+	CommandsRun    []CommandRun       `json:"commands_run"`
+	Tests          []WorkerReportTest `json:"tests"`
+	BuildStatus    string             `json:"build_status"` // PASSED, FAILED, SKIPPED
+	WorkerClaims   []string           `json:"worker_claims"`
+	Deviations     []string           `json:"deviations,omitempty"`
+	Assumptions    []string           `json:"assumptions,omitempty"`
+	Blockers       []string           `json:"blockers,omitempty"`
+	Artifacts      []string           `json:"artifacts,omitempty"`
+	ReadyForReview bool               `json:"ready_for_review"`
+}
+
+var allowedWorkerReportKeys = map[string]bool{
+	"task_id":          true,
+	"attempt_id":       true,
+	"status":           true,
+	"branch":           true,
+	"base_sha":         true,
+	"head_sha":         true,
+	"files_changed":    true,
+	"commands_run":     true,
+	"tests":            true,
+	"build_status":     true,
+	"worker_claims":    true,
+	"deviations":       true,
+	"assumptions":      true,
+	"blockers":         true,
+	"artifacts":        true,
+	"ready_for_review": true,
+}
+
+var requiredWorkerReportKeys = []string{
+	"task_id",
+	"attempt_id",
+	"status",
+	"branch",
+	"base_sha",
+	"head_sha",
+	"files_changed",
+	"commands_run",
+	"tests",
+	"build_status",
+	"worker_claims",
+	"ready_for_review",
+}
+
+// ValidateWorkerReportJSON validates raw JSON against docs/schemas/worker-report.schema.json.
+func ValidateWorkerReportJSON(data []byte) (*WorkerReport, error) {
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rawMap); err != nil {
+		return nil, fmt.Errorf("worker report: invalid JSON: %w", err)
+	}
+
+	// additionalProperties: false
+	for k := range rawMap {
+		if !allowedWorkerReportKeys[k] {
+			return nil, fmt.Errorf("worker report: additional property %q is not allowed", k)
+		}
+	}
+
+	// required properties
+	for _, reqKey := range requiredWorkerReportKeys {
+		if _, ok := rawMap[reqKey]; !ok {
+			return nil, fmt.Errorf("worker report: missing required property %q", reqKey)
+		}
+	}
+
+	// commands_run items validation (additionalProperties check)
+	if rawCmds, ok := rawMap["commands_run"]; ok {
+		var cmdMaps []map[string]json.RawMessage
+		if err := json.Unmarshal(rawCmds, &cmdMaps); err != nil {
+			return nil, fmt.Errorf("worker report: commands_run must be an array of objects: %w", err)
+		}
+		for i, cmdMap := range cmdMaps {
+			if _, hasCmd := cmdMap["command"]; !hasCmd {
+				return nil, fmt.Errorf("worker report: commands_run[%d] missing required property \"command\"", i)
+			}
+			if _, hasExit := cmdMap["exit_code"]; !hasExit {
+				return nil, fmt.Errorf("worker report: commands_run[%d] missing required property \"exit_code\"", i)
+			}
+			for ck := range cmdMap {
+				if ck != "command" && ck != "exit_code" && ck != "output_summary" {
+					return nil, fmt.Errorf("worker report: commands_run[%d] additional property %q is not allowed", i, ck)
+				}
+			}
+		}
+	}
+
+	// tests items validation (additionalProperties check)
+	if rawTests, ok := rawMap["tests"]; ok {
+		var testMaps []map[string]json.RawMessage
+		if err := json.Unmarshal(rawTests, &testMaps); err != nil {
+			return nil, fmt.Errorf("worker report: tests must be an array of objects: %w", err)
+		}
+		for i, testMap := range testMaps {
+			if _, hasSuite := testMap["test_suite"]; !hasSuite {
+				return nil, fmt.Errorf("worker report: tests[%d] missing required property \"test_suite\"", i)
+			}
+			if _, hasPassed := testMap["passed"]; !hasPassed {
+				return nil, fmt.Errorf("worker report: tests[%d] missing required property \"passed\"", i)
+			}
+			if _, hasFailed := testMap["failed"]; !hasFailed {
+				return nil, fmt.Errorf("worker report: tests[%d] missing required property \"failed\"", i)
+			}
+			for tk := range testMap {
+				if tk != "test_suite" && tk != "passed" && tk != "failed" {
+					return nil, fmt.Errorf("worker report: tests[%d] additional property %q is not allowed", i, tk)
+				}
+			}
+		}
+	}
+
+	var report WorkerReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		return nil, fmt.Errorf("worker report: failed to decode report fields: %w", err)
+	}
+
+	if err := report.Validate(); err != nil {
+		return nil, err
+	}
+
+	return &report, nil
+}
+
+// Validate validates WorkerReport domain rules.
+func (r *WorkerReport) Validate() error {
+	if strings.TrimSpace(r.TaskID) == "" {
+		return errors.New("worker report: task_id must not be empty")
+	}
+	if strings.TrimSpace(r.AttemptID) == "" {
+		return errors.New("worker report: attempt_id must not be empty")
+	}
+	switch r.Status {
+	case "COMPLETED", "BLOCKED", "FAILED":
+	default:
+		return fmt.Errorf("worker report: invalid status %q, must be COMPLETED, BLOCKED, or FAILED", r.Status)
+	}
+	if strings.TrimSpace(r.Branch) == "" {
+		return errors.New("worker report: branch must not be empty")
+	}
+	if !shaHexRegex.MatchString(r.BaseSHA) {
+		return fmt.Errorf("worker report: base_sha must be 7..40 lowercase hex chars, got %q", r.BaseSHA)
+	}
+	if !shaHexRegex.MatchString(r.HeadSHA) {
+		return fmt.Errorf("worker report: head_sha must be 7..40 lowercase hex chars, got %q", r.HeadSHA)
+	}
+	if r.FilesChanged == nil {
+		return errors.New("worker report: files_changed must not be nil")
+	}
+	if r.CommandsRun == nil {
+		return errors.New("worker report: commands_run must not be nil")
+	}
+	if r.Tests == nil {
+		return errors.New("worker report: tests must not be nil")
+	}
+	switch r.BuildStatus {
+	case "PASSED", "FAILED", "SKIPPED":
+	default:
+		return fmt.Errorf("worker report: invalid build_status %q, must be PASSED, FAILED, or SKIPPED", r.BuildStatus)
+	}
+	if r.WorkerClaims == nil {
+		return errors.New("worker report: worker_claims must not be nil")
+	}
+	return nil
 }
 
 // WorkerClaimPayload encapsulates structured worker claim payload fields.
 type WorkerClaimPayload struct {
-	ClaimedFilesChanged []string            `json:"claimed_files_changed"`
-	Tests               []ClaimedTestResult `json:"tests"`
-	TextualClaims       []string            `json:"textual_claims"`
-	BuildStatus         string              `json:"build_status,omitempty"`
+	ClaimedFilesChanged []string           `json:"claimed_files_changed"`
+	Tests               []WorkerReportTest `json:"tests"`
+	TextualClaims       []string           `json:"textual_claims"`
+	BuildStatus         string             `json:"build_status,omitempty"`
 }
 
 // CanonicalizeWorkerClaimPayload converts WorkerClaimPayload to RFC 8785 JCS canonical JSON.
@@ -88,7 +267,7 @@ func CanonicalizeWorkerClaimPayload(p WorkerClaimPayload) (string, error) {
 		p.ClaimedFilesChanged = []string{}
 	}
 	if p.Tests == nil {
-		p.Tests = []ClaimedTestResult{}
+		p.Tests = []WorkerReportTest{}
 	}
 	if p.TextualClaims == nil {
 		p.TextualClaims = []string{}

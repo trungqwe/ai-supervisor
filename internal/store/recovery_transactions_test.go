@@ -140,7 +140,7 @@ func TestPostSendOutageAndFreshRecoveryCAS(t *testing.T) {
 	defer s.Close()
 	_, attempt := setupBoundAttempt(t, s, "task-post-outage", "contract-post-outage", "attempt-post-outage")
 	opID := "dispatch-attempt-post-outage"
-	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
+	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now(), defaultTestWorkspaceSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
@@ -220,7 +220,7 @@ func TestMissedActiveWindowAvailableHandoffAuditRollback(t *testing.T) {
 	defer s.Close()
 	_, attempt := setupBoundAttempt(t, s, "task-handoff-rollback", "contract-handoff-rollback", "attempt-handoff-rollback")
 	opID := "dispatch-attempt-handoff-rollback"
-	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
+	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now(), defaultTestWorkspaceSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
@@ -262,7 +262,7 @@ func TestGenericPostSendObservationCannotCloseStopOwnedAttempt(t *testing.T) {
 	defer s.Close()
 	pair, attempt := setupBoundAttempt(t, s, "task-stop-owned", "contract-stop-owned", "attempt-stop-owned")
 	opID := "dispatch-attempt-stop-owned"
-	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
+	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now(), defaultTestWorkspaceSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
@@ -386,7 +386,7 @@ func TestPostSendLifecycleMatrixAndHoldPrecedence(t *testing.T) {
 			defer s.Close()
 			_, a := setupBoundAttempt(t, s, "task-matrix", "contract-matrix", "attempt-matrix")
 			op := "dispatch-attempt-matrix"
-			if err := s.RecordSendRequested(ctx, op, *a.SessionID, *a.TerminalGeneration, "idle", false, "fixture", time.Now()); err != nil {
+			if err := s.RecordSendRequested(ctx, op, *a.SessionID, *a.TerminalGeneration, "idle", false, "fixture", time.Now(), defaultTestWorkspaceSnapshot); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.RecordSendConfirmed(ctx, op, "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
@@ -434,7 +434,7 @@ func TestPostSendStrongerHoldRejectsOutageAndTerminalRecoveryRollback(t *testing
 	defer s.Close()
 	_, a := setupBoundAttempt(t, s, "task-strong", "contract-strong", "attempt-strong")
 	op := "dispatch-attempt-strong"
-	if err := s.RecordSendRequested(ctx, op, *a.SessionID, *a.TerminalGeneration, "idle", false, "fixture", time.Now()); err != nil {
+	if err := s.RecordSendRequested(ctx, op, *a.SessionID, *a.TerminalGeneration, "idle", false, "fixture", time.Now(), defaultTestWorkspaceSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordSendConfirmed(ctx, op, "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
@@ -473,7 +473,7 @@ func TestPostSendStrongerHoldRejectsOutageAndTerminalRecoveryRollback(t *testing
 	defer s2.Close()
 	_, b := setupBoundAttempt(t, s2, "task-terminal-hold", "contract-terminal-hold", "attempt-terminal-hold")
 	op2 := "dispatch-attempt-terminal-hold"
-	if err := s2.RecordSendRequested(ctx, op2, *b.SessionID, *b.TerminalGeneration, "idle", false, "fixture", time.Now()); err != nil {
+	if err := s2.RecordSendRequested(ctx, op2, *b.SessionID, *b.TerminalGeneration, "idle", false, "fixture", time.Now(), defaultTestWorkspaceSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if err := s2.RecordSendConfirmed(ctx, op2, "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
@@ -537,7 +537,7 @@ func TestPostSendGenerationChangedQuarantinesCurrentRuntimeAndOldAttempt(t *test
 	defer s.Close()
 	pair, a := setupBoundAttempt(t, s, "task-new-gen", "contract-new-gen", "attempt-new-gen")
 	op := "dispatch-attempt-new-gen"
-	if err := s.RecordSendRequested(ctx, op, *a.SessionID, *a.TerminalGeneration, "idle", false, "fixture", time.Now()); err != nil {
+	if err := s.RecordSendRequested(ctx, op, *a.SessionID, *a.TerminalGeneration, "idle", false, "fixture", time.Now(), defaultTestWorkspaceSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordSendConfirmed(ctx, op, "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {

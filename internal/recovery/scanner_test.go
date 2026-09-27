@@ -181,6 +181,16 @@ func TestQuiescenceMissingAndCancelledDrainFailClosed(t *testing.T) {
 	}
 }
 
+var testBindingSnapshot = domain.WorkspaceBindingSnapshot{
+	CanonicalWorktreePath:       "C:\\repo\\worktree",
+	WorktreeVolumeSerialHex:     "0000000012345678",
+	WorktreeFileIDHex:           "000000000000000012345678abcdef01",
+	LinkedGitDirPath:            "C:\\repo\\worktree\\.git",
+	LinkedGitDirVolumeSerialHex: "0000000012345678",
+	LinkedGitDirFileIDHex:       "000000000000000012345678abcdef02",
+	PinnedAOCommit:              strings.Repeat("0", 40),
+}
+
 func seedBoundExecution(t *testing.T, s *store.Store, taskID string) (string, string, string) {
 	t.Helper()
 	ctx := context.Background()
@@ -214,7 +224,12 @@ func seedBoundExecution(t *testing.T, s *store.Store, taskID string) (string, st
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.PrepareBoundDispatch(ctx, taskID, contractID, attemptID, path, time.Now().UTC(), store.DispatchBinding{OperationID: "dispatch-" + taskID, SessionID: sessionID, TerminalGeneration: generation}); err != nil {
+	if _, err = s.PrepareBoundDispatch(ctx, taskID, contractID, attemptID, path, time.Now().UTC(), store.DispatchBinding{
+		OperationID:        "dispatch-" + taskID,
+		SessionID:          sessionID,
+		TerminalGeneration: generation,
+		Workspace:          testBindingSnapshot,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return sessionID, generation, attemptID
@@ -224,7 +239,7 @@ func TestRunnerUnknownDeliveryAtomicAndZeroEffectReplay(t *testing.T) {
 	ctx := context.Background()
 	s := newRecoveryStore(t)
 	session, generation, attempt := seedBoundExecution(t, s, "unknown")
-	if err := s.RecordSendRequested(ctx, "dispatch-unknown", session, generation, "idle", false, "fixture", time.Now().UTC()); err != nil {
+	if err := s.RecordSendRequested(ctx, "dispatch-unknown", session, generation, "idle", false, "fixture", time.Now().UTC(), testBindingSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	h := &testHost{}
@@ -277,7 +292,7 @@ func TestRunnerPostSendOutageAndRecoveryOnDispatchedAndRunning(t *testing.T) {
 	ctx := context.Background()
 	s := newRecoveryStore(t)
 	session, generation, attempt := seedBoundExecution(t, s, "observed")
-	if err := s.RecordSendRequested(ctx, "dispatch-observed", session, generation, "idle", false, "fixture", time.Now().UTC()); err != nil {
+	if err := s.RecordSendRequested(ctx, "dispatch-observed", session, generation, "idle", false, "fixture", time.Now().UTC(), testBindingSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordSendConfirmed(ctx, "dispatch-observed", "fixture", true, time.Now().UTC(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
@@ -345,7 +360,7 @@ func TestMissedActiveWindowHandoffAvailability(t *testing.T) {
 			ctx := context.Background()
 			s := newRecoveryStore(t)
 			session, generation, attempt := seedBoundExecution(t, s, "handoff")
-			if err := s.RecordSendRequested(ctx, "dispatch-handoff", session, generation, "idle", false, "fixture", time.Now()); err != nil {
+			if err := s.RecordSendRequested(ctx, "dispatch-handoff", session, generation, "idle", false, "fixture", time.Now(), testBindingSnapshot); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.RecordSendConfirmed(ctx, "dispatch-handoff", "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
@@ -380,7 +395,7 @@ func seedLiveStopIntent(t *testing.T, s *store.Store, taskID string) (domain.Sto
 	t.Helper()
 	ctx := context.Background()
 	session, generation, attempt := seedBoundExecution(t, s, taskID)
-	if err := s.RecordSendRequested(ctx, "dispatch-"+taskID, session, generation, "idle", false, "fixture", time.Now().UTC()); err != nil {
+	if err := s.RecordSendRequested(ctx, "dispatch-"+taskID, session, generation, "idle", false, "fixture", time.Now().UTC(), testBindingSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordSendConfirmed(ctx, "dispatch-"+taskID, "fixture", true, time.Now().UTC(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
@@ -584,7 +599,7 @@ func TestPreSendProtocolHoldSurvivesFreshGET(t *testing.T) {
 	s := newRecoveryStore(t)
 	session, generation, attempt := seedBoundExecution(t, s, "protocol")
 	o := &testObserver{err: &ao.ProtocolError{StatusCode: 200, Method: "GET", Path: "/sessions"}}
-	r := &Runner{Store: s, AO: o, Host: &testHost{}, ActivityPollInterval: time.Second, ExecutionDeadline: time.Minute, Actor: "supervisor"}
+	r := &Runner{Store: s, AO: o, Host: &testHost{}, Authority: &fakeWorkspaceAuthority{}, ActivityPollInterval: time.Second, ExecutionDeadline: time.Minute, Actor: "supervisor"}
 	if report, err := r.Run(ctx); err != nil || !report.Complete || !report.PendingAO {
 		t.Fatalf("protocol classification: %+v %v", report, err)
 	}
@@ -603,7 +618,7 @@ func TestPreSendProtocolHoldSurvivesFreshGET(t *testing.T) {
 	if a.RecoveryDisposition == nil || *a.RecoveryDisposition != "PRE_SEND_PROTOCOL_UNVERIFIED" {
 		t.Fatalf("protocol hold downgraded: %+v", a)
 	}
-	if err := s.RecordSendRequested(ctx, "dispatch-protocol", session, generation, "idle", false, "supervisor", time.Now()); err == nil {
+	if err := s.RecordSendRequested(ctx, "dispatch-protocol", session, generation, "idle", false, "supervisor", time.Now(), testBindingSnapshot); err == nil {
 		t.Fatal("send bypassed protocol hold")
 	}
 }
@@ -613,7 +628,7 @@ func TestPreSendOutageFreshExactIdleResolvesOnlyRecoveryPending(t *testing.T) {
 	s := newRecoveryStore(t)
 	session, generation, attempt := seedBoundExecution(t, s, "presend")
 	o := &testObserver{err: errors.New("transport outage")}
-	r := &Runner{Store: s, AO: o, Host: &testHost{}, ActivityPollInterval: time.Second, ExecutionDeadline: time.Minute, Actor: "supervisor"}
+	r := &Runner{Store: s, AO: o, Host: &testHost{}, Authority: &fakeWorkspaceAuthority{}, ActivityPollInterval: time.Second, ExecutionDeadline: time.Minute, Actor: "supervisor"}
 	if report, err := r.Run(ctx); err != nil || !report.PendingAO {
 		t.Fatalf("outage: %+v %v", report, err)
 	}
@@ -671,7 +686,7 @@ func TestRunnerBlockedOpenAttemptClosesWithoutAOEffect(t *testing.T) {
 	ctx := context.Background()
 	s := newRecoveryStore(t)
 	session, generation, attempt := seedBoundExecution(t, s, "blocked")
-	if err := s.RecordSendRequested(ctx, "dispatch-blocked", session, generation, "idle", false, "fixture", time.Now()); err != nil {
+	if err := s.RecordSendRequested(ctx, "dispatch-blocked", session, generation, "idle", false, "fixture", time.Now(), testBindingSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordSendConfirmed(ctx, "dispatch-blocked", "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
@@ -705,7 +720,7 @@ func TestRunnerD5AuditFailureRollsBackAndKeepsAdmissionClosed(t *testing.T) {
 	ctx := context.Background()
 	s, path := newRecoveryStoreAt(t)
 	session, generation, attempt := seedBoundExecution(t, s, "d5rollback")
-	if err := s.RecordSendRequested(ctx, "dispatch-d5rollback", session, generation, "idle", false, "fixture", time.Now()); err != nil {
+	if err := s.RecordSendRequested(ctx, "dispatch-d5rollback", session, generation, "idle", false, "fixture", time.Now(), testBindingSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	db, err := sql.Open("sqlite", path)
@@ -800,7 +815,7 @@ func TestRunnerPreSendObservationMatrix(t *testing.T) {
 					o.result.TerminalGeneration = "foreign"
 				}
 			}
-			r := &Runner{Store: s, AO: o, Host: &testHost{}, ActivityPollInterval: time.Second, ExecutionDeadline: time.Minute, Actor: "supervisor"}
+			r := &Runner{Store: s, AO: o, Host: &testHost{}, Authority: &fakeWorkspaceAuthority{}, ActivityPollInterval: time.Second, ExecutionDeadline: time.Minute, Actor: "supervisor"}
 			if report, err := r.Run(ctx); err != nil || !report.Complete {
 				t.Fatalf("matrix Run: %+v %v", report, err)
 			}
@@ -916,7 +931,7 @@ func TestLegacyMaintenanceKeepsAdmissionClosedUntilCompleteRun(t *testing.T) {
 	ctx := context.Background()
 	s, path := newRecoveryStoreAt(t)
 	session, generation, attempt := seedBoundExecution(t, s, "legacy-maintenance")
-	if err := s.RecordSendRequested(ctx, "dispatch-legacy-maintenance", session, generation, "idle", false, "fixture", time.Now()); err != nil {
+	if err := s.RecordSendRequested(ctx, "dispatch-legacy-maintenance", session, generation, "idle", false, "fixture", time.Now(), testBindingSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	cfg := store.Config{DBPath: path, BusyTimeoutMs: 5000}
@@ -997,7 +1012,7 @@ func TestLegacyManualStopExactRunningWithoutBudget(t *testing.T) {
 	ctx := context.Background()
 	s, path := newRecoveryStoreAt(t)
 	session, generation, attemptID := seedBoundExecution(t, s, "legacy-manual-stop")
-	if err := s.RecordSendRequested(ctx, "dispatch-legacy-manual-stop", session, generation, "idle", false, "fixture", time.Now()); err != nil {
+	if err := s.RecordSendRequested(ctx, "dispatch-legacy-manual-stop", session, generation, "idle", false, "fixture", time.Now(), testBindingSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	cfg := store.Config{DBPath: path, BusyTimeoutMs: 5000}
@@ -1051,10 +1066,36 @@ func TestLegacyManualStopExactRunningWithoutBudget(t *testing.T) {
 	}
 }
 
+type testRecoveryLease struct {
+	snapshot        domain.WorkspaceBindingSnapshot
+	failRevalidate  bool
+	revalidateCalls int
+	closeCalls      int
+}
+
+func (l *testRecoveryLease) Snapshot() domain.WorkspaceBindingSnapshot {
+	return l.snapshot
+}
+
+func (l *testRecoveryLease) Revalidate() error {
+	l.revalidateCalls++
+	if l.failRevalidate {
+		return errors.New("simulated revalidate failure")
+	}
+	return nil
+}
+
+func (l *testRecoveryLease) Close() error {
+	l.closeCalls++
+	return nil
+}
+
 type fakeWorkspaceAuthority struct {
-	acquireCalls int
-	failAcquire  bool
-	snapshot     *domain.WorkspaceBindingSnapshot
+	acquireCalls   int
+	failAcquire    bool
+	failRevalidate bool
+	snapshot       *domain.WorkspaceBindingSnapshot
+	lastLease      *testRecoveryLease
 }
 
 func (f *fakeWorkspaceAuthority) Acquire(ctx context.Context, candidate domain.WorkspaceBindingCandidate) (domain.WorkspaceBindingLease, error) {
@@ -1074,7 +1115,12 @@ func (f *fakeWorkspaceAuthority) Acquire(ctx context.Context, candidate domain.W
 	if f.snapshot != nil {
 		snap = *f.snapshot
 	}
-	return &defaultRecoveryLease{snapshot: snap}, nil
+	lease := &testRecoveryLease{
+		snapshot:       snap,
+		failRevalidate: f.failRevalidate,
+	}
+	f.lastLease = lease
+	return lease, nil
 }
 
 func TestRestartRecoveryWorkspaceBindingVerification(t *testing.T) {
@@ -1107,6 +1153,9 @@ func TestRestartRecoveryWorkspaceBindingVerification(t *testing.T) {
 		}
 		if auth.acquireCalls != 1 {
 			t.Fatalf("acquire calls = %d, want 1", auth.acquireCalls)
+		}
+		if auth.lastLease == nil || auth.lastLease.revalidateCalls != 1 || auth.lastLease.closeCalls != 1 {
+			t.Fatalf("lease calls mismatch: %+v", auth.lastLease)
 		}
 
 		// Verify effect boundaries per AC-P04A-21:
@@ -1228,6 +1277,9 @@ func TestRestartRecoveryWorkspaceBindingVerification(t *testing.T) {
 		if auth.acquireCalls != 1 {
 			t.Fatalf("acquire calls = %d, want 1", auth.acquireCalls)
 		}
+		if auth.lastLease == nil || auth.lastLease.closeCalls != 1 {
+			t.Fatalf("lease close not called: %+v", auth.lastLease)
+		}
 		// Zero AO calls made
 		observer.mu.Lock()
 		gets := observer.gets
@@ -1256,6 +1308,87 @@ func TestRestartRecoveryWorkspaceBindingVerification(t *testing.T) {
 		attempt, err := s.GetTaskAttempt(ctx, attemptID)
 		if err != nil || attempt.EndedAt != nil {
 			t.Fatalf("attempt ended prematurely: %+v %v", attempt, err)
+		}
+	})
+
+	t.Run("NilAuthorityRestartRecovery_AC_P04A_19_21", func(t *testing.T) {
+		s := newRecoveryStore(t)
+		_, _, attemptID := seedBoundExecution(t, s, "nilauth-restart")
+		observer := &testObserver{}
+		r := &Runner{
+			Store:                s,
+			AO:                   observer,
+			Host:                 &testHost{},
+			Authority:            nil, // nil authority must fail-closed as acquire failure
+			ActivityPollInterval: time.Second,
+			ExecutionDeadline:    time.Minute,
+			Actor:                "supervisor",
+		}
+
+		report, err := r.Run(ctx)
+		if err != nil || !report.Complete {
+			t.Fatalf("Run failed: %+v %v", report, err)
+		}
+		// Zero AO calls made
+		observer.mu.Lock()
+		gets := observer.gets
+		observer.mu.Unlock()
+		if gets != 0 {
+			t.Fatalf("AO gets = %d, want 0", gets)
+		}
+
+		// Variant B verified: hold INVARIANT_MISMATCH active, binding INVALIDATED, task DISPATCHED, attempt open
+		holds, err := s.GetActiveReviewIntegrityHolds(ctx, attemptID)
+		if err != nil || len(holds) != 1 || holds[0].HoldReason != domain.HoldReasonInvariantMismatch {
+			t.Fatalf("expected 1 INVARIANT_MISMATCH hold, got: %+v %v", holds, err)
+		}
+		binding, err := s.GetAttemptWorkspaceBinding(ctx, attemptID)
+		if err != nil || binding.BindingState != domain.BindingStateInvalidated {
+			t.Fatalf("binding state = %v, want INVALIDATED: %v", binding.BindingState, err)
+		}
+	})
+
+	t.Run("RevalidateFailureRestartRecovery_AC_P04A_19_21", func(t *testing.T) {
+		s := newRecoveryStore(t)
+		_, _, attemptID := seedBoundExecution(t, s, "revalfail-restart")
+		auth := &fakeWorkspaceAuthority{failRevalidate: true}
+		observer := &testObserver{}
+		r := &Runner{
+			Store:                s,
+			AO:                   observer,
+			Host:                 &testHost{},
+			Authority:            auth,
+			ActivityPollInterval: time.Second,
+			ExecutionDeadline:    time.Minute,
+			Actor:                "supervisor",
+		}
+
+		report, err := r.Run(ctx)
+		if err != nil || !report.Complete {
+			t.Fatalf("Run failed: %+v %v", report, err)
+		}
+		if auth.acquireCalls != 1 {
+			t.Fatalf("acquire calls = %d, want 1", auth.acquireCalls)
+		}
+		if auth.lastLease == nil || auth.lastLease.revalidateCalls != 1 || auth.lastLease.closeCalls != 1 {
+			t.Fatalf("lease revalidate/close mismatch: %+v", auth.lastLease)
+		}
+		// Zero AO calls made
+		observer.mu.Lock()
+		gets := observer.gets
+		observer.mu.Unlock()
+		if gets != 0 {
+			t.Fatalf("AO gets = %d, want 0", gets)
+		}
+
+		// Variant B verified: hold INVARIANT_MISMATCH active, binding INVALIDATED, task DISPATCHED, attempt open
+		holds, err := s.GetActiveReviewIntegrityHolds(ctx, attemptID)
+		if err != nil || len(holds) != 1 || holds[0].HoldReason != domain.HoldReasonInvariantMismatch {
+			t.Fatalf("expected 1 INVARIANT_MISMATCH hold, got: %+v %v", holds, err)
+		}
+		binding, err := s.GetAttemptWorkspaceBinding(ctx, attemptID)
+		if err != nil || binding.BindingState != domain.BindingStateInvalidated {
+			t.Fatalf("binding state = %v, want INVALIDATED: %v", binding.BindingState, err)
 		}
 	})
 }

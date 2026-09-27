@@ -87,16 +87,16 @@ func TestDeriveHoldAndRejectionIDs(t *testing.T) {
 func TestReviewIntegrityHold_Validate(t *testing.T) {
 	fp := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	hold := domain.ReviewIntegrityHold{
-		HoldID:                 "hold-1",
-		TaskID:                 "task-1",
-		AttemptID:              "attempt-1",
-		ContractID:             "contract-1",
-		HoldReason:             domain.HoldReasonDirtyWorktreeDetected,
-		HoldState:              domain.HoldStateActive,
-		DiagnosticFingerprint:  fp,
-		OccurrenceNumber:       1,
+		HoldID:                "hold-1",
+		TaskID:                "task-1",
+		AttemptID:             "attempt-1",
+		ContractID:            "contract-1",
+		HoldReason:            domain.HoldReasonDirtyWorktreeDetected,
+		HoldState:             domain.HoldStateActive,
+		DiagnosticFingerprint: fp,
+		OccurrenceNumber:      1,
 		RejectionAuditEventID: "audit-rej-1",
-		CreatedAtEpochMS:       1000,
+		CreatedAtEpochMS:      1000,
 	}
 
 	if err := hold.Validate(); err != nil {

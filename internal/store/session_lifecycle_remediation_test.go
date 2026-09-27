@@ -64,6 +64,7 @@ func TestStore_BoundDispatchGuardsRollback(t *testing.T) {
 			}
 			_, err = s.PrepareBoundDispatch(ctx, taskID, contractID, "attempt-rejected", path, time.Now().UTC(), DispatchBinding{
 				OperationID: "dispatch-rejected", SessionID: "session-guard", TerminalGeneration: "generation-guard",
+				Workspace: defaultTestWorkspaceSnapshot,
 			})
 			if !errors.Is(err, ErrQuarantinedExecution) {
 				t.Fatalf("dispatch error = %v", err)
@@ -99,6 +100,7 @@ func seedPriorQuarantinedAttempt(t *testing.T, s *Store, taskID string) {
 	path, _ := CanonicalExpectedReportPath(taskID, "attempt-prior")
 	if _, err := s.PrepareBoundDispatch(ctx, taskID, "contract-guard", "attempt-prior", path, time.Now().UTC(), DispatchBinding{
 		OperationID: "dispatch-prior", SessionID: "session-guard", TerminalGeneration: "generation-guard",
+		Workspace: defaultTestWorkspaceSnapshot,
 	}); err != nil {
 		t.Fatal(err)
 	}

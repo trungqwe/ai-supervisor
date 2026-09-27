@@ -145,6 +145,48 @@ func (s WorkspaceBindingSnapshot) MatchesBinding(b *WorkspaceBinding) bool {
 		s.PinnedAOCommit == b.PinnedAOCommit
 }
 
+// IsZero reports whether the snapshot is unpopulated.
+func (s WorkspaceBindingSnapshot) IsZero() bool {
+	return s.CanonicalWorktreePath == "" &&
+		s.WorktreeVolumeSerialHex == "" &&
+		s.WorktreeFileIDHex == "" &&
+		s.LinkedGitDirPath == "" &&
+		s.LinkedGitDirVolumeSerialHex == "" &&
+		s.LinkedGitDirFileIDHex == "" &&
+		s.PinnedAOCommit == ""
+}
+
+// Validate validates workspace binding snapshot invariants.
+func (s WorkspaceBindingSnapshot) Validate() error {
+	if strings.TrimSpace(s.CanonicalWorktreePath) == "" {
+		return errors.New("canonical_worktree_path must not be empty")
+	}
+	if !hex16Regex.MatchString(s.WorktreeVolumeSerialHex) {
+		return fmt.Errorf("worktree_volume_serial_hex must be 16 lowercase hex chars, got %q", s.WorktreeVolumeSerialHex)
+	}
+	if !hex32Regex.MatchString(s.WorktreeFileIDHex) {
+		return fmt.Errorf("worktree_file_id_hex must be 32 lowercase hex chars, got %q", s.WorktreeFileIDHex)
+	}
+	if strings.TrimSpace(s.LinkedGitDirPath) == "" {
+		return errors.New("linked_gitdir_path must not be empty")
+	}
+	if !hex16Regex.MatchString(s.LinkedGitDirVolumeSerialHex) {
+		return fmt.Errorf("linked_gitdir_volume_serial_hex must be 16 lowercase hex chars, got %q", s.LinkedGitDirVolumeSerialHex)
+	}
+	if !hex32Regex.MatchString(s.LinkedGitDirFileIDHex) {
+		return fmt.Errorf("linked_gitdir_file_id_hex must be 32 lowercase hex chars, got %q", s.LinkedGitDirFileIDHex)
+	}
+	if !hex40Regex.MatchString(s.PinnedAOCommit) {
+		return fmt.Errorf("pinned_ao_commit must be 40 lowercase hex chars, got %q", s.PinnedAOCommit)
+	}
+	return nil
+}
+
+// IsValidPinnedAOCommit checks whether commit is exactly 40 lowercase hex characters.
+func IsValidPinnedAOCommit(commit string) bool {
+	return hex40Regex.MatchString(commit)
+}
+
 // WorkspaceBindingAuthority acquires exclusive physical directory capability leases.
 type WorkspaceBindingAuthority interface {
 	Acquire(ctx context.Context, candidate WorkspaceBindingCandidate) (WorkspaceBindingLease, error)

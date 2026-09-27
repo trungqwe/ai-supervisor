@@ -3,6 +3,7 @@ package host
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/trungqwe/ai-supervisor/internal/domain"
@@ -15,8 +16,8 @@ func DefaultWorkspaceBindingAuthority() domain.WorkspaceBindingAuthority {
 
 // MemoryWorkspaceBindingLease is a test/mock lease implementing domain.WorkspaceBindingLease.
 type MemoryWorkspaceBindingLease struct {
-	snapshot domain.WorkspaceBindingSnapshot
-	closed   bool
+	snapshot  domain.WorkspaceBindingSnapshot
+	closed    bool
 	failReval bool
 }
 
@@ -52,11 +53,16 @@ func (m *MemoryWorkspaceBindingLease) SetFailRevalidation(fail bool) {
 // MemoryWorkspaceBindingAuthority is an in-memory implementation for testing without real disk handles.
 type MemoryWorkspaceBindingAuthority struct {
 	SnapshotFunc func(candidate domain.WorkspaceBindingCandidate) domain.WorkspaceBindingSnapshot
+	Snapshot     *domain.WorkspaceBindingSnapshot
 	FailAcquire  bool
 }
 
 func NewMemoryWorkspaceBindingAuthority() *MemoryWorkspaceBindingAuthority {
 	return &MemoryWorkspaceBindingAuthority{}
+}
+
+func NewMemoryWorkspaceBindingAuthorityWithSnapshot(snapshot domain.WorkspaceBindingSnapshot) *MemoryWorkspaceBindingAuthority {
+	return &MemoryWorkspaceBindingAuthority{Snapshot: &snapshot}
 }
 
 func (m *MemoryWorkspaceBindingAuthority) Acquire(ctx context.Context, candidate domain.WorkspaceBindingCandidate) (domain.WorkspaceBindingLease, error) {
@@ -69,24 +75,26 @@ func (m *MemoryWorkspaceBindingAuthority) Acquire(ctx context.Context, candidate
 	if strings.TrimSpace(candidate.LinkedGitDirPath) == "" {
 		return nil, errors.New("host: candidate LinkedGitDirPath must not be empty")
 	}
+	if !domain.IsValidPinnedAOCommit(candidate.PinnedAOCommit) {
+		return nil, fmt.Errorf("host: candidate PinnedAOCommit must be 40 lowercase hex chars, got %q", candidate.PinnedAOCommit)
+	}
 
 	var snapshot domain.WorkspaceBindingSnapshot
 	if m.SnapshotFunc != nil {
 		snapshot = m.SnapshotFunc(candidate)
+	} else if m.Snapshot != nil {
+		snapshot = *m.Snapshot
+		if snapshot.CanonicalWorktreePath == "" {
+			snapshot.CanonicalWorktreePath = candidate.CanonicalWorktreePath
+		}
+		if snapshot.LinkedGitDirPath == "" {
+			snapshot.LinkedGitDirPath = candidate.LinkedGitDirPath
+		}
+		if snapshot.PinnedAOCommit == "" {
+			snapshot.PinnedAOCommit = candidate.PinnedAOCommit
+		}
 	} else {
-		pinned := candidate.PinnedAOCommit
-		if pinned == "" {
-			pinned = strings.Repeat("0", 40)
-		}
-		snapshot = domain.WorkspaceBindingSnapshot{
-			CanonicalWorktreePath:       candidate.CanonicalWorktreePath,
-			WorktreeVolumeSerialHex:     "0000000012345678",
-			WorktreeFileIDHex:           "000000000000000012345678abcdef01",
-			LinkedGitDirPath:            candidate.LinkedGitDirPath,
-			LinkedGitDirVolumeSerialHex: "0000000012345678",
-			LinkedGitDirFileIDHex:       "000000000000000012345678abcdef02",
-			PinnedAOCommit:              pinned,
-		}
+		return nil, errors.New("host: MemoryWorkspaceBindingAuthority requires explicit Snapshot or SnapshotFunc")
 	}
 
 	return NewMemoryWorkspaceBindingLease(snapshot), nil

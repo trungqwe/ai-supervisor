@@ -91,6 +91,7 @@ func TestStore_AtomicTransitionRejectsCrossTaskAndOldAttempt(t *testing.T) {
 		OperationID:        "dispatch-attempt-a2",
 		SessionID:          *attemptA.SessionID,
 		TerminalGeneration: *attemptA.TerminalGeneration,
+		Workspace:          defaultTestWorkspaceSnapshot,
 	})
 	if err != nil {
 		t.Fatalf("prepare second attempt: %v", err)

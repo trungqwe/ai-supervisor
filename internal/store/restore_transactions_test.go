@@ -131,7 +131,7 @@ func TestRestoreAdmissionRejectsOpenOrUnresolvedLineageAndAllowsCleanHistory(t *
 		pairID, attempt := setupBoundAttempt(t, s, "task-restore-send-requested", "contract-restore-send-requested", "attempt-restore-send-requested")
 		setRestoreSessionTerminated(t, s, pairID)
 		opID := "dispatch-attempt-restore-send-requested"
-		if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
+		if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now(), defaultTestWorkspaceSnapshot); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := s.db.ExecContext(ctx, `UPDATE tasks SET state='FAILED' WHERE task_id=?; UPDATE task_attempts SET ended_at='2026-09-23T00:00:00Z' WHERE attempt_id=?`, attempt.TaskID, attempt.AttemptID); err != nil {
@@ -154,7 +154,7 @@ func TestRestoreAdmissionRejectsOpenOrUnresolvedLineageAndAllowsCleanHistory(t *
 			setRestoreSessionTerminated(t, s, pairID)
 			opID := "dispatch-" + attemptID
 			if confirmed {
-				if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
+				if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now(), defaultTestWorkspaceSnapshot); err != nil {
 					t.Fatal(err)
 				}
 				if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {

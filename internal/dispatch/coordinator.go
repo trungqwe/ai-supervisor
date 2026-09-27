@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/trungqwe/ai-supervisor/internal/ao"
 	"github.com/trungqwe/ai-supervisor/internal/domain"
-	"github.com/trungqwe/ai-supervisor/internal/host"
 	"github.com/trungqwe/ai-supervisor/internal/store"
 )
 
@@ -36,6 +36,8 @@ type Coordinator struct {
 	RestoreEnabled  bool
 	ExecutionPolicy domain.ExecutionBudgetPolicy // injected; no operational default
 	Authority       domain.WorkspaceBindingAuthority
+	PinnedAOCommit  string
+	Candidate       *domain.WorkspaceBindingCandidate
 }
 
 func (c *Coordinator) Provision(ctx context.Context, operation domain.PairProvisioningOperation, projectID, harness, actor string) error {
@@ -244,58 +246,56 @@ func (c *Coordinator) Dispatch(ctx context.Context, taskID, contractID, attemptI
 	if err != nil {
 		return err
 	}
-	worktreePath := "C:\\repo\\worktree"
-	if sess, sessErr := c.Store.GetWorkerSessionByPair(ctx, task.PairID); sessErr == nil && sess.WorktreePath != nil && *sess.WorktreePath != "" {
-		worktreePath = *sess.WorktreePath
-	}
-	gitdirPath := filepath.Join(worktreePath, ".git")
-	pinnedCommit := strings.Repeat("0", 40)
-	if contract, cErr := c.Store.GetTaskContract(ctx, contractID); cErr == nil && len(contract.BaseSHA) == 40 {
-		pinnedCommit = contract.BaseSHA
-	}
-	candidate := domain.WorkspaceBindingCandidate{
-		CanonicalWorktreePath: worktreePath,
-		LinkedGitDirPath:      gitdirPath,
-		PinnedAOCommit:        pinnedCommit,
+	if c.Authority == nil {
+		return errors.New("dispatch: coordinator requires injected workspace binding authority")
 	}
 
-	auth := c.Authority
-	if auth == nil {
-		auth = host.NewMemoryWorkspaceBindingAuthority()
+	var candidate domain.WorkspaceBindingCandidate
+	if c.Candidate != nil {
+		candidate = *c.Candidate
+	} else {
+		if !domain.IsValidPinnedAOCommit(c.PinnedAOCommit) {
+			return errors.New("dispatch: coordinator requires valid 40 lowercase hex PinnedAOCommit from explicit/trusted source")
+		}
+		sess, sessErr := c.Store.GetWorkerSessionByPair(ctx, task.PairID)
+		if sessErr != nil || sess.WorktreePath == nil || *sess.WorktreePath == "" {
+			return errors.New("dispatch: worker session has no valid worktree path")
+		}
+		worktreePath := *sess.WorktreePath
+		gitdirPath, gErr := resolveLinkedGitDir(worktreePath)
+		if gErr != nil {
+			return fmt.Errorf("dispatch: failed to resolve linked gitdir: %w", gErr)
+		}
+		candidate = domain.WorkspaceBindingCandidate{
+			CanonicalWorktreePath: worktreePath,
+			LinkedGitDirPath:      gitdirPath,
+			PinnedAOCommit:        c.PinnedAOCommit,
+		}
 	}
-	lease, err := auth.Acquire(ctx, candidate)
+	if !domain.IsValidPinnedAOCommit(candidate.PinnedAOCommit) {
+		return errors.New("dispatch: candidate requires valid 40 lowercase hex PinnedAOCommit")
+	}
+
+	lease, err := c.Authority.Acquire(ctx, candidate)
 	if err != nil {
 		return fmt.Errorf("dispatch: failed to acquire workspace lease: %w", err)
 	}
 	defer lease.Close()
 	snapshot := lease.Snapshot()
 
-	var attempt domain.TaskAttempt
-	if task.State == domain.StateReady {
-		attempt, err = c.Store.PrepareBoundDispatch(ctx, taskID, contractID, attemptID, reportPath, time.Now().UTC(), store.DispatchBinding{
-			OperationID:        operationID,
-			SessionID:          sessionID,
-			TerminalGeneration: generation,
-			Workspace:          snapshot,
-		})
-		if err != nil {
-			return err
-		}
-	} else if task.State == domain.StateDispatched {
-		attempt, err = c.Store.GetTaskAttempt(ctx, attemptID)
-		if err != nil {
-			return err
-		}
-		durable, readErr := c.Store.GetDispatchOperation(ctx, operationID)
-		if readErr != nil {
-			return readErr
-		}
-		if task.CurrentAttempt != attempt.AttemptNumber || attempt.EndedAt != nil || attempt.TaskID != taskID || attempt.ContractID != contractID || attempt.SessionID == nil || *attempt.SessionID != sessionID || attempt.TerminalGeneration == nil || *attempt.TerminalGeneration != generation || durable.AttemptID != attemptID || durable.Stage != domain.DispatchBound {
-			return errors.New("dispatch: current open attempt/operation does not match retry request")
-		}
-	} else {
-		return fmt.Errorf("dispatch: Task %s is %s; only READY allocation or its existing DISPATCHED attempt is admissible", taskID, task.State)
+	if task.State != domain.StateReady {
+		return fmt.Errorf("dispatch: Task %s is %s; only READY allocation is admissible", taskID, task.State)
 	}
+	attempt, err := c.Store.PrepareBoundDispatch(ctx, taskID, contractID, attemptID, reportPath, time.Now().UTC(), store.DispatchBinding{
+		OperationID:        operationID,
+		SessionID:          sessionID,
+		TerminalGeneration: generation,
+		Workspace:          snapshot,
+	})
+	if err != nil {
+		return err
+	}
+
 	status, err := c.AO.GetWorkerStatus(ctx, sessionID)
 	if err != nil {
 		recoveryCtx := context.WithoutCancel(ctx)
@@ -484,4 +484,44 @@ func (c *Coordinator) RecoverPreSend(ctx context.Context, attemptID, operationID
 		actor = principal
 	}
 	return c.Store.ResolvePreSendHold(context.WithoutCancel(ctx), operationID, attemptID, expectedDisposition, sessionID, generation, string(status.Activity.State), principal, actor, time.Now().UTC())
+}
+
+func resolveLinkedGitDir(worktreePath string) (string, error) {
+	if strings.TrimSpace(worktreePath) == "" {
+		return "", errors.New("dispatch: worktree path is empty")
+	}
+	gitPath := filepath.Join(worktreePath, ".git")
+	info, err := os.Stat(gitPath)
+	if err != nil {
+		return "", fmt.Errorf("dispatch: cannot stat .git in worktree: %w", err)
+	}
+	if info.IsDir() {
+		return filepath.Clean(gitPath), nil
+	}
+	data, err := os.ReadFile(gitPath)
+	if err != nil {
+		return "", fmt.Errorf("dispatch: cannot read .git pointer file: %w", err)
+	}
+	content := strings.TrimSpace(string(data))
+	const prefix = "gitdir:"
+	if !strings.HasPrefix(strings.ToLower(content), prefix) {
+		return "", fmt.Errorf("dispatch: invalid .git pointer file format in %s", worktreePath)
+	}
+	rawDir := strings.TrimSpace(content[len(prefix):])
+	if rawDir == "" {
+		return "", fmt.Errorf("dispatch: empty gitdir path in pointer file %s", gitPath)
+	}
+	targetDir := rawDir
+	if !filepath.IsAbs(targetDir) {
+		targetDir = filepath.Join(worktreePath, targetDir)
+	}
+	targetDir = filepath.Clean(targetDir)
+	targetInfo, err := os.Stat(targetDir)
+	if err != nil {
+		return "", fmt.Errorf("dispatch: linked gitdir %s does not exist: %w", targetDir, err)
+	}
+	if !targetInfo.IsDir() {
+		return "", fmt.Errorf("dispatch: linked gitdir %s is not a directory", targetDir)
+	}
+	return targetDir, nil
 }

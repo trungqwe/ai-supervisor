@@ -69,6 +69,53 @@ func (v verifiedOperator) VerifiedRestorePrincipal(_ context.Context, _, _, _, s
 	return v.principal, v.ok, nil
 }
 
+var testCandidate = domain.WorkspaceBindingCandidate{
+	CanonicalWorktreePath: "C:\\repo\\worktree",
+	LinkedGitDirPath:      "C:\\repo\\worktree\\.git",
+	PinnedAOCommit:        strings.Repeat("0", 40),
+}
+
+type fakeDispatchLease struct {
+	failReval bool
+	snapshot  domain.WorkspaceBindingSnapshot
+}
+
+func (l *fakeDispatchLease) Snapshot() domain.WorkspaceBindingSnapshot {
+	return l.snapshot
+}
+
+func (l *fakeDispatchLease) Revalidate() error {
+	if l.failReval {
+		return errors.New("simulated lease revalidation failure")
+	}
+	return nil
+}
+
+func (l *fakeDispatchLease) Close() error {
+	return nil
+}
+
+type fakeDispatchAuthority struct {
+	failReval bool
+	snapshot  *domain.WorkspaceBindingSnapshot
+}
+
+func (f *fakeDispatchAuthority) Acquire(ctx context.Context, candidate domain.WorkspaceBindingCandidate) (domain.WorkspaceBindingLease, error) {
+	snap := domain.WorkspaceBindingSnapshot{
+		CanonicalWorktreePath:       candidate.CanonicalWorktreePath,
+		WorktreeVolumeSerialHex:     "0000000012345678",
+		WorktreeFileIDHex:           "000000000000000012345678abcdef01",
+		LinkedGitDirPath:            candidate.LinkedGitDirPath,
+		LinkedGitDirVolumeSerialHex: "0000000012345678",
+		LinkedGitDirFileIDHex:       "000000000000000012345678abcdef02",
+		PinnedAOCommit:              candidate.PinnedAOCommit,
+	}
+	if f.snapshot != nil {
+		snap = *f.snapshot
+	}
+	return &fakeDispatchLease{failReval: f.failReval, snapshot: snap}, nil
+}
+
 func TestRestoreIsDisabledWithoutExplicitHostBoundaryEnablement(t *testing.T) {
 	upstream := &fakeAO{}
 	coordinator := Coordinator{AO: upstream, Operator: verifiedOperator{principal: "test-subject", ok: true}}
@@ -422,7 +469,7 @@ func TestDispatchAmbiguousSendIsPersistedAndNeverRepeated(t *testing.T) {
 		t.Fatal(err)
 	}
 	upstream := &fakeAO{statusResult: &ao.WorkerStatus{ID: "session-send", TerminalGeneration: "generation-send", Activity: ao.ActivitySnapshot{State: ao.ActivityStateIdle}}, dispatchErr: errors.New("connection lost after send")}
-	c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}}
+	c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}, Authority: &fakeDispatchAuthority{}, Candidate: &testCandidate}
 	report, err := store.CanonicalExpectedReportPath("task-send", "attempt-send")
 	if err != nil {
 		t.Fatal(err)
@@ -479,7 +526,7 @@ func TestDispatchHTTP200ConfirmsAcceptanceWithoutRunningTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	upstream := &fakeAO{statusResult: &ao.WorkerStatus{ID: "session-send-confirmed", TerminalGeneration: "generation-send-confirmed", Activity: ao.ActivitySnapshot{State: ao.ActivityStateWaitingInput}}, dispatchResult: &ao.DispatchTaskResult{SessionID: "session-send-confirmed"}}
-	c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}}
+	c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}, Authority: &fakeDispatchAuthority{}, Candidate: &testCandidate}
 	report, err := store.CanonicalExpectedReportPath("task-send-confirmed", "attempt-send-confirmed")
 	if err != nil {
 		t.Fatal(err)
@@ -516,7 +563,7 @@ func TestHTTP200ConfirmationRollbackRunsFreshD5ContainmentWithoutResend(t *testi
 	defer s.Close()
 	prepareDispatchCoordinatorFixture(t, s, "confirm-rollback")
 	upstream := &fakeAO{statusResult: &ao.WorkerStatus{ID: "session-confirm-rollback", TerminalGeneration: "generation-confirm-rollback", Activity: ao.ActivitySnapshot{State: ao.ActivityStateIdle}}, dispatchResult: &ao.DispatchTaskResult{SessionID: "session-confirm-rollback"}}
-	c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}}
+	c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}, Authority: &fakeDispatchAuthority{}, Candidate: &testCandidate}
 	raw, err := sql.Open("sqlite", cfg.DSN())
 	if err != nil {
 		t.Fatal(err)
@@ -553,7 +600,7 @@ func TestInvalidSendResponseWithD5AuditFailureLeavesIntentAndNeverResends(t *tes
 	defer s.Close()
 	prepareDispatchCoordinatorFixture(t, s, "invalid-d5-failure")
 	upstream := &fakeAO{statusResult: &ao.WorkerStatus{ID: "session-invalid-d5-failure", TerminalGeneration: "generation-invalid-d5-failure", Activity: ao.ActivitySnapshot{State: ao.ActivityStateIdle}}, dispatchResult: &ao.DispatchTaskResult{SessionID: "different-session"}}
-	c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}}
+	c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}, Authority: &fakeDispatchAuthority{}, Candidate: &testCandidate}
 	raw, err := sql.Open("sqlite", cfg.DSN())
 	if err != nil {
 		t.Fatal(err)
@@ -680,7 +727,7 @@ func TestPreSendObservationMatrixKeepsOrClosesExactAttempt(t *testing.T) {
 				t.Fatal(err)
 			}
 			upstream := &fakeAO{statusResult: tc.status, statusErr: tc.statusErr}
-			c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}}
+			c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}, Authority: &fakeDispatchAuthority{}, Candidate: &testCandidate}
 			report, err := store.CanonicalExpectedReportPath("task-pre-send", "attempt-pre-send")
 			if err != nil {
 				t.Fatal(err)
@@ -723,12 +770,11 @@ func TestPreSendObservationMatrixKeepsOrClosesExactAttempt(t *testing.T) {
 	}
 }
 
-
 func TestDispatchExecutionPolicyValidationBeforeSendAndContainment(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		policy      domain.ExecutionBudgetPolicy
-		wantValid   bool
+		name      string
+		policy    domain.ExecutionBudgetPolicy
+		wantValid bool
 	}{
 		{"empty_policy_ref", domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: ""}, false},
 		{"whitespace_policy_ref", domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "   "}, false},
@@ -780,7 +826,7 @@ func TestDispatchExecutionPolicyValidationBeforeSendAndContainment(t *testing.T)
 				statusResult:   &ao.WorkerStatus{ID: sessionID, TerminalGeneration: generation, Activity: ao.ActivitySnapshot{State: ao.ActivityStateIdle}},
 				dispatchResult: &ao.DispatchTaskResult{SessionID: sessionID},
 			}
-			c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: tc.policy}
+			c := Coordinator{Store: s, AO: upstream, ExecutionPolicy: tc.policy, Authority: &fakeDispatchAuthority{}, Candidate: &testCandidate}
 			report, err := store.CanonicalExpectedReportPath(taskID, attemptID)
 			if err != nil {
 				t.Fatal(err)
@@ -839,47 +885,6 @@ func TestDispatchExecutionPolicyValidationBeforeSendAndContainment(t *testing.T)
 			}
 		})
 	}
-}
-
-type fakeDispatchAuthority struct {
-	failReval bool
-	snapshot  *domain.WorkspaceBindingSnapshot
-}
-
-type fakeDispatchLease struct {
-	failReval bool
-	snapshot  domain.WorkspaceBindingSnapshot
-}
-
-func (l *fakeDispatchLease) Snapshot() domain.WorkspaceBindingSnapshot {
-	return l.snapshot
-}
-
-func (l *fakeDispatchLease) Revalidate() error {
-	if l.failReval {
-		return errors.New("simulated lease revalidation failure")
-	}
-	return nil
-}
-
-func (l *fakeDispatchLease) Close() error {
-	return nil
-}
-
-func (f *fakeDispatchAuthority) Acquire(ctx context.Context, candidate domain.WorkspaceBindingCandidate) (domain.WorkspaceBindingLease, error) {
-	snap := domain.WorkspaceBindingSnapshot{
-		CanonicalWorktreePath:       candidate.CanonicalWorktreePath,
-		WorktreeVolumeSerialHex:     "0000000012345678",
-		WorktreeFileIDHex:           "000000000000000012345678abcdef01",
-		LinkedGitDirPath:            candidate.LinkedGitDirPath,
-		LinkedGitDirVolumeSerialHex: "0000000012345678",
-		LinkedGitDirFileIDHex:       "000000000000000012345678abcdef02",
-		PinnedAOCommit:              candidate.PinnedAOCommit,
-	}
-	if f.snapshot != nil {
-		snap = *f.snapshot
-	}
-	return &fakeDispatchLease{failReval: f.failReval, snapshot: snap}, nil
 }
 
 func TestDispatchWorkspaceBindingAuthorityVerification(t *testing.T) {
@@ -958,6 +963,7 @@ func TestDispatchWorkspaceBindingAuthorityVerification(t *testing.T) {
 			Store:           s,
 			AO:              aoFake,
 			Authority:       auth,
+			Candidate:       &testCandidate,
 			ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"},
 		}
 		report, err := store.CanonicalExpectedReportPath(taskID, attemptID)
@@ -1006,11 +1012,7 @@ func TestDispatchWorkspaceBindingAuthorityVerification(t *testing.T) {
 
 		// First, prepare bound dispatch with valid snapshot so task is DISPATCHED and durable binding is ACTIVE
 		origAuth := &fakeDispatchAuthority{}
-		origLease, _ := origAuth.Acquire(ctx, domain.WorkspaceBindingCandidate{
-			CanonicalWorktreePath: "C:\\repo\\worktree",
-			LinkedGitDirPath:      "C:\\repo\\worktree\\.git",
-			PinnedAOCommit:        strings.Repeat("0", 40),
-		})
+		origLease, _ := origAuth.Acquire(ctx, testCandidate)
 		_, err = s.PrepareBoundDispatch(ctx, taskID, contractID, attemptID, report, time.Now().UTC(), store.DispatchBinding{
 			OperationID:        opID,
 			SessionID:          sessionID,
@@ -1021,31 +1023,20 @@ func TestDispatchWorkspaceBindingAuthorityVerification(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// Now simulate directory substitution: authority returns mismatched volume serial
-		auth := &fakeDispatchAuthority{
-			snapshot: &domain.WorkspaceBindingSnapshot{
-				CanonicalWorktreePath:       "C:\\repo\\worktree",
-				WorktreeVolumeSerialHex:     "0000000099999999", // mismatch
-				WorktreeFileIDHex:           "000000000000000012345678abcdef01",
-				LinkedGitDirPath:            "C:\\repo\\worktree\\.git",
-				LinkedGitDirVolumeSerialHex: "0000000012345678",
-				LinkedGitDirFileIDHex:       "000000000000000012345678abcdef02",
-				PinnedAOCommit:              strings.Repeat("0", 40),
-			},
-		}
-		c := Coordinator{
-			Store:           s,
-			AO:              aoFake,
-			Authority:       auth,
-			ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"},
+		// Directly call RecordSendRequested with mismatched volume serial to verify Guard 13 & Variant B
+		mismatchedSnapshot := domain.WorkspaceBindingSnapshot{
+			CanonicalWorktreePath:       "C:\\repo\\worktree",
+			WorktreeVolumeSerialHex:     "0000000099999999", // mismatch
+			WorktreeFileIDHex:           "000000000000000012345678abcdef01",
+			LinkedGitDirPath:            "C:\\repo\\worktree\\.git",
+			LinkedGitDirVolumeSerialHex: "0000000012345678",
+			LinkedGitDirFileIDHex:       "000000000000000012345678abcdef02",
+			PinnedAOCommit:              strings.Repeat("0", 40),
 		}
 
-		dispatchErr := c.Dispatch(ctx, taskID, contractID, attemptID, opID, sessionID, generation, report, "contract text", "supervisor")
-		if dispatchErr == nil {
-			t.Fatal("expected dispatch error on snapshot mismatch, got nil")
-		}
-		if aoFake.sends != 0 {
-			t.Fatalf("AO sends = %d, want 0", aoFake.sends)
+		sendErr := s.RecordSendRequested(ctx, opID, sessionID, generation, "idle", false, "supervisor", time.Now().UTC(), mismatchedSnapshot)
+		if sendErr == nil || !strings.Contains(sendErr.Error(), "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH") {
+			t.Fatalf("expected WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH error, got: %v", sendErr)
 		}
 
 		// Variant B verified
@@ -1069,6 +1060,23 @@ func TestDispatchWorkspaceBindingAuthorityVerification(t *testing.T) {
 		if err != nil || attempt.EndedAt != nil {
 			t.Fatalf("attempt ended prematurely: %+v %v", attempt, err)
 		}
+
+		// Now verify P04A-I1-005: Coordinator.Dispatch rejects already DISPATCHED task and does not resend
+		auth := &fakeDispatchAuthority{snapshot: &mismatchedSnapshot}
+		c := Coordinator{
+			Store:           s,
+			AO:              aoFake,
+			Authority:       auth,
+			Candidate:       &testCandidate,
+			ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"},
+		}
+		dispatchErr := c.Dispatch(ctx, taskID, contractID, attemptID, opID, sessionID, generation, report, "contract text", "supervisor")
+		if dispatchErr == nil || !strings.Contains(dispatchErr.Error(), "only READY allocation is admissible") {
+			t.Fatalf("expected rejection of DISPATCHED task, got: %v", dispatchErr)
+		}
+		if aoFake.sends != 0 {
+			t.Fatalf("AO sends = %d, want 0", aoFake.sends)
+		}
 	})
 
 	t.Run("ExactMatchSuccess_AC_P04A_10", func(t *testing.T) {
@@ -1079,6 +1087,7 @@ func TestDispatchWorkspaceBindingAuthorityVerification(t *testing.T) {
 			Store:           s,
 			AO:              aoFake,
 			Authority:       auth,
+			Candidate:       &testCandidate,
 			ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"},
 		}
 		report, err := store.CanonicalExpectedReportPath(taskID, attemptID)
@@ -1101,6 +1110,30 @@ func TestDispatchWorkspaceBindingAuthorityVerification(t *testing.T) {
 		op, err := s.GetDispatchOperation(ctx, opID)
 		if err != nil || op.Stage != domain.SendConfirmed {
 			t.Fatalf("dispatch stage = %v, want SEND_CONFIRMED: %v", op.Stage, err)
+		}
+	})
+
+	t.Run("NilAuthority_FailsClosed_AC_P04A_04", func(t *testing.T) {
+		taskID := "wb-nil-auth"
+		s, aoFake, contractID, attemptID, opID, sessionID, generation := setupDispatchTest(t, taskID)
+		c := Coordinator{
+			Store:           s,
+			AO:              aoFake,
+			Authority:       nil,
+			Candidate:       &testCandidate,
+			ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"},
+		}
+		report, err := store.CanonicalExpectedReportPath(taskID, attemptID)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		dispatchErr := c.Dispatch(ctx, taskID, contractID, attemptID, opID, sessionID, generation, report, "contract text", "supervisor")
+		if dispatchErr == nil || !strings.Contains(dispatchErr.Error(), "requires injected workspace binding authority") {
+			t.Fatalf("expected nil authority error, got: %v", dispatchErr)
+		}
+		if aoFake.sends != 0 {
+			t.Fatalf("AO sends = %d, want 0", aoFake.sends)
 		}
 	})
 }

@@ -55,6 +55,23 @@ func setupRunningAttemptWithBinding(t *testing.T, s *Store, taskID, contractID, 
 	return pairID, binding
 }
 
+func validTestReport(taskID, contractID, attemptID, baseSHA, headSHA string) domain.WorkerReport {
+	return domain.WorkerReport{
+		TaskID:         taskID,
+		AttemptID:      attemptID,
+		Status:         "COMPLETED",
+		Branch:         "codex/task-branch",
+		BaseSHA:        baseSHA,
+		HeadSHA:        headSHA,
+		FilesChanged:   []string{"internal/store/migrations.go"},
+		CommandsRun:    []domain.CommandRun{{Command: "go test ./...", ExitCode: 0}},
+		Tests:          []domain.WorkerReportTest{{TestSuite: "unit", Passed: 1, Failed: 0}},
+		BuildStatus:    "PASSED",
+		WorkerClaims:   []string{"Implemented feature X"},
+		ReadyForReview: true,
+	}
+}
+
 func TestReportIntake_CleanSuccessTransactionA(t *testing.T) {
 	s, _ := createTestStore(t)
 	defer s.Close()
@@ -66,20 +83,13 @@ func TestReportIntake_CleanSuccessTransactionA(t *testing.T) {
 	_, _ = setupRunningAttemptWithBinding(t, s, taskID, contractID, attemptID)
 
 	headSHA := "1234567890abcdef"
-	report := domain.WorkerReport{
-		HeadSHA:      headSHA,
-		FilesChanged: []string{"internal/store/migrations.go"},
-		Tests: []domain.ClaimedTestResult{
-			{Name: "TestA", Passed: true, ExitCode: 0},
-		},
-		WorkerClaims: []string{"Implemented feature X"},
-		BuildStatus:  "SUCCESS",
-	}
+	baseSHA := "35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea"
+	report := validTestReport(taskID, contractID, attemptID, baseSHA, headSHA)
 
 	gitEvidence := domain.GitEvidenceResult{
 		IsClean:       true,
 		ActualHeadSHA: "1234567890abcdef",
-		ActualBaseSHA: "35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea",
+		ActualBaseSHA: baseSHA,
 		ChangedFiles:  []string{"internal/store/migrations.go"},
 	}
 
@@ -124,10 +134,8 @@ func TestReportIntake_DirtyWorktreeDiagnostics(t *testing.T) {
 	_, _ = setupRunningAttemptWithBinding(t, s, taskID, contractID, attemptID)
 
 	headSHA := "1234567890abcdef"
-	report := domain.WorkerReport{
-		HeadSHA:      headSHA,
-		FilesChanged: []string{"internal/foo.go"},
-	}
+	baseSHA := "35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea"
+	report := validTestReport(taskID, contractID, attemptID, baseSHA, headSHA)
 
 	dirtyEvidence := domain.GitEvidenceResult{
 		IsClean:          false,
@@ -181,16 +189,14 @@ func TestReportIntake_ClaimEvidenceZeroTrustSeparation(t *testing.T) {
 
 	reportedSHA := "aaaa1111"
 	actualSHA := "bbbb2222"
+	baseSHA := "35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea"
 
-	report := domain.WorkerReport{
-		HeadSHA:      reportedSHA,
-		FilesChanged: []string{"test.go"},
-	}
+	report := validTestReport(taskID, contractID, attemptID, baseSHA, reportedSHA)
 
 	gitEvidence := domain.GitEvidenceResult{
 		IsClean:       true,
 		ActualHeadSHA: actualSHA,
-		ActualBaseSHA: "35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea",
+		ActualBaseSHA: baseSHA,
 		ChangedFiles:  []string{"test.go"},
 	}
 
@@ -213,4 +219,139 @@ func TestReportIntake_ClaimEvidenceZeroTrustSeparation(t *testing.T) {
 	if claim.ReportedHeadSHA == gitEvidence.ActualHeadSHA {
 		t.Fatalf("reported and actual SHA unexpectedly collided")
 	}
+}
+
+func TestReportIntake_NegativeSchemaAndLineage(t *testing.T) {
+	s, _ := createTestStore(t)
+	defer s.Close()
+	ctx := context.Background()
+
+	taskID := "task-neg-1"
+	contractID := "contract-" + taskID
+	attemptID := "attempt-neg-1"
+	_, _ = setupRunningAttemptWithBinding(t, s, taskID, contractID, attemptID)
+
+	baseSHA := "35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea"
+	headSHA := "1234567890abcdef"
+
+	cleanEvidence := domain.GitEvidenceResult{IsClean: true}
+
+	// 1. Lineage mismatch: TaskID
+	badTaskReport := validTestReport("wrong-task", contractID, attemptID, baseSHA, headSHA)
+	if err := s.IngestWorkerReport(ctx, taskID, contractID, attemptID, badTaskReport, cleanEvidence, "supervisor", time.Now().UTC()); err == nil {
+		t.Fatal("expected error on TaskID lineage mismatch")
+	}
+
+	// 2. Lineage mismatch: AttemptID
+	badAttemptReport := validTestReport(taskID, contractID, "wrong-attempt", baseSHA, headSHA)
+	if err := s.IngestWorkerReport(ctx, taskID, contractID, attemptID, badAttemptReport, cleanEvidence, "supervisor", time.Now().UTC()); err == nil {
+		t.Fatal("expected error on AttemptID lineage mismatch")
+	}
+
+	// 3. Lineage mismatch: BaseSHA
+	badBaseReport := validTestReport(taskID, contractID, attemptID, "wrongbase12345678", headSHA)
+	if err := s.IngestWorkerReport(ctx, taskID, contractID, attemptID, badBaseReport, cleanEvidence, "supervisor", time.Now().UTC()); err == nil {
+		t.Fatal("expected error on BaseSHA lineage mismatch")
+	}
+
+	// 4. IngestWorkerReportRaw with additional property
+	extraFieldJSON := []byte(`{
+		"task_id": "` + taskID + `",
+		"attempt_id": "` + attemptID + `",
+		"status": "COMPLETED",
+		"branch": "main",
+		"base_sha": "` + baseSHA + `",
+		"head_sha": "` + headSHA + `",
+		"files_changed": [],
+		"commands_run": [],
+		"tests": [],
+		"build_status": "PASSED",
+		"worker_claims": [],
+		"ready_for_review": true,
+		"disallowed_key": "fail"
+	}`)
+	if err := s.IngestWorkerReportRaw(ctx, taskID, contractID, attemptID, extraFieldJSON, cleanEvidence, "supervisor", time.Now().UTC()); err == nil {
+		t.Fatal("expected error on extra property in raw report JSON")
+	}
+
+	// 5. IngestWorkerReportRaw with missing required property
+	missingFieldJSON := []byte(`{
+		"task_id": "` + taskID + `",
+		"attempt_id": "` + attemptID + `",
+		"status": "COMPLETED",
+		"branch": "main",
+		"base_sha": "` + baseSHA + `",
+		"head_sha": "` + headSHA + `"
+	}`)
+	if err := s.IngestWorkerReportRaw(ctx, taskID, contractID, attemptID, missingFieldJSON, cleanEvidence, "supervisor", time.Now().UTC()); err == nil {
+		t.Fatal("expected error on missing required fields in raw report JSON")
+	}
+}
+
+func TestReportIntake_NegativeDirtyIntakeGuard(t *testing.T) {
+	s, _ := createTestStore(t)
+	defer s.Close()
+	ctx := context.Background()
+
+	taskID := "task-dirty-guard"
+	contractID := "contract-" + taskID
+	attemptID := "attempt-dirty-guard"
+	pairID, _ := setupRunningAttemptWithBinding(t, s, taskID, contractID, attemptID)
+
+	baseSHA := "35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea"
+	headSHA := "1234567890abcdef"
+	report := validTestReport(taskID, contractID, attemptID, baseSHA, headSHA)
+	dirtyEvidence := domain.GitEvidenceResult{
+		IsClean:          false,
+		UncommittedFiles: []string{"file.go"},
+	}
+
+	// Case 1: Task not in RUNNING (simulate task moved to REPORT_READY or FAILED)
+	_ = s.TransitionTask(ctx, taskID, domain.StateRunning, domain.StateReportReady)
+
+	err := s.IngestWorkerReport(ctx, taskID, contractID, attemptID, report, dirtyEvidence, "supervisor", time.Now().UTC())
+	if err == nil {
+		t.Fatal("expected error for dirty intake when task is not RUNNING")
+	}
+
+	// Verify ZERO holds and ZERO audit events created
+	holds, _ := s.GetActiveReviewIntegrityHolds(ctx, attemptID)
+	if len(holds) != 0 {
+		t.Fatalf("expected 0 holds on rejected dirty intake, got %d", len(holds))
+	}
+
+	// Case 2: Attempt ended
+	taskID2 := "task-dirty-ended"
+	contractID2 := "contract-" + taskID2
+	attemptID2 := "attempt-dirty-ended"
+	_, _ = setupRunningAttemptWithBinding(t, s, taskID2, contractID2, attemptID2)
+	now := time.Now().UTC()
+	_, _ = s.db.ExecContext(ctx, "UPDATE task_attempts SET ended_at = ? WHERE attempt_id = ?", now.Format(time.RFC3339Nano), attemptID2)
+
+	report2 := validTestReport(taskID2, contractID2, attemptID2, baseSHA, headSHA)
+	err = s.IngestWorkerReport(ctx, taskID2, contractID2, attemptID2, report2, dirtyEvidence, "supervisor", now)
+	if err == nil {
+		t.Fatal("expected error for dirty intake when attempt is ended")
+	}
+	holds2, _ := s.GetActiveReviewIntegrityHolds(ctx, attemptID2)
+	if len(holds2) != 0 {
+		t.Fatalf("expected 0 holds on ended attempt, got %d", len(holds2))
+	}
+
+	// Case 3: Contract lineage mismatch
+	taskID3 := "task-dirty-lineage"
+	contractID3 := "contract-" + taskID3
+	attemptID3 := "attempt-dirty-lineage"
+	_, _ = setupRunningAttemptWithBinding(t, s, taskID3, contractID3, attemptID3)
+	report3 := validTestReport(taskID3, "wrong-contract", attemptID3, baseSHA, headSHA)
+
+	err = s.IngestWorkerReport(ctx, taskID3, "wrong-contract", attemptID3, report3, dirtyEvidence, "supervisor", now)
+	if err == nil {
+		t.Fatal("expected error on contract lineage mismatch")
+	}
+	holds3, _ := s.GetActiveReviewIntegrityHolds(ctx, attemptID3)
+	if len(holds3) != 0 {
+		t.Fatalf("expected 0 holds on mismatched contract, got %d", len(holds3))
+	}
+	_ = pairID
 }

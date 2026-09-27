@@ -252,6 +252,22 @@ func TestP03IntegrationHarness5StepsViaLibrarySaga(t *testing.T) {
 
 	auth := host.NewAuthority("")
 
+	snap := domain.WorkspaceBindingSnapshot{
+		CanonicalWorktreePath:       "/workspace",
+		WorktreeVolumeSerialHex:     "0000000012345678",
+		WorktreeFileIDHex:           "000000000000000012345678abcdef01",
+		LinkedGitDirPath:            "/workspace/.git",
+		LinkedGitDirVolumeSerialHex: "0000000012345678",
+		LinkedGitDirFileIDHex:       "000000000000000012345678abcdef02",
+		PinnedAOCommit:              "35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea",
+	}
+	wbAuth := host.NewMemoryWorkspaceBindingAuthorityWithSnapshot(snap)
+	candidate := domain.WorkspaceBindingCandidate{
+		CanonicalWorktreePath: "/workspace",
+		LinkedGitDirPath:      "/workspace/.git",
+		PinnedAOCommit:        "35909d7b21cdfe6b9f5c309ea565c5f9f9fedeea",
+	}
+
 	dispCoord := &dispatch.Coordinator{
 		Store:          st,
 		AO:             client,
@@ -261,6 +277,8 @@ func TestP03IntegrationHarness5StepsViaLibrarySaga(t *testing.T) {
 			Duration:  30 * time.Minute,
 			PolicyRef: "policy-p03",
 		},
+		Authority: wbAuth,
+		Candidate: &candidate,
 	}
 
 	// Step 1: Pair provisioning & Session Creation via dispatch.Coordinator.Provision
@@ -363,6 +381,7 @@ func TestP03IntegrationHarness5StepsViaLibrarySaga(t *testing.T) {
 		Store:                st,
 		AO:                   client,
 		Host:                 auth,
+		Authority:            wbAuth,
 		ActivityPollInterval: 1 * time.Second,
 		ExecutionDeadline:    30 * time.Minute,
 		Handoff:              &testHandoff{available: true},

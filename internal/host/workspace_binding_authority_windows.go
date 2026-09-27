@@ -121,7 +121,26 @@ func openDirectoryHandleWithoutDeleteShare(dirPath string) (windows.Handle, erro
 	return handle, nil
 }
 
+var ErrUnsupportedFilesystem = errors.New("host: unsupported filesystem")
+
 func queryHandleIdentity(h windows.Handle) (volSerialHex string, fileIDHex string, canonicalPath string, err error) {
+	var fsNameBuf [260]uint16
+	err = windows.GetVolumeInformationByHandle(
+		h,
+		nil, 0,
+		nil,
+		nil,
+		nil,
+		&fsNameBuf[0], uint32(len(fsNameBuf)),
+	)
+	if err != nil {
+		return "", "", "", fmt.Errorf("GetVolumeInformationByHandle failed: %w", err)
+	}
+	fsName := windows.UTF16ToString(fsNameBuf[:])
+	if fsName != "NTFS" && fsName != "ReFS" {
+		return "", "", "", fmt.Errorf("%w: unsupported filesystem %q (must be NTFS or ReFS)", ErrUnsupportedFilesystem, fsName)
+	}
+
 	var info winFileIDInfo
 	err = windows.GetFileInformationByHandleEx(
 		h,
@@ -155,7 +174,9 @@ func queryHandleIdentity(h windows.Handle) (volSerialHex string, fileIDHex strin
 }
 
 func normalizeDosDevicePath(p string) string {
-	p = strings.TrimPrefix(p, `\\?\UNC\`)
+	if strings.HasPrefix(p, `\\?\UNC\`) {
+		return `\\` + filepath.Clean(strings.TrimPrefix(p, `\\?\UNC\`))
+	}
 	p = strings.TrimPrefix(p, `\\?\`)
 	return filepath.Clean(p)
 }
@@ -172,6 +193,9 @@ func (a *WindowsWorkspaceBindingAuthority) Acquire(ctx context.Context, candidat
 	}
 	if strings.TrimSpace(candidate.LinkedGitDirPath) == "" {
 		return nil, errors.New("host: candidate LinkedGitDirPath must not be empty")
+	}
+	if !domain.IsValidPinnedAOCommit(candidate.PinnedAOCommit) {
+		return nil, fmt.Errorf("host: candidate PinnedAOCommit must be exactly 40 lowercase hex chars, got %q", candidate.PinnedAOCommit)
 	}
 
 	wtHandle, err := openDirectoryHandleWithoutDeleteShare(candidate.CanonicalWorktreePath)
@@ -199,11 +223,6 @@ func (a *WindowsWorkspaceBindingAuthority) Acquire(ctx context.Context, candidat
 		return nil, fmt.Errorf("host: failed to query linked gitdir physical identity: %w", err)
 	}
 
-	pinnedCommit := candidate.PinnedAOCommit
-	if pinnedCommit == "" {
-		pinnedCommit = strings.Repeat("0", 40)
-	}
-
 	snapshot := domain.WorkspaceBindingSnapshot{
 		CanonicalWorktreePath:       wtCanonical,
 		WorktreeVolumeSerialHex:     wtVol,
@@ -211,7 +230,7 @@ func (a *WindowsWorkspaceBindingAuthority) Acquire(ctx context.Context, candidat
 		LinkedGitDirPath:            gdCanonical,
 		LinkedGitDirVolumeSerialHex: gdVol,
 		LinkedGitDirFileIDHex:       gdID,
-		PinnedAOCommit:              pinnedCommit,
+		PinnedAOCommit:              candidate.PinnedAOCommit,
 	}
 
 	return &windowsWorkspaceBindingLease{

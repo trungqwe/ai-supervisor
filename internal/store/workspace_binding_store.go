@@ -12,10 +12,10 @@ import (
 )
 
 var (
-	ErrWorkspaceBindingNotFound   = errors.New("store: workspace binding not found")
-	ErrPreSendGuardRejected       = errors.New("store: pre-send guard rejected")
+	ErrWorkspaceBindingNotFound    = errors.New("store: workspace binding not found")
+	ErrPreSendGuardRejected        = errors.New("store: pre-send guard rejected")
 	ErrReviewIntegrityHoldActive   = errors.New("store: active review integrity hold blocks operation")
-	ErrWorkerClaimNotFound        = errors.New("store: worker claim not found")
+	ErrWorkerClaimNotFound         = errors.New("store: worker claim not found")
 	ErrReviewIntegrityHoldNotFound = errors.New("store: review integrity hold not found")
 )
 
@@ -363,17 +363,17 @@ SELECT ended_at, recovery_disposition FROM task_attempts WHERE attempt_id = ?
 
 	if resolutionEventID == "" {
 		resDesc := domain.ResolutionEventDescriptor{
-			AttemptID:                              attemptID,
-			ContractID:                             contractID,
-			EventType:                              domain.AuditReviewIntegrityHoldResolved,
-			HoldID:                                 holdID,
-			Kind:                                   "review_integrity_resolution_event",
-			OccurrenceNumber:                       occurrenceNumber,
-			PairID:                                 pairID,
-			ResolvedByPrincipal:                    resolvedByPrincipal,
+			AttemptID:                               attemptID,
+			ContractID:                              contractID,
+			EventType:                               domain.AuditReviewIntegrityHoldResolved,
+			HoldID:                                  holdID,
+			Kind:                                    "review_integrity_resolution_event",
+			OccurrenceNumber:                        occurrenceNumber,
+			PairID:                                  pairID,
+			ResolvedByPrincipal:                     resolvedByPrincipal,
 			SanitizedResolutionRationaleFingerprint: diagnosticFP,
-			TaskID:                                 taskID,
-			Version:                                1,
+			TaskID:                                  taskID,
+			Version:                                 1,
 		}
 		derived, err := domain.DeriveResolutionEventID(resDesc)
 		if err != nil {

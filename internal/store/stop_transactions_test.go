@@ -33,7 +33,7 @@ func TestTimeoutReservationBoundaryAndAtomicCause(t *testing.T) {
 	defer s.Close()
 	_, attempt := setupBoundAttempt(t, s, "task-timeout", "contract-timeout", "attempt-timeout")
 	opID := "dispatch-attempt-timeout"
-	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
+	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now(), defaultTestWorkspaceSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	origin := time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC)
@@ -606,7 +606,6 @@ func TestLogicalStopResolutionAuditAtomicForEveryPurpose(t *testing.T) {
 	}
 }
 
-
 func strPtr(s string) *string { return &s }
 
 func TestLiveStopTimeoutWaitingInputDispositionAndGuards(t *testing.T) {
@@ -615,10 +614,10 @@ func TestLiveStopTimeoutWaitingInputDispositionAndGuards(t *testing.T) {
 	defer s.Close()
 
 	for _, tc := range []struct {
-		name             string
-		disposition      *string
-		wantReserveOk    bool
-		wantPreEffectOk  bool
+		name            string
+		disposition     *string
+		wantReserveOk   bool
+		wantPreEffectOk bool
 	}{
 		{"waiting_input", strPtr("AO_WAITING_INPUT_OBSERVED"), true, true},
 		{"clean_null", nil, true, true},
@@ -636,7 +635,7 @@ func TestLiveStopTimeoutWaitingInputDispositionAndGuards(t *testing.T) {
 			deadline := origin.Add(time.Hour)
 
 			pair, attempt := setupBoundAttempt(t, s, taskID, contractID, attemptID)
-			if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", origin); err != nil {
+			if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", origin, defaultTestWorkspaceSnapshot); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.RecordSendConfirmed(ctx, opID, "supervisor", true, origin, domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "policy-guard"}); err != nil {

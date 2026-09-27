@@ -16,7 +16,10 @@ var timeNow = func() time.Time {
 	return time.Now().UTC()
 }
 
-var ErrBoundDispatchRequired = errors.New("store: legacy unbound dispatch is disabled; use PrepareBoundDispatch")
+var (
+	ErrBoundDispatchRequired           = errors.New("store: legacy unbound dispatch is disabled; use PrepareBoundDispatch")
+	ErrInvalidWorkspaceBindingSnapshot = errors.New("store: invalid workspace binding snapshot")
+)
 
 // DispatchBinding supplies the immutable execution snapshot for DISPATCH_BOUND.
 type DispatchBinding struct {
@@ -159,7 +162,14 @@ func (s *Store) prepareDispatch(
 		now = timeNow()
 	}
 
+	if binding != nil {
+		if err := binding.Workspace.Validate(); err != nil {
+			return domain.TaskAttempt{}, fmt.Errorf("%w: %v", ErrInvalidWorkspaceBindingSnapshot, err)
+		}
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
+
 	if err != nil {
 		return domain.TaskAttempt{}, fmt.Errorf("store: failed to begin dispatch transaction: %w", err)
 	}
@@ -350,27 +360,6 @@ INSERT INTO dispatch_operations (
 		}
 
 		ws := binding.Workspace
-		if ws.CanonicalWorktreePath == "" {
-			ws = domain.WorkspaceBindingSnapshot{
-				CanonicalWorktreePath:       "C:\\repo\\worktree",
-				WorktreeVolumeSerialHex:     "0000000012345678",
-				WorktreeFileIDHex:           "000000000000000012345678abcdef01",
-				LinkedGitDirPath:            "C:\\repo\\worktree\\.git",
-				LinkedGitDirVolumeSerialHex: "0000000012345678",
-				LinkedGitDirFileIDHex:       "000000000000000012345678abcdef02",
-				PinnedAOCommit:              strings.Repeat("0", 40),
-			}
-		}
-		pinnedCommit := ws.PinnedAOCommit
-		if pinnedCommit == "" {
-			pinnedCommit = strings.Repeat("0", 40)
-		}
-		volSerial := ws.WorktreeVolumeSerialHex
-		fileID := ws.WorktreeFileIDHex
-		gitdirPath := ws.LinkedGitDirPath
-		gitdirVol := ws.LinkedGitDirVolumeSerialHex
-		gitdirFileID := ws.LinkedGitDirFileIDHex
-
 		insertBindingQuery := `
 INSERT INTO attempt_workspace_bindings (
     attempt_id, task_id, contract_id, session_id, terminal_generation,
@@ -381,9 +370,9 @@ INSERT INTO attempt_workspace_bindings (
 `
 		_, err = tx.ExecContext(ctx, insertBindingQuery,
 			attemptID, taskID, contractID, binding.SessionID, binding.TerminalGeneration,
-			ws.CanonicalWorktreePath, volSerial, fileID,
-			gitdirPath, gitdirVol, gitdirFileID,
-			pinnedCommit, now.UnixMilli(),
+			ws.CanonicalWorktreePath, ws.WorktreeVolumeSerialHex, ws.WorktreeFileIDHex,
+			ws.LinkedGitDirPath, ws.LinkedGitDirVolumeSerialHex, ws.LinkedGitDirFileIDHex,
+			ws.PinnedAOCommit, now.UnixMilli(),
 		)
 		if err != nil {
 			return domain.TaskAttempt{}, fmt.Errorf("store: failed to insert workspace binding: %w", err)
@@ -427,13 +416,13 @@ INSERT INTO attempt_workspace_bindings (
 			Details: map[string]any{
 				"session_id":                      binding.SessionID,
 				"terminal_generation":             binding.TerminalGeneration,
-				"canonical_worktree_path":         binding.Workspace.CanonicalWorktreePath,
-				"volume_serial_hex":               volSerial,
-				"file_id_hex":                     fileID,
-				"linked_gitdir_path":              gitdirPath,
-				"linked_gitdir_volume_serial_hex": gitdirVol,
-				"linked_gitdir_file_id_hex":       gitdirFileID,
-				"pinned_ao_commit":                pinnedCommit,
+				"canonical_worktree_path":         ws.CanonicalWorktreePath,
+				"volume_serial_hex":               ws.WorktreeVolumeSerialHex,
+				"file_id_hex":                     ws.WorktreeFileIDHex,
+				"linked_gitdir_path":              ws.LinkedGitDirPath,
+				"linked_gitdir_volume_serial_hex": ws.LinkedGitDirVolumeSerialHex,
+				"linked_gitdir_file_id_hex":       ws.LinkedGitDirFileIDHex,
+				"pinned_ao_commit":                ws.PinnedAOCommit,
 				"binding_state":                   "ACTIVE",
 			},
 		})

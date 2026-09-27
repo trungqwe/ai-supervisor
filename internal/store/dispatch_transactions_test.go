@@ -15,7 +15,7 @@ func TestSendConfirmationBindsImmutableExecutionBudget(t *testing.T) {
 	defer s.Close()
 	_, attempt := setupBoundAttempt(t, s, "task-budget", "contract-budget", "attempt-budget")
 	opID := "dispatch-attempt-budget"
-	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
+	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now(), defaultTestWorkspaceSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	origin := time.Date(2026, 1, 2, 3, 4, 5, 123456789, time.UTC)
@@ -54,7 +54,7 @@ func TestSendConfirmationAuditFailureRollsBackBudget(t *testing.T) {
 	defer s.Close()
 	_, attempt := setupBoundAttempt(t, s, "task-budget-rollback", "contract-budget-rollback", "attempt-budget-rollback")
 	opID := "dispatch-attempt-budget-rollback"
-	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
+	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now(), defaultTestWorkspaceSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_budget_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='DISPATCH_SEND_CONFIRMED' BEGIN SELECT RAISE(ABORT,'injected budget audit failure'); END`); err != nil {
@@ -79,7 +79,7 @@ func TestLegacyBudgetBindingUsesHistoricalConfirmationAndAudit(t *testing.T) {
 	defer s.Close()
 	_, attempt := setupBoundAttempt(t, s, "task-legacy-budget", "contract-legacy-budget", "attempt-legacy-budget")
 	opID := "dispatch-attempt-legacy-budget"
-	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
+	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now(), defaultTestWorkspaceSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	// A v4 row predates the v5 trigger. Construct its exact on-disk shape.
@@ -113,7 +113,7 @@ func TestDurableSendIntentConfirmationAndUnknownDelivery(t *testing.T) {
 		s, _ := createTestStore(t)
 		defer s.Close()
 		pair, attempt := setupBoundAttempt(t, s, "task-send-confirm", "contract-send-confirm", "attempt-send-confirm")
-		if err := s.RecordSendRequested(ctx, "dispatch-attempt-send-confirm", *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
+		if err := s.RecordSendRequested(ctx, "dispatch-attempt-send-confirm", *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now(), defaultTestWorkspaceSnapshot); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.RecordSendConfirmed(ctx, "dispatch-attempt-send-confirm", "supervisor", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
@@ -137,7 +137,7 @@ func TestDurableSendIntentConfirmationAndUnknownDelivery(t *testing.T) {
 		s, _ := createTestStore(t)
 		defer s.Close()
 		pair, attempt := setupBoundAttempt(t, s, "task-send-unknown", "contract-send-unknown", "attempt-send-unknown")
-		if err := s.RecordSendRequested(ctx, "dispatch-attempt-send-unknown", *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
+		if err := s.RecordSendRequested(ctx, "dispatch-attempt-send-unknown", *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now(), defaultTestWorkspaceSnapshot); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.RecordUnknownDelivery(ctx, "dispatch-attempt-send-unknown", "supervisor", time.Now()); err != nil {
@@ -196,7 +196,7 @@ func TestSendConfirmationAuditFailureLeavesSendIntent(t *testing.T) {
 	defer s.Close()
 	_, attempt := setupBoundAttempt(t, s, "task-send-confirm-audit", "contract-send-confirm-audit", "attempt-send-confirm-audit")
 	opID := "dispatch-attempt-send-confirm-audit"
-	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
+	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now(), defaultTestWorkspaceSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_send_confirmation_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='DISPATCH_SEND_CONFIRMED' BEGIN SELECT RAISE(ABORT,'injected send confirmation audit failure'); END`); err != nil {
@@ -226,7 +226,7 @@ func TestPreSendProtocolHoldCannotBeDowngradedAndRequiresAuthority(t *testing.T)
 	if err := s.RecordPreSendHold(ctx, opID, "RECOVERY_PENDING", "supervisor", time.Now()); err == nil {
 		t.Fatal("timeout downgraded protocol hold")
 	}
-	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err == nil {
+	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now(), defaultTestWorkspaceSnapshot); err == nil {
 		t.Fatal("send accepted while protocol hold unresolved")
 	}
 	if err := s.ResolvePreSendHold(ctx, opID, attempt.AttemptID, "PRE_SEND_PROTOCOL_UNVERIFIED", *attempt.SessionID, *attempt.TerminalGeneration, "idle", "", "supervisor", time.Now()); err == nil {
@@ -239,7 +239,7 @@ func TestPreSendProtocolHoldCannotBeDowngradedAndRequiresAuthority(t *testing.T)
 	if err := s.ResolvePreSendHold(ctx, "dispatch-attempt-presend-hold", attempt.AttemptID, "PRE_SEND_PROTOCOL_UNVERIFIED", *attempt.SessionID, *attempt.TerminalGeneration, "idle", "verified-subject", "supervisor", time.Now()); err != nil {
 		t.Fatalf("authorized exact-lineage recovery: %v", err)
 	}
-	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err != nil {
+	if err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now(), defaultTestWorkspaceSnapshot); err != nil {
 		t.Fatalf("send after explicit hold resolution: %v", err)
 	}
 	if got, err := s.GetWorkerSessionByPair(ctx, pair); err != nil || got.QuarantineState != domain.QuarantineClean {
@@ -255,7 +255,7 @@ func TestSendIntentAuditFailureLeavesBoundState(t *testing.T) {
 	if _, err := s.db.ExecContext(ctx, `CREATE TRIGGER reject_send_intent_audit BEFORE INSERT ON audit_events WHEN NEW.event_type='DISPATCH_SEND_REQUESTED' BEGIN SELECT RAISE(ABORT,'injected audit failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordSendRequested(ctx, "dispatch-attempt-send-audit-fail", *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now()); err == nil {
+	if err := s.RecordSendRequested(ctx, "dispatch-attempt-send-audit-fail", *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now(), defaultTestWorkspaceSnapshot); err == nil {
 		t.Fatal("send intent unexpectedly survived audit failure")
 	}
 	op, err := s.GetDispatchOperation(ctx, "dispatch-attempt-send-audit-fail")
@@ -266,4 +266,70 @@ func TestSendIntentAuditFailureLeavesBoundState(t *testing.T) {
 	if err != nil || task.State != domain.StateDispatched {
 		t.Fatalf("task state changed on audit rollback: %+v %v", task, err)
 	}
+}
+
+func TestRecordSendRequested_Regression_ZeroStaleMismatchRejection(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("ZeroSnapshotFailsClosed", func(t *testing.T) {
+		s, _ := createTestStore(t)
+		defer s.Close()
+		_, attempt := setupBoundAttempt(t, s, "task-zero-snap", "contract-zero-snap", "attempt-zero-snap")
+		opID := "dispatch-attempt-zero-snap"
+
+		err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now(), domain.WorkspaceBindingSnapshot{})
+		if err == nil || !strings.Contains(err.Error(), "WORKSPACE_BINDING_MISSING") {
+			t.Fatalf("expected WORKSPACE_BINDING_MISSING error, got: %v", err)
+		}
+		op, err := s.GetDispatchOperation(ctx, opID)
+		if err != nil || op.Stage != domain.DispatchBound {
+			t.Fatalf("expected stage DISPATCH_BOUND, got: %v", op.Stage)
+		}
+	})
+
+	t.Run("WorktreeIdentityMismatchTriggersVariantB", func(t *testing.T) {
+		s, _ := createTestStore(t)
+		defer s.Close()
+		_, attempt := setupBoundAttempt(t, s, "task-wt-mismatch", "contract-wt-mismatch", "attempt-wt-mismatch")
+		opID := "dispatch-attempt-wt-mismatch"
+
+		mismatched := defaultTestWorkspaceSnapshot
+		mismatched.WorktreeVolumeSerialHex = "0000000088888888"
+
+		err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now(), mismatched)
+		if err == nil || !strings.Contains(err.Error(), "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH") {
+			t.Fatalf("expected WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH, got: %v", err)
+		}
+		op, err := s.GetDispatchOperation(ctx, opID)
+		if err != nil || op.Stage != domain.DispatchBound {
+			t.Fatalf("expected stage DISPATCH_BOUND, got: %v", op.Stage)
+		}
+		holds, err := s.GetActiveReviewIntegrityHolds(ctx, attempt.AttemptID)
+		if err != nil || len(holds) != 1 || holds[0].HoldReason != domain.HoldReasonInvariantMismatch {
+			t.Fatalf("expected Variant B hold, got: %+v %v", holds, err)
+		}
+	})
+
+	t.Run("AOPinMismatchTriggersVariantB", func(t *testing.T) {
+		s, _ := createTestStore(t)
+		defer s.Close()
+		_, attempt := setupBoundAttempt(t, s, "task-ao-mismatch", "contract-ao-mismatch", "attempt-ao-mismatch")
+		opID := "dispatch-attempt-ao-mismatch"
+
+		mismatched := defaultTestWorkspaceSnapshot
+		mismatched.PinnedAOCommit = strings.Repeat("f", 40)
+
+		err := s.RecordSendRequested(ctx, opID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now(), mismatched)
+		if err == nil || !strings.Contains(err.Error(), "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH") {
+			t.Fatalf("expected WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH, got: %v", err)
+		}
+		op, err := s.GetDispatchOperation(ctx, opID)
+		if err != nil || op.Stage != domain.DispatchBound {
+			t.Fatalf("expected stage DISPATCH_BOUND, got: %v", op.Stage)
+		}
+		holds, err := s.GetActiveReviewIntegrityHolds(ctx, attempt.AttemptID)
+		if err != nil || len(holds) != 1 || holds[0].HoldReason != domain.HoldReasonInvariantMismatch {
+			t.Fatalf("expected Variant B hold, got: %+v %v", holds, err)
+		}
+	})
 }

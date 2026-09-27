@@ -84,7 +84,7 @@ func TestTimeoutMonitorBeforeEqualAfterAndNoReplay(t *testing.T) {
 			s := newRecoveryStore(t)
 			session, generation, attempt := seedBoundExecution(t, s, "budget-"+tc.name)
 			origin := time.Date(2026, 1, 1, 0, 0, 0, 123456789, time.UTC)
-			if err := s.RecordSendRequested(ctx, "dispatch-budget-"+tc.name, session, generation, "idle", false, "fixture", origin); err != nil {
+			if err := s.RecordSendRequested(ctx, "dispatch-budget-"+tc.name, session, generation, "idle", false, "fixture", origin, testBindingSnapshot); err != nil {
 				t.Fatal(err)
 			}
 			if err := s.RecordSendConfirmed(ctx, "dispatch-budget-"+tc.name, "fixture", true, origin, domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "historical-policy"}); err != nil {
@@ -155,7 +155,7 @@ func TestTimeoutMonitorChangedObservationRetainsUnresolvedIntent(t *testing.T) {
 	s := newRecoveryStore(t)
 	session, generation, attempt := seedBoundExecution(t, s, "changed-observation")
 	origin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if err := s.RecordSendRequested(ctx, "dispatch-changed-observation", session, generation, "idle", false, "fixture", origin); err != nil {
+	if err := s.RecordSendRequested(ctx, "dispatch-changed-observation", session, generation, "idle", false, "fixture", origin, testBindingSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordSendConfirmed(ctx, "dispatch-changed-observation", "fixture", true, origin, domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "p1"}); err != nil {
@@ -209,7 +209,7 @@ func TestTimeoutMonitorCompetingCallersOneEffect(t *testing.T) {
 	s := newRecoveryStore(t)
 	session, generation, _ := seedBoundExecution(t, s, "timeout-race")
 	origin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if err := s.RecordSendRequested(ctx, "dispatch-timeout-race", session, generation, "idle", false, "fixture", origin); err != nil {
+	if err := s.RecordSendRequested(ctx, "dispatch-timeout-race", session, generation, "idle", false, "fixture", origin, testBindingSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordSendConfirmed(ctx, "dispatch-timeout-race", "fixture", true, origin, domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "p1"}); err != nil {
@@ -250,7 +250,7 @@ func TestTimeoutMonitorPreflightTerminationUsesLifecycleWithoutStop(t *testing.T
 	s := newRecoveryStore(t)
 	session, generation, attempt := seedBoundExecution(t, s, "timeout-preflight-terminated")
 	origin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if err := s.RecordSendRequested(ctx, "dispatch-timeout-preflight-terminated", session, generation, "idle", false, "fixture", origin); err != nil {
+	if err := s.RecordSendRequested(ctx, "dispatch-timeout-preflight-terminated", session, generation, "idle", false, "fixture", origin, testBindingSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordSendConfirmed(ctx, "dispatch-timeout-preflight-terminated", "fixture", true, origin, domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "p1"}); err != nil {
@@ -282,7 +282,6 @@ func TestTimeoutMonitorPreflightTerminationUsesLifecycleWithoutStop(t *testing.T
 	}
 }
 
-
 func TestTimeoutMonitorWaitingInputFullLifecycleAndRollback(t *testing.T) {
 	ctx := context.Background()
 	s := newRecoveryStore(t)
@@ -292,7 +291,7 @@ func TestTimeoutMonitorWaitingInputFullLifecycleAndRollback(t *testing.T) {
 	duration := time.Hour
 	deadline := origin.Add(duration)
 
-	if err := s.RecordSendRequested(ctx, "dispatch-"+taskID, session, generation, "idle", false, "fixture", origin); err != nil {
+	if err := s.RecordSendRequested(ctx, "dispatch-"+taskID, session, generation, "idle", false, "fixture", origin, testBindingSnapshot); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordSendConfirmed(ctx, "dispatch-"+taskID, "fixture", true, origin, domain.ExecutionBudgetPolicy{Duration: duration, PolicyRef: "historical-policy"}); err != nil {

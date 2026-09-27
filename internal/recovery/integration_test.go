@@ -3,9 +3,9 @@ package recovery
 import (
 	"context"
 	"errors"
+	"github.com/trungqwe/ai-supervisor/internal/domain"
 	"testing"
 	"time"
-	"github.com/trungqwe/ai-supervisor/internal/domain"
 )
 
 // This harness tests a library call contract only. It does not prove daemon
@@ -31,7 +31,7 @@ func TestSimulatedHostServeContract(t *testing.T) {
 	t.Run("classified pending AO", func(t *testing.T) {
 		s := newRecoveryStore(t)
 		session, generation, attempt := seedBoundExecution(t, s, "pendingserve")
-		if err := s.RecordSendRequested(context.Background(), "dispatch-pendingserve", session, generation, "idle", false, "fixture", time.Now()); err != nil {
+		if err := s.RecordSendRequested(context.Background(), "dispatch-pendingserve", session, generation, "idle", false, "fixture", time.Now(), testBindingSnapshot); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.RecordSendConfirmed(context.Background(), "dispatch-pendingserve", "fixture", true, time.Now(), domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"}); err != nil {
@@ -47,7 +47,7 @@ func TestSimulatedHostServeContract(t *testing.T) {
 		if a.RecoveryDisposition == nil || *a.RecoveryDisposition != "RECOVERY_PENDING" {
 			t.Fatalf("pending Pair hold: %+v", a)
 		}
-		if err := s.RecordSendRequested(context.Background(), "dispatch-pendingserve", session, generation, "idle", false, "supervisor", time.Now()); err == nil {
+		if err := s.RecordSendRequested(context.Background(), "dispatch-pendingserve", session, generation, "idle", false, "supervisor", time.Now(), testBindingSnapshot); err == nil {
 			t.Fatal("pending Pair admitted send")
 		}
 	})

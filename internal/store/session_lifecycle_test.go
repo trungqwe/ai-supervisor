@@ -3,11 +3,22 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/trungqwe/ai-supervisor/internal/domain"
 )
+
+var defaultTestWorkspaceSnapshot = domain.WorkspaceBindingSnapshot{
+	CanonicalWorktreePath:       "C:\\repo\\worktree",
+	WorktreeVolumeSerialHex:     "0000000012345678",
+	WorktreeFileIDHex:           "000000000000000012345678abcdef01",
+	LinkedGitDirPath:            "C:\\repo\\worktree\\.git",
+	LinkedGitDirVolumeSerialHex: "0000000012345678",
+	LinkedGitDirFileIDHex:       "000000000000000012345678abcdef02",
+	PinnedAOCommit:              strings.Repeat("0", 40),
+}
 
 func setupBoundAttempt(t *testing.T, s *Store, taskID, contractID, attemptID string) (string, domain.TaskAttempt) {
 	t.Helper()
@@ -32,6 +43,7 @@ func setupBoundAttempt(t *testing.T, s *Store, taskID, contractID, attemptID str
 		OperationID:        "dispatch-" + attemptID,
 		SessionID:          session.SessionID,
 		TerminalGeneration: session.TerminalGeneration,
+		Workspace:          defaultTestWorkspaceSnapshot,
 	})
 	if err != nil {
 		t.Fatalf("PrepareBoundDispatch: %v", err)
@@ -169,7 +181,7 @@ func TestStore_LifecycleOperationCRUDAndConstraints(t *testing.T) {
 	if err != nil || gotDispatch.Stage != domain.DispatchBound || gotDispatch.AttemptID != attempt.AttemptID {
 		t.Fatalf("bound dispatch round trip: operation=%+v err=%v", gotDispatch, err)
 	}
-	if err := s.RecordSendRequested(ctx, gotDispatch.OperationID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now().UTC()); err != nil {
+	if err := s.RecordSendRequested(ctx, gotDispatch.OperationID, *attempt.SessionID, *attempt.TerminalGeneration, "idle", false, "supervisor", time.Now().UTC(), defaultTestWorkspaceSnapshot); err != nil {
 		t.Fatalf("dispatch DISPATCH_BOUND -> SEND_REQUESTED: %v", err)
 	}
 	confirmedAt := time.Now().UTC()
@@ -315,6 +327,7 @@ END;
 		OperationID:        "dispatch-bound-rollback",
 		SessionID:          "session-bound-rollback",
 		TerminalGeneration: "generation-bound-rollback",
+		Workspace:          defaultTestWorkspaceSnapshot,
 	})
 	if err == nil {
 		t.Fatal("PrepareBoundDispatch unexpectedly succeeded with rejected audit insert")

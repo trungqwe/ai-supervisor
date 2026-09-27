@@ -17,6 +17,7 @@ var (
 )
 
 // IngestWorkerReport executes report intake: Transaction A on clean evidence,
+// IngestWorkerReport executes report intake: Transaction A on clean evidence,
 // or intake diagnostic transaction on dirty evidence.
 func (s *Store) IngestWorkerReport(
 	ctx context.Context,
@@ -36,8 +37,22 @@ func (s *Store) IngestWorkerReport(
 	}
 	epochMS := at.UnixMilli()
 
-	if !shaHexCheckRegex.MatchString(report.HeadSHA) {
-		return fmt.Errorf("store: reported head_sha must be 7..40 lowercase hex chars, got %q", report.HeadSHA)
+	if err := report.Validate(); err != nil {
+		return fmt.Errorf("store: invalid worker report: %w", err)
+	}
+	if report.TaskID != taskID {
+		return fmt.Errorf("%w: report task_id %q does not match task_id %q", ErrAttemptLineageMismatch, report.TaskID, taskID)
+	}
+	if report.AttemptID != attemptID {
+		return fmt.Errorf("%w: report attempt_id %q does not match attempt_id %q", ErrAttemptLineageMismatch, report.AttemptID, attemptID)
+	}
+
+	contract, err := s.GetTaskContract(ctx, contractID)
+	if err != nil {
+		return fmt.Errorf("store: failed to get task contract: %w", err)
+	}
+	if report.BaseSHA != contract.BaseSHA {
+		return fmt.Errorf("%w: report base_sha %q does not match contract base_sha %q", ErrAttemptLineageMismatch, report.BaseSHA, contract.BaseSHA)
 	}
 
 	// Case 1: Dirty Worktree -> execute separate intake diagnostic transaction
@@ -47,6 +62,24 @@ func (s *Store) IngestWorkerReport(
 
 	// Case 2: Clean Worktree -> execute Transaction A atomically
 	return s.executeTransactionA(ctx, taskID, contractID, attemptID, report, actor, at, epochMS)
+}
+
+// IngestWorkerReportRaw parses and validates raw JSON against schema before ingesting.
+func (s *Store) IngestWorkerReportRaw(
+	ctx context.Context,
+	taskID string,
+	contractID string,
+	attemptID string,
+	rawReport []byte,
+	gitEvidence domain.GitEvidenceResult,
+	actor string,
+	at time.Time,
+) error {
+	report, err := domain.ValidateWorkerReportJSON(rawReport)
+	if err != nil {
+		return fmt.Errorf("store: worker report schema validation failed: %w", err)
+	}
+	return s.IngestWorkerReport(ctx, taskID, contractID, attemptID, *report, gitEvidence, actor, at)
 }
 
 func (s *Store) recordDirtyIntakeDiagnostic(
@@ -66,20 +99,30 @@ func (s *Store) recordDirtyIntakeDiagnostic(
 	}
 	defer tx.Rollback()
 
-	var pairID, taskState string
+	var pairID, taskState, attemptContractID string
 	var currentAttempt, attemptNumber int
 	var endedAt sql.NullString
 	err = tx.QueryRowContext(ctx, `
-SELECT t.pair_id, t.state, t.current_attempt, a.attempt_number, a.ended_at
+SELECT t.pair_id, t.state, t.current_attempt, a.attempt_number, a.contract_id, a.ended_at
 FROM tasks t
 JOIN task_attempts a ON a.task_id = t.task_id
 WHERE t.task_id = ? AND a.attempt_id = ?
-`, taskID, attemptID).Scan(&pairID, &taskState, &currentAttempt, &attemptNumber, &endedAt)
+`, taskID, attemptID).Scan(&pairID, &taskState, &currentAttempt, &attemptNumber, &attemptContractID, &endedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrAttemptNotFound
 		}
 		return err
+	}
+
+	if taskState != string(domain.StateRunning) {
+		return fmt.Errorf("%w: task state is %s, expected RUNNING", ErrStateConflict, taskState)
+	}
+	if currentAttempt != attemptNumber || endedAt.Valid {
+		return fmt.Errorf("%w: attempt is not current open attempt", ErrAttemptLineageMismatch)
+	}
+	if attemptContractID != contractID {
+		return fmt.Errorf("%w: contract lineage mismatch (got %q, attempt has %q)", ErrAttemptLineageMismatch, contractID, attemptContractID)
 	}
 
 	diagnosticInput := map[string]any{
@@ -217,15 +260,15 @@ func (s *Store) executeTransactionA(
 	defer tx.Rollback()
 
 	// 1. Verify task is RUNNING
-	var taskState string
+	var taskState, attemptContractID string
 	var currentAttempt, attemptNumber int
 	var endedAt sql.NullString
 	err = tx.QueryRowContext(ctx, `
-SELECT t.state, t.current_attempt, a.attempt_number, a.ended_at
+SELECT t.state, t.current_attempt, a.attempt_number, a.contract_id, a.ended_at
 FROM tasks t
 JOIN task_attempts a ON a.task_id = t.task_id
 WHERE t.task_id = ? AND a.attempt_id = ?
-`, taskID, attemptID).Scan(&taskState, &currentAttempt, &attemptNumber, &endedAt)
+`, taskID, attemptID).Scan(&taskState, &currentAttempt, &attemptNumber, &attemptContractID, &endedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrAttemptNotFound
@@ -238,6 +281,9 @@ WHERE t.task_id = ? AND a.attempt_id = ?
 	}
 	if currentAttempt != attemptNumber || endedAt.Valid {
 		return fmt.Errorf("%w: attempt is not current open attempt", ErrAttemptLineageMismatch)
+	}
+	if attemptContractID != contractID {
+		return fmt.Errorf("%w: contract lineage mismatch (got %q, attempt has %q)", ErrAttemptLineageMismatch, contractID, attemptContractID)
 	}
 
 	// 2. Verify workspace binding is ACTIVE
