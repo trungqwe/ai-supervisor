@@ -403,7 +403,7 @@ Schema v4 bổ sung restore_authorizations (one-shot authorization gắn operati
 
 ## 5.1 Subtask P04A Persistence Ownership (Schema Migration v6)
 
-Subtask P04A owns Schema Migration v6, establishing worktree binding authority, worker report ingestion persistence, and diagnostic integrity holds:
+Subtask P04A is the sole persistence owner of Schema Migration v6, Transaction A, and the intake diagnostic transaction. Subtask P04A establishes worktree binding authority, worker report ingestion persistence (`worker_claims`), and diagnostic integrity holds (`review_integrity_holds`). Subtask P04B is a pure in-memory collector with zero SQLite writes, zero audit event appends, and zero hold mutations. When P04B detects a dirty worktree or index, P04A rolls back Transaction A, preserves TaskState `RUNNING`, and in a separate diagnostic transaction owned exclusively by P04A appends `EVIDENCE_COLLECTION_FAILED` and inserts an `ACTIVE` hold (`DIRTY_WORKTREE_DETECTED`) into `review_integrity_holds`:
 
 ```sql
 -- Schema v6: attempt_workspace_bindings (Owned by Subtask P04A)

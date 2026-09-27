@@ -23,11 +23,11 @@
 ### 2.1 Subtask Sequencing & Model 1 Persistence Ownership (CR-09)
 Phase P04 implementation strictly enforces Model 1 persistence ownership and sequential task contract releases:
 1. **Subtask P04A (`CONTRACT-TASK-P04-001`) — Workspace Binding & Claims Schema v6**:
-   - **Persistence Ownership**: Owns SQLite Schema v6 (`attempt_workspace_bindings`, `worker_claims`, `review_integrity_holds`).
-   - **Scope**: First releaseable implementation work package. Canonical workspace binding creation, anti-rename handle management, trigger constraints (`stage = 'DISPATCH_BOUND'`), and active deduplication index.
+   - **Persistence Ownership**: Sole persistence owner of SQLite Schema v6 (`attempt_workspace_bindings`, `worker_claims`, `review_integrity_holds`), owns Transaction A (worker report intake & `worker_claims` persistence), and owns the intake diagnostic transaction (`EVIDENCE_COLLECTION_FAILED` append & `DIRTY_WORKTREE_DETECTED` hold insertion).
+   - **Scope**: First releaseable implementation work package. Canonical workspace binding creation, anti-rename handle management, trigger constraints (`stage = 'DISPATCH_BOUND'`), active deduplication index, Transaction A report ingestion, dirty rollback upon unclean inspection, and intake diagnostic persistence.
 2. **Subtask P04B (`CONTRACT-TASK-P04-002`) — In-Memory Intake & Git Collector**:
-   - **Persistence Ownership**: Pure in-memory (zero migrations, zero SQLite writes, zero audit appends, zero hold mutations).
-   - **Scope**: Zero-mutation workspace inspection (`git status --porcelain=v1 -z --untracked-files=all`), clean intake validation, diff collection.
+   - **Persistence Ownership**: Pure in-memory (zero migrations, zero SQLite writes, zero audit appends, zero hold mutations; does NOT own Transaction A or diagnostic transaction).
+   - **Scope**: Read-only workspace inspection (`git status --porcelain=v1 -z --untracked-files=all`, `git diff-index --quiet HEAD --`), clean intake validation, diff collection, returning structured in-memory result (`GitEvidenceResult`) to Subtask P04A.
 3. **Subtask P04C (`CONTRACT-TASK-P04-003`) — In-Memory Windows AppContainer Sandbox Runner**:
    - **Persistence Ownership**: Pure in-memory (zero migrations, zero SQLite writes, zero audit appends, zero hold mutations).
    - **Scope**: Isolated verification execution using Win32 `CreateProcessW` with `STARTUPINFOEXW`, explicit stdio-only `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, atomic Job Object assignment with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, network restriction SID, 10MB/50MB stream limits, and process-death proof.

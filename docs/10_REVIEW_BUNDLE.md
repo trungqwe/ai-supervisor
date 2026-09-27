@@ -2,7 +2,7 @@
 
 > **Focus**: High-Signal Audit Synthesis, Attempt-Scoped Evaluation & Evidence Correlation
 > **Status**: Approved Baseline (Reconciled with accepted ADR-018, PROPOSAL-P04-002 Revision 9, and Plan Erratum 001)
-> **Authority**: [ADR-018](adr/ADR-018-evidence-review-and-verification-isolation.md), [PROPOSAL-P04-002](proposals/PROPOSAL-P04-002-review-bundle-latency-semantics.md) Revision 9, and [Erratum 001](audits/P04_CANONICAL_RECONCILIATION_PLAN_EXTERNAL_AUDIT_ERRATUM_001.md)
+> **Authority**: [ADR-018](adr/ADR-018-evidence-review-and-verification-isolation.md) & [PROPOSAL-P04-002](proposals/PROPOSAL-P04-002-review-bundle-latency-semantics.md) Revision 9
 
 ---
 

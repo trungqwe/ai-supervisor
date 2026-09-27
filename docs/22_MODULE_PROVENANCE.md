@@ -170,10 +170,14 @@ AO không cung cấp actual execution start, policy snapshot, deadline persisten
 # 7. Phase P04 Evidence Review & Verification Isolation Modules (ADR-018)
 
 ### 7.1 Planned Modules & Subsystems
-- **`internal/evidence` (Subtask P04B)**:
+- **`internal/store` (Subtask P04A Persistence Seam)**:
+  - **Purpose**: Schema v6 persistence seam, establishing canonical workspace binding authority, anti-rename handle hold, Transaction A report ingestion & `worker_claims` persistence, dirty rollback on unclean inspection result, and intake diagnostic persistence (`review_integrity_holds` with `DIRTY_WORKTREE_DETECTED`, `EVIDENCE_COLLECTION_FAILED`).
+  - **Mechanism**: SQLite WAL transactions on Schema v6 tables (`attempt_workspace_bindings`, `worker_claims`, `review_integrity_holds`).
+  - **Persistence Boundary**: Sole persistence owner of Schema v6. Owns Transaction A and the intake diagnostic transaction.
+- **`internal/evidence` (Subtask P04B Pure Collector)**:
   - **Purpose**: Pure in-memory workspace intake inspection and Git diff collection without mutating repository files.
-  - **Mechanism**: Runs `git status --porcelain=v1 -z --untracked-files=all` and diff parser within bound canonical worktrees.
-  - **Persistence Boundary**: Pure in-memory (zero migrations, zero SQLite writes, zero audit appends, zero hold mutations).
+  - **Mechanism**: Runs `git status --porcelain=v1 -z --untracked-files=all` and `git diff-index --quiet HEAD --` within bound canonical worktrees, returning structured in-memory `GitEvidenceResult` to Subtask P04A.
+  - **Persistence Boundary**: Pure in-memory (zero migrations, zero SQLite writes, zero audit appends, zero hold mutations; does NOT own Transaction A or diagnostic transaction).
 - **`internal/verification` (Subtask P04C)**:
   - **Purpose**: Pure in-memory isolated execution boundary for verification profile runs on Windows.
   - **Mechanism**: Windows AppContainer sandbox using Win32 `CreateProcessW` with `STARTUPINFOEXW`, explicit stdio-only `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, atomic Job Object assignment with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, network restriction SID, 10MB/50MB stream limits, and process-death proof.
@@ -186,7 +190,7 @@ AO không cung cấp actual execution start, policy snapshot, deadline persisten
 ### 7.2 Model 1 Persistence Ownership & Schema Versioning (CR-09)
 Phase P04 strictly enforces Model 1 persistence ownership across subtasks:
 1. **Schema v6 (Subtask P04A)**:
-   - Owns `attempt_workspace_bindings` (with trigger requiring `dispatch_operations.stage = 'DISPATCH_BOUND'`), `worker_claims`, and `review_integrity_holds` (with active deduplication index and triggers).
+   - Owns `attempt_workspace_bindings` (with trigger requiring `dispatch_operations.stage = 'DISPATCH_BOUND'`), `worker_claims`, and `review_integrity_holds` (with active deduplication index and triggers). Owns Transaction A and the intake diagnostic transaction.
 2. **Schema v9 (Subtask P04D)**:
    - Owns `task_verification_leases` (with linear lease chain `predecessor_lease_id` and monotonic token validation), `evidence_sets`, `review_artifacts`, and `review_bundles`.
 3. **Pure In-Memory Subtasks (P04B & P04C)**:

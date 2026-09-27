@@ -305,10 +305,11 @@ Hard links on directories are unsupported by NTFS and are completely eradicated 
 
 ## 7.2 Git Evidence Authority, Pure In-Memory Collector (P04B), and Clean-Worktree Intake Verification
 
-### 7.2.1 Pure In-Memory Collector Architecture
+### 7.2.1 Pure In-Memory Collector Architecture & Transaction Handoff
 Subtask P04B implements the Git evidence collector as a pure in-memory component:
-- **Zero SQLite Mutations**: P04B executes ZERO database writes, ZERO audit event appends, and ZERO hold mutations.
+- **Zero SQLite Mutations**: P04B executes ZERO database writes, ZERO audit event appends, and ZERO hold mutations. P04B does not own Transaction A or any diagnostic transaction.
 - **Read-Only Inspection**: Inspects the physical worktree and extracted immutable snapshot strictly via safe, bounded read-only Git commands.
+- **Structured In-Memory Handoff to P04A**: P04B constructs and returns a structured in-memory inspection result (`GitEvidenceResult`) to Subtask P04A. Subtask P04A is the sole persistence owner of Schema v6, Transaction A, and the intake diagnostic transaction.
 - **Ten-Command Allowlist**:
   1. `git rev-parse --verify <sha>`
   2. `git diff-index --quiet HEAD --`
@@ -321,17 +322,18 @@ Subtask P04B implements the Git evidence collector as a pure in-memory component
   9. `git merge-base <base> <head>`
   10. `git log -n 1 --format=%H <head>`
 
-### 7.2.2 Clean-Worktree Intake Policy (FR-008)
+### 7.2.2 Clean-Worktree Intake Policy & Persistence Ownership (FR-008)
 Upon worker report submission:
-1. Worktree must be verified clean: `git status --porcelain=v1 -z --untracked-files=all` must return zero entries.
-2. Index must be verified clean: `git diff-index --quiet HEAD --` (with `GIT_OPTIONAL_LOCKS=0`) must exit 0.
+1. Worktree must be verified clean: Subtask P04B runs `git status --porcelain=v1 -z --untracked-files=all` and verifies zero entries.
+2. Index must be verified clean: Subtask P04B runs `git diff-index --quiet HEAD --` (with `GIT_OPTIONAL_LOCKS=0`) and verifies exit code 0.
 3. If dirty staged, unstaged, or untracked state is detected:
-   - Transaction A rolls back; TaskState remains strictly in `RUNNING` (zero blanket transitions to `BLOCKED`).
-   - A separate diagnostic transaction appends `EVIDENCE_COLLECTION_FAILED` to `audit_events` and inserts an `ACTIVE` hold (`DIRTY_WORKTREE_DETECTED`) into `review_integrity_holds`.
+   - Subtask P04B returns the dirty inspection finding to Subtask P04A without executing any database or audit operations.
+   - Subtask P04A rolls back Transaction A; TaskState remains strictly in `RUNNING` (zero blanket transitions to `BLOCKED`).
+   - In a separate diagnostic transaction owned exclusively by Subtask P04A, P04A appends `EVIDENCE_COLLECTION_FAILED` to `audit_events` and inserts an `ACTIVE` hold (`DIRTY_WORKTREE_DETECTED`) into `review_integrity_holds`.
    - Worktree state is never modified (no `git stash`, `git clean`, or `git checkout`).
 4. Dual Head SHA capture:
-   - `worker_claims.reported_head_sha` stores the exact reported value (`CHECK (LENGTH(reported_head_sha) BETWEEN 7 AND 40 AND NOT (reported_head_sha GLOB '*[^0-9a-f]*'))`).
-   - The verified `actual_head_sha` belongs strictly to Evidence (`evidence_sets.git_evidence_json`), never in `worker_claims`.
+   - `worker_claims.reported_head_sha` stores the exact reported value (`CHECK (LENGTH(reported_head_sha) BETWEEN 7 AND 40 AND NOT (reported_head_sha GLOB '*[^0-9a-f]*'))`), persisted by Subtask P04A in Transaction A when intake succeeds.
+   - The verified `actual_head_sha` belongs strictly to Evidence (`evidence_sets.git_evidence_json`), captured by Subtask P04B and persisted by Subtask P04D in Transaction B, never in `worker_claims`.
 
 ---
 
