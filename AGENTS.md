@@ -139,8 +139,11 @@ This document establishes immutable operational directives for all AI coding age
      * Re-Audit 001 Record: `docs/audits/P04_CANONICAL_RECONCILIATION_PLAN_EXTERNAL_REAUDIT_001.md` (`REVISION_2_REQUIRED`)
      * Re-Audit 021 Record: `docs/audits/P04_PRECONTRACT_ARCHITECTURE_EXTERNAL_REAUDIT_021.md` (`EXTERNAL_AUDIT_APPROVED`)
    - Merge Integration Audit Record: `docs/audits/P04_CANONICAL_RECONCILIATION_MERGE_INTEGRATION_AUDIT.md` (`PASS`, commit `db6b654f03a7ce3c8e6ae2cd180f2cb7236bf7c2`).
+   - P04A Contract Planning External Audit 001 Record: `docs/audits/P04_TASK_001_CONTRACT_PLANNING_EXTERNAL_AUDIT_001.md` (`REVISION_REQUIRED`, audited commit `80b997c89d57280286c63599c1c539161b31b5eb`).
+   - P04A Draft Findings: `P04A-C1-001`, `P04A-C1-002`, `P04A-C1-003`, `P04A-C1-004`, and `P04A-C1-005` = `OPEN_PENDING_EXTERNAL_REAUDIT`.
+   - `DRAFT_P04A = REVISION_REQUIRED`.
    - `TASK_P04A_TASK_CONTRACT = NOT_RELEASED`.
-   - Next Approved Action: Prepare draft plan `docs/plans/PLAN-P04A-WORKSPACE-BINDING-AND-CLAIMS.md` and draft task contract `docs/tasks/DRAFT_TASK_CONTRACT_P04_001.md`. Zero Go production code permitted.
+   - Next Approved Action: Remediation submitted for findings `P04A-C1-001..005` in `docs/plans/PLAN-P04A-WORKSPACE-BINDING-AND-CLAIMS.md` and `docs/tasks/DRAFT_TASK_CONTRACT_P04_001.md`; awaiting External Supervisor re-audit. Zero Go production code permitted.
    - Maintain strict fail-closed dependencies: `AUTOMATIC_RESTORE = DISABLED`; operator restore and linked stop remain disabled until verified operator principal reaches trusted boundary (`VERIFIED_OPERATOR_PRINCIPAL = OPEN_FAIL_CLOSED_DEPENDENCY`).
    - Stage B runtime catalog is deferred: `STAGE_B_RUNTIME_CATALOG = DEFERRED_TO_P04_RUNTIME_INTEGRATION`.
    - Candidate WIP artifact preserved externally in `D:\TU_CODE\ai-supervisor-user-wip-recovery\P03-EXIT-R2-001`; never restore, overwrite, or touch.
@@ -222,6 +225,9 @@ This document establishes immutable operational directives for all AI coding age
    - `P04_CANONICAL_RECONCILIATION = EXTERNAL_AUDIT_APPROVED` (`docs/audits/P04_CANONICAL_RECONCILIATION_EXTERNAL_REAUDIT_002.md`)
    - `P04_CANONICAL_RECONCILIATION_CODE = MERGED` (commit `db6b654f03a7ce3c8e6ae2cd180f2cb7236bf7c2`)
    - `P04_CANONICAL_RECONCILIATION_MERGE_AUDIT = PASS` (`docs/audits/P04_CANONICAL_RECONCILIATION_MERGE_INTEGRATION_AUDIT.md`)
+   - `DRAFT_P04A = REVISION_REQUIRED`
+   - `P04A_AUDIT_001 = REVISION_REQUIRED` (`docs/audits/P04_TASK_001_CONTRACT_PLANNING_EXTERNAL_AUDIT_001.md`)
+   - `FINDINGS_P04A_C1_001_THROUGH_005 = OPEN_PENDING_EXTERNAL_REAUDIT`
    - `TASK_P04A_TASK_CONTRACT = NOT_RELEASED`
    - `P04_CODE = HELD_PENDING_TASK_P04A_CONTRACT_RELEASE`
    - `ACTIVE_GATE = TASK_P04A_CONTRACT_PLANNING`
