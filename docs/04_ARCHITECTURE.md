@@ -149,8 +149,8 @@ sequenceDiagram
             Runner-->>SCP: Capture exit code, stdout/stderr (10MB capture limit), test artifacts
         end
         SCP->>DB: Store EvidenceSet & ReviewArtifacts (Schema v9, Transition state to EVIDENCE_READY)
-        SCP->>SCP: Build ReviewBundle (RFC 8785 JCS, dual head SHAs, compilation_latency_ms)
-        SCP->>DB: Store ReviewBundle (Schema v9, Transition state to REVIEWING)
+        SCP->>SCP: Build ReviewBundlePayload & validate against schema; canonicalize via RFC 8785 JCS & compute bundle_hash
+        SCP->>DB: Store ReviewBundleRecord in review_bundles (Schema v9, Transition state to REVIEWING)
 
         ChatGPT->>SCP: get_review_bundle(task_id, attempt_id)
         SCP-->>ChatGPT: Return compiled ReviewBundle
@@ -368,20 +368,27 @@ All review artifacts (test logs, git diffs, worker output) are stored in an appe
 - Exact equality constraint: `canonical_relative_path = 'artifacts/' || substr(captured_sha256, 1, 2) || '/' || captured_sha256`.
 - Atomic write-through via staging file and atomic rename (`MOVEFILE_REPLACE_EXISTING`).
 
-### 7.4.2 ReviewBundle Latency Semantics (PROPOSAL-P04-002 Revision 9)
-ReviewBundle synthesis strictly separates the assembly diagnostic interval from canonical NFR-008:
-1. **Two-Interval Pipeline**:
+### 7.4.2 ReviewBundle Architectural Separation & Latency Semantics (ADR-018 / PROPOSAL-P04-002 Rev 9)
+ReviewBundle synthesis strictly separates the pre-hash schema payload from the persistent SQLite database record envelope:
+1. **`ReviewBundlePayload` (Pre-Hash Preimage)**:
+   - Validated against `docs/schemas/review-bundle.schema.json` and canonicalized via RFC 8785 JCS.
+   - Contains all 14 required fields: `bundle_id`, `evidence_set_id`, `task_id`, `attempt_id`, `contract_id`, `task_contract`, `worker_claims`, `actual_git_evidence`, `actual_test_evidence`, `policy_findings`, `unverified_claims`, `recommended_review_focus`, `generated_at`, and `evidence_finalized_at_epoch_ms` ($T_0$ from Transaction B prior to synthesis).
+   - Strictly excludes `bundle_hash` (preventing circular self-referencing paradoxes) and post-hash metadata (`bundle_assembled_at_epoch_ms`, `compilation_latency_ms`, `latency_measurement_status`, `nfr008_compliance_status`).
+2. **`ReviewBundleRecord` (Database Row Envelope)**:
+   - Persisted in table `review_bundles` (Schema v9, owned by Subtask P04D).
+   - Envelops the canonical `bundle_payload_json`, computed `bundle_hash` (64 hex characters), assembly diagnostic interval fields ($T_0, T_1$, $\text{compilation\_latency\_ms}$), provenance discriminator `latency_measurement_status`, and `nfr008_compliance_status = 'UNVERIFIED'`.
+3. **Two-Interval Pipeline**:
    - *Interval 1 (Evidence Acquisition Window)*: Governed by task contract verification budgets. Bounds worker report intake, Git collection, AppContainer test runs, and artifact persistence ending at Transaction B commit ($T_0 = \text{evidence\_finalized\_at\_epoch\_ms}$).
    - *Interval 2 (ReviewBundle Compilation Window)*: Strictly measures the assembly diagnostic interval:
      $$\text{compilation\_latency\_ms} = \text{bundle\_assembled\_at\_epoch\_ms} - \text{evidence\_finalized\_at\_epoch\_ms}$$
-2. **2 × 2 Provenance × Threshold Matrix**:
+4. **2 × 2 Provenance × Threshold Matrix**:
    - `latency_measurement_status` represents execution provenance:
      * `'MEASURED_IN_PROCESS'`: continuous in-process daemon execution.
      * `'RECOVERED_AFTER_RESTART'`: P04D startup recovery path.
    - Decoupled from the 3,000 ms threshold: high system load never converts provenance to `RECOVERED_AFTER_RESTART`.
    - Exceeding 3,000 ms emits an assembly diagnostic without blocking Transaction C, altering TaskState, or deadlocking persistence.
    - `nfr008_compliance_status` remains held strictly as `'UNVERIFIED'`.
-3. **Decoupled Monotonic Telemetry**:
+5. **Decoupled Monotonic Telemetry**:
    - Commit duration telemetry (`time.Since(commitStart)`) is captured best-effort in application memory outside the database and audit chain.
 
 ### 7.4.3 Inert Fake AO Adapter Harness

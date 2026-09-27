@@ -1,11 +1,14 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "ReviewBundle",
+  "title": "ReviewBundlePayload",
+  "description": "Canonical pre-hash ReviewBundle payload validated and canonicalized via RFC 8785 JCS as the hash preimage for bundle_hash",
   "type": "object",
   "required": [
     "bundle_id",
+    "evidence_set_id",
     "task_id",
     "attempt_id",
+    "contract_id",
     "task_contract",
     "worker_claims",
     "actual_git_evidence",
@@ -14,21 +17,22 @@
     "unverified_claims",
     "recommended_review_focus",
     "generated_at",
-    "bundle_hash",
-    "evidence_finalized_at_epoch_ms",
-    "bundle_assembled_at_epoch_ms",
-    "compilation_latency_ms",
-    "latency_measurement_status",
-    "nfr008_compliance_status"
+    "evidence_finalized_at_epoch_ms"
   ],
   "properties": {
     "bundle_id": {
+      "type": "string"
+    },
+    "evidence_set_id": {
       "type": "string"
     },
     "task_id": {
       "type": "string"
     },
     "attempt_id": {
+      "type": "string"
+    },
+    "contract_id": {
       "type": "string"
     },
     "task_contract": {
@@ -126,34 +130,10 @@
       "type": "string",
       "format": "date-time"
     },
-    "bundle_hash": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
-    },
     "evidence_finalized_at_epoch_ms": {
       "type": "integer",
-      "minimum": 1
-    },
-    "bundle_assembled_at_epoch_ms": {
-      "type": "integer",
-      "minimum": 1
-    },
-    "compilation_latency_ms": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "latency_measurement_status": {
-      "type": "string",
-      "enum": [
-        "MEASURED_IN_PROCESS",
-        "RECOVERED_AFTER_RESTART"
-      ]
-    },
-    "nfr008_compliance_status": {
-      "type": "string",
-      "enum": [
-        "UNVERIFIED"
-      ]
+      "minimum": 1,
+      "description": "Durable committed timestamp (T0) from Transaction B, established prior to ReviewBundle synthesis"
     }
   },
   "additionalProperties": false

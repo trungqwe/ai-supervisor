@@ -13,7 +13,7 @@
 | **REC-002** | AO Daemon Crash | Worker execution interrupted; ConPTY pipes closed. | AOAdapter | Reconnect to AO daemon; query session state via `GetWorkerStatus`; operator-authorized restore only after durable intent and verified host principal via pinned wire route `POST /api/v1/sessions/{sessionId}/restore` (`ResumeWorker`). If restore outcome is ambiguous, retain Pair lock and double-gated quarantine containment (`worker_sessions.quarantine_state = 'QUARANTINED'` and `task_attempts.quarantine_state = 'QUARANTINED'`). |
 | **REC-003** | Antigravity CLI Crash | Process exits with non-zero code before report generation. | Supervisor Core | Mark attempt `FAILED` (`failure_reason = PROCESS_CRASH`); query Git for partial changes; decide whether to retry or escalate to `HUMAN_REQUIRED`. |
 | **REC-004** | Worker Execution Timeout | Worker runs longer than configured bounded execution timeout policy. | Supervisor Core | Allocate `stop_operations` row (`purpose = 'RUNNING_ATTEMPT_STOP'`); capture target generation for Supervisor-side precheck; persist restart-stable `confirmation_deadline_at`; issue `stopWorker` (`POST /api/v1/sessions/{sessionId}/kill` carrying session identity only). If confirmed stopped within deadline under `WORKER_STOPPED_ALLOWED_IFF`, record `recovery_disposition = 'WORKER_STOPPED'` and transition `RUNNING -> FAILED` (`failure_reason = TIMEOUT` in audit log). If stop call or confirmation times out, fail closed to `STOP_CONFIRMATION_TIMEOUT`, retain quarantine, and enforce `STOP_REISSUE_REQUIRES_HUMAN`. |
-| **REC-005** | Dirty Worktree Detected | Worktree contains uncommitted files or unsafe working tree state before, during pre-send, or during active intake. | Supervisor Core | Fail closed with zero mutating Git commands. **Case A (Pre-PrepareDispatch)**: reject dispatch; Task remains `READY`; zero `TaskAttempt` allocated; emit audit evidence `WORKTREE_DIRTY`. **Case B (Post-PrepareDispatch / Pre-Send)**: atomic D12 terminal transition `DISPATCHED -> FAILED` with `recovery_disposition = 'WORKSPACE_BINDING_INTEGRITY_FAILURE'` and diagnostic hold `WORKSPACE_BINDING_GUARD`. **Case C (During RUNNING Intake)**: clean-intake diagnostic transaction allocates diagnostic hold `CLEAN_INTAKE_DIRTY_WORKTREE` and emits `CLEAN_INTAKE_DIRTY_WORKTREE_DETECTED`, preserving `RUNNING` until controlled terminal resolution. |
+| **REC-005** | Dirty Worktree Detected | Worktree contains uncommitted files or unsafe working tree state before, during pre-send, or during active intake. | Supervisor Core | Fail closed with zero mutating Git commands. **Case A (Pre-PrepareDispatch)**: reject dispatch; Task remains `READY`; zero `TaskAttempt` allocated; emit audit evidence `WORKTREE_DIRTY`. **Case B (Post-PrepareDispatch / Pre-Send)**: Task initially remains `DISPATCHED`, operation remains `DISPATCH_BOUND`, attempt open; diagnostic transaction appends `REVIEW_INTEGRITY_CONFLICT` (`conflict_source = 'WORKSPACE_BINDING_GUARD'`), inserts `ACTIVE` hold (`hold_reason = 'INVARIANT_MISMATCH'`), and CAS invalidates binding `ACTIVE -> INVALIDATED`; verified operator subsequently executes separate D12 terminalization (`DISPATCHED -> FAILED`, `recovery_disposition = 'WORKSPACE_BINDING_INTEGRITY_FAILURE'`), followed by hold resolution. **Case C (During RUNNING Intake)**: collector emits `EVIDENCE_COLLECTION_FAILED`, allocates diagnostic hold (`hold_reason = 'DIRTY_WORKTREE_DETECTED'`), preserving `RUNNING`. |
 | **REC-006** | Git Merge Conflict | Worker changes conflict with target main branch. | Supervisor Core | Mark task `BLOCKED` (`blocker_reason = MERGE_CONFLICT`); escalate to `HUMAN_REQUIRED` per canonical workflow. |
 | **REC-007** | Worker Report Absent | Worker terminates with exit code 0 but creates no report file within bounded fetch window. | Supervisor Core | Mark attempt `FAILED` (`failure_reason = REPORT_MISSING`). Diagnostic Git evidence may be collected for triage, but no promotion to `REPORT_READY`, `EVIDENCE_READY`, or `REVIEWING` occurs. |
 | **REC-008** | Malformed Worker Report | Report fails validation against `worker-report.schema.json` or contains mismatched identities. | Supervisor Core | Mark attempt `FAILED` (`failure_reason = REPORT_INVALID` or `REPORT_IDENTITY_MISMATCH`); record raw output for debugging; normal ReviewBundle compilation is aborted. |
@@ -42,17 +42,29 @@ The Supervisor maintains strict zero-mutation isolation over target Git worktree
    - **Resolution**: Escalate to human developer or upstream orchestrator. Pre-dispatch validation may be retried after external clean.
 
 3. **Case B — Unsafe Worktree Condition Discovered Post-`PrepareDispatch` / Pre-Send**:
-   - An unsafe condition (workspace binding invalidation, concurrent mutation, or dirty worktree) is detected during the pre-send check sequence while Task is `DISPATCHED` and `TaskAttempt` exists.
-   - **Behavior**: Execute atomic D12 terminal transition `DISPATCHED -> FAILED`.
-   - **State Invariant**: Task transitions to `FAILED`; sets `task_attempts.ended_at = now`; records `task_attempts.recovery_disposition = 'WORKSPACE_BINDING_INTEGRITY_FAILURE'`.
-   - **Diagnostic Hold**: Allocates a distinct diagnostic hold row (`review_integrity_holds`) with `hold_state = 'ACTIVE'`, `hold_reason = 'WORKSPACE_BINDING_GUARD'`, and detailed evidence payload.
-   - **Audit Record**: Emits `WORKSPACE_BINDING_INTEGRITY_BREACH` within the append-only audit log.
-   - **Resolution**: Escalate to human developer. Zero `git stash`, `git clean`, `git checkout`, or `git reset` is executed by the Supervisor.
+   - An unsafe condition (workspace binding invalidation, concurrent mutation, or dirty worktree) is detected during the pre-send check sequence while Task is `DISPATCHED`, operation is `DISPATCH_BOUND`, and `TaskAttempt` exists.
+   - **Behavior**: Executes a diagnostic transaction:
+     1. Task initially remains in `DISPATCHED`, dispatch operation remains in `DISPATCH_BOUND`, and the `TaskAttempt` remains open.
+     2. Appends rejection audit event `REVIEW_INTEGRITY_CONFLICT` with Variant B fields (`conflict_source = 'WORKSPACE_BINDING_GUARD'`, `dispatch_operation_id`, `conflict_type = 'LINEAGE_MISMATCH'`, `attempted_reason = '<literal>'`, `sanitized_input_fingerprint`, `diagnostic_fingerprint`, `actor_role = 'SUPERVISOR'`, and `colliding_event_id` strictly ABSENT).
+     3. Inserts an `ACTIVE` hold into `review_integrity_holds` with `hold_reason = 'INVARIANT_MISMATCH'` and deterministic `diagnostic_fingerprint`.
+     4. If an `ACTIVE` workspace binding exists but lineage or physical identity is invalid, CAS transitions the binding `ACTIVE -> INVALIDATED` (`released_at_epoch_ms = now`).
+   - **Subsequent Terminalization & Hold Resolution**:
+     - Pre-send `/send` remains strictly forbidden (fail closed).
+     - A verified operator (`LENGTH(TRIM(resolved_by_principal)) > 0`) must first execute the D12 atomic terminal transition in a separate transaction:
+       * `tasks`: CAS `state = 'FAILED'` where `task_id = ? AND state = 'DISPATCHED'`.
+       * `task_attempts`: `ended_at = now`, `recovery_disposition = 'WORKSPACE_BINDING_INTEGRITY_FAILURE'` where `attempt_id = ? AND ended_at IS NULL`.
+       * Appends `TASK_STATE_TRANSITION` audit event in that same transaction.
+     - Only after terminalization is durably committed may the verified operator resolve the integrity hold in a separate follow-up transaction (`review_integrity_holds.hold_state: ACTIVE -> RESOLVED`, appending `REVIEW_INTEGRITY_HOLD_RESOLVED`).
 
 4. **Case C — Dirty Worktree Discovered During Active Intake (`RUNNING`)**:
-   - Subtask P04B in-memory collector executes `git status --porcelain=v1 -z --untracked-files=all` within the bound worktree and detects modified or untracked files during intake.
-   - **Behavior**: Executes a clean-intake diagnostic transaction.
-   - **State Invariant**: Allocates diagnostic hold (`hold_state = 'ACTIVE'`, `hold_reason = 'CLEAN_INTAKE_DIRTY_WORKTREE'`) and emits audit event `CLEAN_INTAKE_DIRTY_WORKTREE_DETECTED`. Task state `RUNNING` is strictly preserved until controlled terminal resolution. Promotion to `REVIEWING` is blocked while the diagnostic hold is `ACTIVE`.
+   - Subtask P04A / in-memory collector executes `git status --porcelain=v1 -z --untracked-files=all` within the bound worktree and detects modified or untracked files during intake.
+   - Transaction A rolls back.
+   - **Behavior**: Executes a clean-intake diagnostic transaction:
+     1. Derives non-self-referencing `hold_id = 'hold-' + SHA256(RFC8785_JCS(hold_identity_descriptor))` using Descriptor A with `kind = 'review_integrity_hold'`, `hold_reason = 'DIRTY_WORKTREE_DETECTED'`, and `occurrence_number`.
+     2. Derives `rejection_event_id = SHA256(RFC8785_JCS(rejection_event_identity_descriptor))` using Descriptor B.
+     3. Appends rejection audit event `EVIDENCE_COLLECTION_FAILED` to `audit_events` (`actor = 'ai-supervisor-daemon'`, `details_json.actor_role = 'SUPERVISOR'`).
+     4. Inserts an `ACTIVE` hold row into `review_integrity_holds` with `hold_reason = 'DIRTY_WORKTREE_DETECTED'`.
+   - **State Invariant**: Task state `RUNNING` is strictly preserved (strictly zero blanket transitions to `BLOCKED` or `FAILED`). Promotion to `REPORT_READY` or `REVIEWING` is blocked while the diagnostic hold is `ACTIVE`.
 
 ---
 
@@ -222,8 +234,9 @@ When an integrity conflict occurs during hold evaluation or binding checks, the 
    - Binding Invariant: Zero binding mutation (`attempt_workspace_bindings` remains unchanged).
    - Recovery Action: Emits audit event `REVIEW_INTEGRITY_CONFLICT` with Variant A payload. Fails closed to operator investigation without corrupting binding state.
 2. **Variant B (`conflict_source = 'WORKSPACE_BINDING_GUARD'`)**:
-   - Fields: Requires `dispatch_operation_id` and `attempted_reason` (strictly one of: `BINDING_PREDECESSOR_INVALID`, `CONCURRENT_ACTIVE_BINDING`, `ATTEMPT_STAGE_MISMATCH`, `WORKSPACE_PATH_COLLISION`).
+   - Fields: Requires `dispatch_operation_id`, `conflict_type = 'LINEAGE_MISMATCH'`, `attempted_reason` (strictly one of the 4 canonical literals: `WORKSPACE_BINDING_MISSING`, `WORKSPACE_BINDING_LINEAGE_MISMATCH`, `WORKSPACE_BINDING_NOT_ACTIVE`, `WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH`), `sanitized_input_fingerprint`, `diagnostic_fingerprint`, and `actor_role = 'SUPERVISOR'`.
    - Invariant: `colliding_event_id` is strictly absent.
-   - Binding Mutation: CAS invalidates the workspace binding (`binding_state` transitions `ACTIVE -> INVALIDATED`).
+   - Diagnostic Hold: Inserts an `ACTIVE` hold in `review_integrity_holds` with `hold_reason = 'INVARIANT_MISMATCH'`.
+   - Binding Mutation: CAS invalidates the workspace binding (`binding_state` transitions `ACTIVE -> INVALIDATED`, `released_at_epoch_ms = now`).
    - Pipeline Isolation: Subtask P04D verification conflicts never CAS mutate workspace bindings.
    - Zero Orphan Guarantee: Audit events are committed within the same SQLite transaction as the state transition; lost CAS races emit zero orphan audit events.

@@ -1,5 +1,6 @@
 {
   "bundle_id": "BUNDLE-TASK-P01-001-01",
+  "evidence_set_id": "EVID-TASK-P01-001-01",
   "task_id": "TASK-P01-001",
   "attempt_id": "ATTEMPT-01",
   "task_contract": {
@@ -38,10 +39,5 @@
   "unverified_claims": [],
   "recommended_review_focus": "Verify returned health JSON payload structure",
   "generated_at": "2026-09-20T12:00:00Z",
-  "bundle_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-  "evidence_finalized_at_epoch_ms": 1790000000000,
-  "bundle_assembled_at_epoch_ms": 1790000000500,
-  "compilation_latency_ms": 500,
-  "latency_measurement_status": "MEASURED_IN_PROCESS",
-  "nfr008_compliance_status": "COMPLIANT"
+  "evidence_finalized_at_epoch_ms": 1790000000000
 }
