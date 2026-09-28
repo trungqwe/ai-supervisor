@@ -287,7 +287,10 @@ func (c *Coordinator) Dispatch(ctx context.Context, taskID, contractID, attemptI
 			closeErr := fmt.Errorf("dispatch: workspace lease close failed: %w", cErr)
 			if !wireInitiated {
 				if boundPrepared {
-					_ = c.Store.RecordVariantBDiagnostic(context.WithoutCancel(ctx), operationID, "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH", actor, time.Now().UTC())
+					diagErr := c.Store.RecordVariantBDiagnostic(context.WithoutCancel(ctx), operationID, "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH", actor, time.Now().UTC())
+					if diagErr != nil {
+						closeErr = errors.Join(closeErr, fmt.Errorf("dispatch: variant B diagnostic failed: %w", diagErr))
+					}
 				}
 				if err == nil {
 					err = closeErr
@@ -371,15 +374,21 @@ func (c *Coordinator) Dispatch(ctx context.Context, taskID, contractID, attemptI
 		return fmt.Errorf("dispatch: pre-send activity %q is not admissible; attempt remains DISPATCHED", status.Activity.State)
 	}
 
-	if err := lease.Revalidate(); err != nil {
-		_ = c.Store.RecordVariantBDiagnostic(ctx, operationID, "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH", actor, time.Now().UTC())
-		return fmt.Errorf("dispatch: live workspace lease revalidation failed: %w", err)
-	}
-
-	wireInitiated = true
-	if err := c.Store.RecordSendRequested(ctx, operationID, status.ID, status.TerminalGeneration, string(status.Activity.State), status.IsTerminated, actor, time.Now().UTC(), snapshot); err != nil {
+	if revErr := lease.Revalidate(); revErr != nil {
+		diagErr := c.Store.RecordVariantBDiagnostic(context.WithoutCancel(ctx), operationID, "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH", actor, time.Now().UTC())
+		revalErr := fmt.Errorf("dispatch: live workspace lease revalidation failed: %w", revErr)
+		if diagErr != nil {
+			err = errors.Join(revalErr, fmt.Errorf("dispatch: variant B diagnostic failed: %w", diagErr))
+		} else {
+			err = revalErr
+		}
 		return err
 	}
+
+	if err = c.Store.RecordSendRequested(ctx, operationID, status.ID, status.TerminalGeneration, string(status.Activity.State), status.IsTerminated, actor, time.Now().UTC(), snapshot); err != nil {
+		return err
+	}
+	wireInitiated = true
 	result, err := c.AO.DispatchTaskContract(ctx, sessionID, message)
 	if err != nil {
 		return c.containAmbiguousSend(ctx, operationID, attempt.AttemptID, actor, err)

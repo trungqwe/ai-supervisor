@@ -1484,39 +1484,232 @@ func TestRecoveryScanner_PriorRunnerAuthorityNotReusedBySubsequentNilRunner(t *t
 
 func TestRecoveryScanner_LeaseCloseFailureReturnsNonNilError(t *testing.T) {
 	ctx := context.Background()
-	s := newRecoveryStore(t)
 
-	_, _, attemptID := seedBoundExecution(t, s, "closefail-task")
-	auth := &fakeWorkspaceAuthority{failClose: true}
-	observer := &testObserver{}
-	r := &Runner{
-		Store:                s,
-		AO:                   observer,
-		Host:                 &testHost{},
-		Authority:            auth,
-		ActivityPollInterval: time.Second,
-		ExecutionDeadline:    time.Minute,
-		Actor:                "supervisor",
-	}
+	t.Run("NormalPath_CloseFailure", func(t *testing.T) {
+		s := newRecoveryStore(t)
+		_, _, attemptID := seedBoundExecution(t, s, "closefail-task")
+		auth := &fakeWorkspaceAuthority{failClose: true}
+		observer := &testObserver{}
+		r := &Runner{
+			Store:                s,
+			AO:                   observer,
+			Host:                 &testHost{},
+			Authority:            auth,
+			ActivityPollInterval: time.Second,
+			ExecutionDeadline:    time.Minute,
+			Actor:                "supervisor",
+		}
 
-	report, err := r.Run(ctx)
-	if err == nil {
-		t.Fatal("expected non-nil error on lease close failure")
-	}
-	if !strings.Contains(err.Error(), "lease close failed") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-	if report.Complete {
-		t.Fatal("expected report.Complete = false on lease close failure")
-	}
+		report, err := r.Run(ctx)
+		if err == nil {
+			t.Fatal("expected non-nil error on lease close failure")
+		}
+		if !strings.Contains(err.Error(), "lease close failed") {
+			t.Fatalf("unexpected error message: %v", err)
+		}
+		if report.Complete {
+			t.Fatal("expected report.Complete = false on lease close failure")
+		}
 
-	// Zero AO wire effect
-	observer.mu.Lock()
-	gets := observer.gets
-	observer.mu.Unlock()
-	if gets != 0 {
-		t.Fatalf("AO gets = %d, want 0", gets)
-	}
+		// Zero AO wire effect
+		observer.mu.Lock()
+		gets := observer.gets
+		observer.mu.Unlock()
+		if gets != 0 {
+			t.Fatalf("AO gets = %d, want 0", gets)
+		}
+		_ = attemptID
+	})
 
-	_ = attemptID
+	t.Run("RevalidateFailure_CloseFailure", func(t *testing.T) {
+		taskID := "reval-closefail-task"
+		s := newRecoveryStore(t)
+		_, _, attemptID := seedBoundExecution(t, s, taskID)
+		auth := &fakeWorkspaceAuthority{failRevalidate: true, failClose: true}
+		observer := &testObserver{}
+		r := &Runner{
+			Store:                s,
+			AO:                   observer,
+			Host:                 &testHost{},
+			Authority:            auth,
+			ActivityPollInterval: time.Second,
+			ExecutionDeadline:    time.Minute,
+			Actor:                "supervisor",
+		}
+
+		report, err := r.Run(ctx)
+		if err == nil {
+			t.Fatal("expected non-nil error on revalidate failure + close failure")
+		}
+		if !strings.Contains(err.Error(), "simulated lease close failure") {
+			t.Fatalf("expected close failure in error, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "simulated revalidate failure") {
+			t.Fatalf("expected revalidate failure in error, got: %v", err)
+		}
+		if report.Complete {
+			t.Fatal("expected report.Complete = false on lease close failure")
+		}
+
+		// Zero AO wire effect
+		observer.mu.Lock()
+		gets := observer.gets
+		observer.mu.Unlock()
+		if gets != 0 {
+			t.Fatalf("AO gets = %d, want 0", gets)
+		}
+
+		// Durable state reflects committed Variant B transaction
+		holds, err := s.GetActiveReviewIntegrityHolds(ctx, attemptID)
+		if err != nil || len(holds) != 1 || holds[0].HoldReason != domain.HoldReasonInvariantMismatch {
+			t.Fatalf("expected 1 active INVARIANT_MISMATCH hold, got: %+v %v", holds, err)
+		}
+		binding, err := s.GetAttemptWorkspaceBinding(ctx, attemptID)
+		if err != nil || binding.BindingState != domain.BindingStateInvalidated {
+			t.Fatalf("binding state = %v, want INVALIDATED: %v", binding.BindingState, err)
+		}
+		task, err := s.GetTask(ctx, taskID)
+		if err != nil || task.State != domain.StateDispatched {
+			t.Fatalf("task state = %v, want DISPATCHED: %v", task.State, err)
+		}
+		attempt, err := s.GetTaskAttempt(ctx, attemptID)
+		if err != nil || attempt.EndedAt != nil {
+			t.Fatalf("attempt ended: %+v %v", attempt, err)
+		}
+	})
+
+	t.Run("SnapshotMismatch_CloseFailure", func(t *testing.T) {
+		taskID := "mismatch-closefail-task"
+		s := newRecoveryStore(t)
+		_, _, attemptID := seedBoundExecution(t, s, taskID)
+		mismatchedSnapshot := domain.WorkspaceBindingSnapshot{
+			CanonicalWorktreePath:       "C:\\tampered\\worktree",
+			WorktreeVolumeSerialHex:     "00000000deadbeef",
+			WorktreeFileIDHex:           "0000000000000000deadbeef00000001",
+			LinkedGitDirPath:            "C:\\tampered\\repo.git",
+			LinkedGitDirVolumeSerialHex: "00000000deadbeef",
+			LinkedGitDirFileIDHex:       "0000000000000000deadbeef00000002",
+			PinnedAOCommit:              "0123456789abcdef0123456789abcdef01234567",
+		}
+		auth := &fakeWorkspaceAuthority{snapshot: &mismatchedSnapshot, failClose: true}
+		observer := &testObserver{}
+		r := &Runner{
+			Store:                s,
+			AO:                   observer,
+			Host:                 &testHost{},
+			Authority:            auth,
+			ActivityPollInterval: time.Second,
+			ExecutionDeadline:    time.Minute,
+			Actor:                "supervisor",
+		}
+
+		report, err := r.Run(ctx)
+		if err == nil {
+			t.Fatal("expected non-nil error on snapshot mismatch + close failure")
+		}
+		if !strings.Contains(err.Error(), "simulated lease close failure") {
+			t.Fatalf("expected close failure in error, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "snapshot mismatch") {
+			t.Fatalf("expected snapshot mismatch in error, got: %v", err)
+		}
+		if report.Complete {
+			t.Fatal("expected report.Complete = false on lease close failure")
+		}
+
+		// Zero AO wire effect
+		observer.mu.Lock()
+		gets := observer.gets
+		observer.mu.Unlock()
+		if gets != 0 {
+			t.Fatalf("AO gets = %d, want 0", gets)
+		}
+
+		// Durable state reflects committed Variant B transaction
+		holds, err := s.GetActiveReviewIntegrityHolds(ctx, attemptID)
+		if err != nil || len(holds) != 1 || holds[0].HoldReason != domain.HoldReasonInvariantMismatch {
+			t.Fatalf("expected 1 active INVARIANT_MISMATCH hold, got: %+v %v", holds, err)
+		}
+		binding, err := s.GetAttemptWorkspaceBinding(ctx, attemptID)
+		if err != nil || binding.BindingState != domain.BindingStateInvalidated {
+			t.Fatalf("binding state = %v, want INVALIDATED: %v", binding.BindingState, err)
+		}
+		task, err := s.GetTask(ctx, taskID)
+		if err != nil || task.State != domain.StateDispatched {
+			t.Fatalf("task state = %v, want DISPATCHED: %v", task.State, err)
+		}
+		attempt, err := s.GetTaskAttempt(ctx, attemptID)
+		if err != nil || attempt.EndedAt != nil {
+			t.Fatalf("attempt ended: %+v %v", attempt, err)
+		}
+	})
+
+	t.Run("VariantBTransactionFailure_CloseFailure", func(t *testing.T) {
+		taskID := "vb-txfail-closefail-task"
+		s, path := newRecoveryStoreAt(t)
+		_, _, attemptID := seedBoundExecution(t, s, taskID)
+
+		// Inject trigger to cause Variant B transaction to fail and rollback
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatalf("failed to open raw sqlite: %v", err)
+		}
+		defer db.Close()
+		_, err = db.Exec("CREATE TRIGGER fail_variant_b BEFORE INSERT ON review_integrity_holds BEGIN SELECT RAISE(ABORT, 'simulated variant b transaction failure'); END;")
+		if err != nil {
+			t.Fatalf("failed to create failure trigger: %v", err)
+		}
+
+		auth := &fakeWorkspaceAuthority{failRevalidate: true, failClose: true}
+		observer := &testObserver{}
+		r := &Runner{
+			Store:                s,
+			AO:                   observer,
+			Host:                 &testHost{},
+			Authority:            auth,
+			ActivityPollInterval: time.Second,
+			ExecutionDeadline:    time.Minute,
+			Actor:                "supervisor",
+		}
+
+		report, err := r.Run(ctx)
+		if err == nil {
+			t.Fatal("expected non-nil error on Variant B tx failure + close failure")
+		}
+		if !strings.Contains(err.Error(), "simulated lease close failure") {
+			t.Fatalf("expected close failure in error, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "simulated variant b transaction failure") {
+			t.Fatalf("expected variant b tx failure in error, got: %v", err)
+		}
+		if report.Complete {
+			t.Fatal("expected report.Complete = false on lease close failure")
+		}
+
+		// Zero AO wire effect
+		observer.mu.Lock()
+		gets := observer.gets
+		observer.mu.Unlock()
+		if gets != 0 {
+			t.Fatalf("AO gets = %d, want 0", gets)
+		}
+
+		// Durable state reflects that Variant B transaction rolled back (no false rollback of committed data)
+		holds, err := s.GetActiveReviewIntegrityHolds(ctx, attemptID)
+		if err != nil || len(holds) != 0 {
+			t.Fatalf("expected 0 holds after rolled-back transaction, got: %+v %v", holds, err)
+		}
+		binding, err := s.GetAttemptWorkspaceBinding(ctx, attemptID)
+		if err != nil || binding.BindingState != domain.BindingStateActive {
+			t.Fatalf("binding state = %v, want ACTIVE: %v", binding.BindingState, err)
+		}
+		task, err := s.GetTask(ctx, taskID)
+		if err != nil || task.State != domain.StateDispatched {
+			t.Fatalf("task state = %v, want DISPATCHED: %v", task.State, err)
+		}
+		attempt, err := s.GetTaskAttempt(ctx, attemptID)
+		if err != nil || attempt.EndedAt != nil {
+			t.Fatalf("attempt ended: %+v %v", attempt, err)
+		}
+	})
 }

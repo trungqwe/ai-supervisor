@@ -895,9 +895,10 @@ func TestDispatchExecutionPolicyValidationBeforeSendAndContainment(t *testing.T)
 func TestDispatchWorkspaceBindingAuthorityVerification(t *testing.T) {
 	ctx := context.Background()
 
-	setupDispatchTest := func(t *testing.T, taskID string) (*store.Store, *fakeAO, string, string, string, string, string) {
+	setupDispatchTestWithPath := func(t *testing.T, taskID string) (*store.Store, *fakeAO, string, string, string, string, string, string) {
 		t.Helper()
-		s, err := store.Open(ctx, store.Config{DBPath: filepath.Join(t.TempDir(), "dispatch-wb.db")})
+		dbPath := filepath.Join(t.TempDir(), "dispatch-wb.db")
+		s, err := store.Open(ctx, store.Config{DBPath: dbPath})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -957,6 +958,11 @@ func TestDispatchWorkspaceBindingAuthorityVerification(t *testing.T) {
 			dispatchResult: &ao.DispatchTaskResult{SessionID: sessionID},
 		}
 
+		return s, aoFake, contractID, attemptID, opID, sessionID, generation, dbPath
+	}
+
+	setupDispatchTest := func(t *testing.T, taskID string) (*store.Store, *fakeAO, string, string, string, string, string) {
+		s, aoFake, contractID, attemptID, opID, sessionID, generation, _ := setupDispatchTestWithPath(t, taskID)
 		return s, aoFake, contractID, attemptID, opID, sessionID, generation
 	}
 
@@ -1260,6 +1266,196 @@ func TestDispatchWorkspaceBindingAuthorityVerification(t *testing.T) {
 		}
 		if aoFake.sends != 1 {
 			t.Fatalf("AO sends after replay = %d, want 1 (resend must not occur)", aoFake.sends)
+		}
+	})
+
+	t.Run("RevalidateFailure_VariantBFailure", func(t *testing.T) {
+		taskID := "wb-reval-vbfail"
+		s, aoFake, contractID, attemptID, opID, sessionID, generation, dbPath := setupDispatchTestWithPath(t, taskID)
+
+		// Inject trigger to cause Variant B transaction to fail
+		db, err := sql.Open("sqlite", dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		_, err = db.Exec("CREATE TRIGGER fail_vb_reval BEFORE INSERT ON review_integrity_holds BEGIN SELECT RAISE(ABORT, 'simulated variant b failure'); END;")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		auth := &fakeDispatchAuthority{failReval: true, failClose: false}
+		c := Coordinator{
+			Store:           s,
+			AO:              aoFake,
+			Authority:       auth,
+			Candidate:       &testCandidate,
+			ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"},
+		}
+		report, err := store.CanonicalExpectedReportPath(taskID, attemptID)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		dispatchErr := c.Dispatch(ctx, taskID, contractID, attemptID, opID, sessionID, generation, report, "contract text", "supervisor")
+		if dispatchErr == nil {
+			t.Fatal("expected dispatch error on revalidate failure + variant B failure")
+		}
+		if !strings.Contains(dispatchErr.Error(), "live workspace lease revalidation failed") {
+			t.Fatalf("expected revalidation failure in error, got: %v", dispatchErr)
+		}
+		if !strings.Contains(dispatchErr.Error(), "simulated variant b failure") {
+			t.Fatalf("expected variant b failure in error, got: %v", dispatchErr)
+		}
+
+		// Zero send issued
+		if aoFake.sends != 0 {
+			t.Fatalf("AO sends = %d, want 0", aoFake.sends)
+		}
+
+		// Rolled back Variant B must NOT report containment
+		holds, err := s.GetActiveReviewIntegrityHolds(ctx, attemptID)
+		if err != nil || len(holds) != 0 {
+			t.Fatalf("expected 0 holds after rolled-back Variant B, got: %+v %v", holds, err)
+		}
+		binding, err := s.GetAttemptWorkspaceBinding(ctx, attemptID)
+		if err != nil || binding.BindingState != domain.BindingStateActive {
+			t.Fatalf("binding state = %v, want ACTIVE: %v", binding.BindingState, err)
+		}
+		task, err := s.GetTask(ctx, taskID)
+		if err != nil || task.State != domain.StateDispatched {
+			t.Fatalf("task state = %v, want DISPATCHED: %v", task.State, err)
+		}
+	})
+
+	t.Run("PreEffectCloseFailure_VariantBFailure", func(t *testing.T) {
+		taskID := "wb-preeffect-close-vbfail"
+		s, aoFake, contractID, attemptID, opID, sessionID, generation, dbPath := setupDispatchTestWithPath(t, taskID)
+
+		// Set status to inadmissible active activity so dispatch aborts before wire
+		aoFake.statusResult = &ao.WorkerStatus{
+			ID:                 sessionID,
+			TerminalGeneration: generation,
+			Activity:           ao.ActivitySnapshot{State: ao.ActivityStateActive},
+		}
+
+		// Inject trigger to cause Variant B transaction to fail
+		db, err := sql.Open("sqlite", dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		_, err = db.Exec("CREATE TRIGGER fail_vb_preeffect_close BEFORE INSERT ON review_integrity_holds BEGIN SELECT RAISE(ABORT, 'simulated variant b failure'); END;")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		auth := &fakeDispatchAuthority{failReval: false, failClose: true}
+		c := Coordinator{
+			Store:           s,
+			AO:              aoFake,
+			Authority:       auth,
+			Candidate:       &testCandidate,
+			ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"},
+		}
+		report, err := store.CanonicalExpectedReportPath(taskID, attemptID)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		dispatchErr := c.Dispatch(ctx, taskID, contractID, attemptID, opID, sessionID, generation, report, "contract text", "supervisor")
+		if dispatchErr == nil {
+			t.Fatal("expected dispatch error on pre-effect close failure + variant B failure")
+		}
+		if !strings.Contains(dispatchErr.Error(), "workspace lease close failed") {
+			t.Fatalf("expected close failure in error, got: %v", dispatchErr)
+		}
+		if !strings.Contains(dispatchErr.Error(), "simulated variant b failure") {
+			t.Fatalf("expected variant b failure in error, got: %v", dispatchErr)
+		}
+
+		// Zero send issued
+		if aoFake.sends != 0 {
+			t.Fatalf("AO sends = %d, want 0", aoFake.sends)
+		}
+
+		// Rolled back Variant B
+		holds, err := s.GetActiveReviewIntegrityHolds(ctx, attemptID)
+		if err != nil || len(holds) != 0 {
+			t.Fatalf("expected 0 holds after rolled-back Variant B, got: %+v %v", holds, err)
+		}
+		binding, err := s.GetAttemptWorkspaceBinding(ctx, attemptID)
+		if err != nil || binding.BindingState != domain.BindingStateActive {
+			t.Fatalf("binding state = %v, want ACTIVE: %v", binding.BindingState, err)
+		}
+	})
+
+	t.Run("RecordSendRequestedRollback_CloseFailure_PreEffectZeroSend", func(t *testing.T) {
+		taskID := "wb-sendreq-rollback-closefail"
+		s, aoFake, contractID, attemptID, opID, sessionID, generation, dbPath := setupDispatchTestWithPath(t, taskID)
+
+		// Inject trigger to cause RecordSendRequested transaction to fail and rollback
+		db, err := sql.Open("sqlite", dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		_, err = db.Exec("CREATE TRIGGER fail_send_requested BEFORE UPDATE ON dispatch_operations WHEN NEW.stage = 'SEND_REQUESTED' BEGIN SELECT RAISE(ABORT, 'simulated send_requested rollback'); END;")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		auth := &fakeDispatchAuthority{failReval: false, failClose: true}
+		c := Coordinator{
+			Store:           s,
+			AO:              aoFake,
+			Authority:       auth,
+			Candidate:       &testCandidate,
+			ExecutionPolicy: domain.ExecutionBudgetPolicy{Duration: time.Hour, PolicyRef: "fixture-policy"},
+		}
+		report, err := store.CanonicalExpectedReportPath(taskID, attemptID)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		dispatchErr := c.Dispatch(ctx, taskID, contractID, attemptID, opID, sessionID, generation, report, "contract text", "supervisor")
+		if dispatchErr == nil {
+			t.Fatal("expected dispatch error on RecordSendRequested rollback + close failure")
+		}
+		if !strings.Contains(dispatchErr.Error(), "simulated send_requested rollback") {
+			t.Fatalf("expected send_requested rollback in error, got: %v", dispatchErr)
+		}
+		if !strings.Contains(dispatchErr.Error(), "workspace lease close failed") {
+			t.Fatalf("expected close failure in error, got: %v", dispatchErr)
+		}
+
+		// Zero send issued (/send = 0)
+		if aoFake.sends != 0 {
+			t.Fatalf("AO sends = %d, want 0", aoFake.sends)
+		}
+
+		// Classified as pre-effect, NOT post-effect (operation remains DISPATCH_BOUND)
+		op, err := s.GetDispatchOperation(ctx, opID)
+		if err != nil || op.Stage != domain.DispatchBound {
+			t.Fatalf("dispatch stage = %v, want DISPATCH_BOUND: %v", op.Stage, err)
+		}
+
+		// Pre-effect containment applied: Variant B committed!
+		holds, err := s.GetActiveReviewIntegrityHolds(ctx, attemptID)
+		if err != nil || len(holds) != 1 || holds[0].HoldReason != domain.HoldReasonInvariantMismatch {
+			t.Fatalf("expected 1 active INVARIANT_MISMATCH hold, got: %+v %v", holds, err)
+		}
+		binding, err := s.GetAttemptWorkspaceBinding(ctx, attemptID)
+		if err != nil || binding.BindingState != domain.BindingStateInvalidated {
+			t.Fatalf("binding state = %v, want INVALIDATED: %v", binding.BindingState, err)
+		}
+		task, err := s.GetTask(ctx, taskID)
+		if err != nil || task.State != domain.StateDispatched {
+			t.Fatalf("task state = %v, want DISPATCHED: %v", task.State, err)
+		}
+		attempt, err := s.GetTaskAttempt(ctx, attemptID)
+		if err != nil || attempt.EndedAt != nil {
+			t.Fatalf("attempt ended: %+v %v", attempt, err)
 		}
 	})
 }

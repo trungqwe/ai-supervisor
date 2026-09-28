@@ -459,24 +459,27 @@ func (r *Runner) classifyExecution(ctx context.Context, x store.RecoveryExecutio
 			lease, acqErr := r.Authority.Acquire(ctx, candidate)
 			if acqErr != nil {
 				if diagErr := r.Store.RecordVariantBDiagnostic(ctx, x.OperationID, "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH", r.Actor, r.now()); diagErr != nil {
-					return diagErr
+					return errors.Join(acqErr, diagErr)
 				}
 				return nil
 			}
 
 			if revErr := lease.Revalidate(); revErr != nil {
-				_ = lease.Close()
-				if diagErr := r.Store.RecordVariantBDiagnostic(ctx, x.OperationID, "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH", r.Actor, r.now()); diagErr != nil {
-					return diagErr
+				cErr := lease.Close()
+				diagErr := r.Store.RecordVariantBDiagnostic(ctx, x.OperationID, "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH", r.Actor, r.now())
+				if cErr != nil || diagErr != nil {
+					return errors.Join(revErr, diagErr, cErr)
 				}
 				return nil
 			}
 
 			snap := lease.Snapshot()
 			if !snap.MatchesBinding(b) {
-				_ = lease.Close()
-				if diagErr := r.Store.RecordVariantBDiagnostic(ctx, x.OperationID, "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH", r.Actor, r.now()); diagErr != nil {
-					return diagErr
+				mismatchErr := errors.New("recovery: workspace binding snapshot mismatch")
+				cErr := lease.Close()
+				diagErr := r.Store.RecordVariantBDiagnostic(ctx, x.OperationID, "WORKSPACE_BINDING_PHYSICAL_IDENTITY_MISMATCH", r.Actor, r.now())
+				if cErr != nil || diagErr != nil {
+					return errors.Join(mismatchErr, diagErr, cErr)
 				}
 				return nil
 			}
